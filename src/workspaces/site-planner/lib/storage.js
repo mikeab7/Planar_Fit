@@ -10,7 +10,7 @@
  */
 import { createSiteModel, migrate, mergeSiteContent, contentCount, isBuilding, toMs, countJunkEntries,
   shareMirrorOf, withShareMirror, normRole } from "./siteModel.js";
-import { cloudUpsert, cloudDelete, cloudHardDelete, cloudRestore, cloudDeletedRows, cloudCheckDeleted, cloudList, clearSiteVersions, keepaliveCloudPush, fetchSiteForReconcile } from "./cloudSync.js";
+import { cloudUpsert, cloudDelete, cloudDeleteGroup, cloudHardDelete, cloudRestore, cloudDeletedRows, cloudCheckDeleted, cloudList, clearSiteVersions, keepaliveCloudPush, fetchSiteForReconcile } from "./cloudSync.js";
 import { reconcileGroupNames, resolveNameFor, groupKeyOf, maxStampOf } from "./projectName.js";
 import { idbGet, idbPut, idbAvailable, idbDelete, idbDeleteByPrefix } from "./localDb.js";
 import { idbKeysReleasableOnPlanDelete, idbKeysHeldByOtherPlans } from "./sharedAssetRefs.js";
@@ -1171,7 +1171,18 @@ export function scheduleLinkOf(groupId) {
 // server-side to remove). An empty/unknown group is a no-op success.
 export function deleteSiteGroup(groupId) {
   const plans = loadPlansOfGroup(groupId);
-  if (!plans.length) return Promise.resolve({ ok: true, removed: 0 });
+  // ⛔ B1303824 (OWNER-BLOCKING, 2026-09-07) — an empty local plan list is NOT proof there is
+  // nothing to delete. A project can be shown in the switcher (the light summary reader, or a
+  // `withCurrentProject` placeholder for the project the user is literally standing in) while THIS
+  // device's cache has never actually cached a single plan for it — created on another
+  // device/session, or a cloud pull that hasn't landed here yet. The old code took the empty local
+  // list at face value and reported a clean `{ok:true, removed:0}` with ZERO network traffic: a
+  // real, live cloud project read as "deleted" and never actually moved. Ask the cloud directly by
+  // group before giving up — never let this device's cache alone decide there is nothing to delete.
+  if (!plans.length) {
+    if (!activeUid() || !groupId) return Promise.resolve({ ok: true, removed: 0 });
+    return cloudDeleteGroup(activeUid(), groupId);
+  }
   // deleteSite removes locally right away and returns the cloud-delete promise; run them all.
   return Promise.all(plans.map((s) => deleteSite(s.id))).then((results) => {
     const failed = results.find((r) => r && r.ok === false);
