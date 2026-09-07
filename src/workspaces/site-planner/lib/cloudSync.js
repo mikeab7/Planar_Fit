@@ -344,36 +344,70 @@ export async function cloudDeletedRows(uid) {
   return { ok: true, supported: true, rows: data || [] };
 }
 
-/* NEW-2 (soft-deleted project stays open) — a SINGLE-ROW check for the one question a deep link
- * into a project route needs answered before it mounts a workspace: is THIS id soft-deleted, and
- * does it exist at all. Deliberately its own targeted `.eq("id", …)` lookup rather than routing
- * through `cloudDeletedRows` (the whole-account bin list) — that would cost an unbounded scan on
- * every navigation just to answer a question about one row.
+/* NEW-2 (soft-deleted project stays open) — the one question a deep link into a project route
+ * needs answered before it mounts a workspace: is THIS PROJECT soft-deleted, and does it exist at
+ * all. A Planyr "project" is every plan row sharing a `group_id` (`groupProjects` in
+ * projectModel.js), never the single row whose `id` happens to equal the group id — that row is
+ * merely the ANCHOR, the plan the project was originally created from, and `id` is used as the
+ * `groupId` fallback (`storage.js`'s `groupId: p.groupId || p.id`).
+ *
+ * ⛔ B1164192 (owner report 2026-09-07, "Richfield" reads as deleted) — this used to be a
+ * SINGLE-ROW `.eq("id", id).maybeSingle()` lookup, so soft-deleting the anchor alone (e.g. after a
+ * "duplicate and rename" — the original is deleted once its copy exists) made the WHOLE PROJECT
+ * read as deleted at the route gate, even with every sibling plan live and unaffected. Measured
+ * live on production: exactly two of the owner's projects carry this shape (an anchor row
+ * soft-deleted with live siblings still in its group) — "Richfield" (group `smsdrvzr9gzx`, 3 live
+ * plans) and "Woods Road" (group `smsrpaiqu5sv`, 6 live plans, a shared TEAM project) — and no
+ * other account in the whole `sites` table does. Both are pre-existing data, not new damage; this
+ * function's single-row design is what mis-READ them as deleted, not a write that deleted anything.
+ *
+ * Fixed by asking about the whole GROUP: a project is deleted only when EVERY plan row it has is
+ * soft-deleted. Two queries rather than one `.or()` string (id/group_id values are opaque —
+ * building a filter EXPRESSION out of them is unnecessary risk for a check that isn't hot):
+ * `id = id` catches the anchor itself (including a legacy pre-groupId row whose `group_id` column
+ * is still null) and a caller that names one specific plan directly; `group_id = id` catches every
+ * sibling, including when the anchor row has been HARD-deleted and no row named `id` exists at all
+ * any more. Deliberately still not `cloudDeletedRows` (the whole-account bin scan) — this stays two
+ * indexed lookups scoped to one group, not an unbounded account-wide read on every navigation.
  *
  * Returns { ok, exists, deleted, deletedAt, name, groupId }:
  *   ok:false   → the check itself failed (offline, signed out, RLS, a thrown error) — the caller
  *                MUST fail OPEN (never block a route on an inconclusive answer; STANDING RULE —
  *                a hard gate needs a POSITIVE fact, not the absence of one).
- *   exists:false → no row matched this id for this user at all (never existed, or belongs to
- *                  someone else) — a DIFFERENT state from `deleted:true`, so a caller can tell
- *                  "there's nothing here" from "this was here and got removed".
- *   deleted:true → the row is soft-deleted; `deletedAt`/`name`/`groupId` are populated so the
- *                  caller can offer a restore without a second round trip. */
+ *   exists:false → no row matched this id (as its own id OR as a sibling's group_id) for this user
+ *                  at all — a DIFFERENT state from `deleted:true`, so a caller can tell "there's
+ *                  nothing here" from "this was here and got removed".
+ *   deleted:true → EVERY plan row found is soft-deleted; `deletedAt` is the most recent deletion in
+ *                  the group, `name`/`groupId` come from that same row, so a caller can offer a
+ *                  restore without a second round trip. A single LIVE row anywhere in the group is
+ *                  enough to answer `deleted:false` — that is the whole fix. */
 export async function cloudCheckDeleted(uid, id) {
   if (!supabase || !uid || !id) return { ok: false, exists: false, deleted: false };
   try {
-    const { data, error } = await supabase.from("sites")
-      .select("id, group_id, site, name, deleted_at")
-      .eq("id", id)
-      .maybeSingle();
+    const cols = "id, group_id, site, name, deleted_at";
+    const [byId, byGroup] = await Promise.all([
+      supabase.from("sites").select(cols).eq("id", id),
+      supabase.from("sites").select(cols).eq("group_id", id),
+    ]);
+    const error = byId.error || byGroup.error;
     if (error) {
       if (isMissingColumn(error, "deleted_at")) return { ok: true, exists: true, deleted: false };
       return { ok: false, exists: false, deleted: false, error: error.message || "deletion check failed" };
     }
-    if (!data) return { ok: true, exists: false, deleted: false };
+    const rows = new Map();
+    for (const r of [...(byId.data || []), ...(byGroup.data || [])]) if (r && r.id) rows.set(r.id, r);
+    const all = [...rows.values()];
+    if (!all.length) return { ok: true, exists: false, deleted: false };
+    const live = all.find((r) => !r.deleted_at);
+    if (live) {
+      return { ok: true, exists: true, deleted: false, deletedAt: null, name: live.site || live.name || null, groupId: live.group_id || live.id };
+    }
+    // Every plan row in the group is soft-deleted — the project genuinely is gone. Surface the
+    // most recently deleted row (the one whose facts a "restore this project" offer would want).
+    const newest = all.reduce((a, b) => ((Date.parse(b.deleted_at) || 0) > (Date.parse(a.deleted_at) || 0) ? b : a));
     return {
-      ok: true, exists: true, deleted: !!data.deleted_at,
-      deletedAt: data.deleted_at || null, name: data.site || data.name || null, groupId: data.group_id || data.id,
+      ok: true, exists: true, deleted: true,
+      deletedAt: newest.deleted_at || null, name: newest.site || newest.name || null, groupId: newest.group_id || newest.id,
     };
   } catch (e) {
     return { ok: false, exists: false, deleted: false, error: (e && e.message) || "deletion check threw" };

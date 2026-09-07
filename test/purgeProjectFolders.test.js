@@ -18,6 +18,9 @@ const h = vi.hoisted(() => ({
   cloudDeletedRowsResult: { ok: true, supported: true, rows: [] },
   hardDeleteResults: {},
   purgeProjectFoldersResult: { ok: true, rowsDeleted: true, driveTrashed: true },
+  // B1164193 — defaults to "the group is genuinely gone" (no live plans left), which is what
+  // every PRE-EXISTING test below assumes; the new live-siblings tests override it per case.
+  cloudCheckDeletedResult: { ok: true, exists: false, deleted: false },
 }));
 
 vi.mock("../src/workspaces/site-planner/lib/cloudSync.js", () => ({
@@ -27,7 +30,7 @@ vi.mock("../src/workspaces/site-planner/lib/cloudSync.js", () => ({
   cloudDelete: vi.fn(async () => ({ ok: true, removed: 1 })),
   cloudHardDelete: vi.fn(async (uid, id) => h.hardDeleteResults[id] || { ok: true, removed: 1 }),
   cloudRestore: vi.fn(async () => ({ ok: true, restored: 1 })),
-  cloudCheckDeleted: vi.fn(async () => ({ ok: true, exists: false, deleted: false })),
+  cloudCheckDeleted: vi.fn(async () => h.cloudCheckDeletedResult),
   clearSiteVersions: vi.fn(),
   keepaliveCloudPush: vi.fn(),
   fetchSiteForReconcile: vi.fn(async () => null),
@@ -54,6 +57,7 @@ beforeEach(() => {
   h.cloudDeletedRowsResult = { ok: true, supported: true, rows: [] };
   h.hardDeleteResults = {};
   h.purgeProjectFoldersResult = { ok: true, rowsDeleted: true, driveTrashed: true };
+  h.cloudCheckDeletedResult = { ok: true, exists: false, deleted: false };
   vi.clearAllMocks();
   setActiveUser("u-owner");
 });
@@ -90,6 +94,60 @@ describe("purgeDeletedProject — purges the project's folder tree ONCE per grou
     expect(r.ok).toBe(false);
     expect(r.purged).toBe(0);
     expect(purgeProjectFolders).not.toHaveBeenCalled();
+  });
+});
+
+/* B1164193 (found while investigating B1164192, "Richfield reads as deleted") — a purge must
+ * never destroy a project's shared Drive folder tree while the project still has LIVE plans
+ * hanging off the same group. This is the exact shape measured live on the owner's account
+ * ("Richfield", "Woods Road": one soft-deleted plan sharing a group with several live ones) —
+ * closed here so a "Delete forever" or the 30-day expiry sweep on that ONE plan can never cascade
+ * into trashing the shared folder tree the still-open siblings depend on.
+ */
+describe("purgeProjectFoldersFor — never purges a project's shared folders while the group still has live plans (B1164193)", () => {
+  it("purgeDeletedProject skips the folder/Drive purge and reports it LOUDLY when the group still has a live plan", async () => {
+    h.cloudCheckDeletedResult = { ok: true, exists: true, deleted: false };
+    const r = await purgeDeletedProject(["plan-a"], "group-1");
+    expect(r.ok).toBe(true); // the sites purge of the one named plan still succeeded
+    expect(r.purged).toBe(1);
+    expect(purgeProjectFolders).not.toHaveBeenCalled();
+    expect(reportClientEvent).toHaveBeenCalledWith(
+      "project-folder-purge-skipped",
+      expect.any(String),
+      expect.objectContaining({ groupId: "group-1" }),
+    );
+  });
+
+  it("purgeExpiredDeletedProjects skips the folder/Drive purge for an expired plan whose group still has live siblings", async () => {
+    h.cloudCheckDeletedResult = { ok: true, exists: true, deleted: false };
+    h.cloudDeletedRowsResult = {
+      ok: true, supported: true,
+      rows: [{ id: "smsdrvzr9gzx", group_id: "smsdrvzr9gzx", deleted_at: new Date(Date.now() - 31 * 86400000).toISOString() }],
+    };
+    const r = await purgeExpiredDeletedProjects();
+    expect(r.ok).toBe(true);
+    expect(r.purged).toBe(1); // the one expired anchor plan is still hard-deleted
+    expect(purgeProjectFolders).not.toHaveBeenCalled(); // but its still-live siblings' folders are untouched
+    expect(reportClientEvent).toHaveBeenCalledWith(
+      "project-folder-purge-skipped",
+      expect.any(String),
+      expect.objectContaining({ groupId: "smsdrvzr9gzx" }),
+    );
+  });
+
+  it("still purges the folder tree once the whole group is genuinely gone (no live plans left)", async () => {
+    h.cloudCheckDeletedResult = { ok: true, exists: false, deleted: false };
+    const r = await purgeDeletedProject(["plan-a"], "group-1");
+    expect(r.purged).toBe(1);
+    expect(purgeProjectFolders).toHaveBeenCalledWith("group-1");
+  });
+
+  it("fails SAFE — an inconclusive liveness check skips the purge rather than risking it on a maybe", async () => {
+    h.cloudCheckDeletedResult = { ok: false };
+    const r = await purgeDeletedProject(["plan-a"], "group-1");
+    expect(r.purged).toBe(1);
+    expect(purgeProjectFolders).not.toHaveBeenCalled();
+    expect(reportClientEvent).toHaveBeenCalledWith("project-folder-purge-skipped", expect.any(String), expect.objectContaining({ groupId: "group-1" }));
   });
 });
 
