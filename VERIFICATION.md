@@ -164,6 +164,20 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V940768 — B1294592: a `Site.*`/`Plan.*` formula reference tracks the OPEN concept/scheme in a multi-concept project, across a switch and a reload `Blocker: auth` `Blocker: real-data`
+
+**Why this needs its own real pass.** V901056 (`docs/archive/VERIFICATION-DONE.md`) proved the whole Site.*/Plan.*/Comp.* mechanism live end to end for a project with exactly ONE concept. This item's own bug report is specifically about a project with TWO — reproduced live on planyr.io production plus a direct database read (`site_elements`), which this sandbox cannot do (no Supabase credentials, no throwaway multi-concept project to point at). The RESOLUTION RULE itself — which concept a `Site.*`/`Plan.*` reference reads, keyed off `getCurrentSiteId()`/`pickResumeTarget`, the exact function the Site Planner tab's own boot-resume and cross-project-switch logic already goes through — is unit-tested end to end against the real storage/bootResume machinery in `test/modelProjectRefs.test.js`, not re-litigated here.
+
+**Steps, each with a named expected result:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Signed in, open a project with two concepts where the concepts genuinely differ (e.g. draw a boundary on Concept A, duplicate it, then delete the boundary on the copy).
+3. With Concept A open, go to the Spreadsheet tab and type `=Site.Acres` — **expect** it resolves to Concept A's own drawn acreage.
+4. Switch to the other concept via the plan switcher, return to the Spreadsheet tab — **expect** `=Site.Acres` now reads the OTHER concept's own acreage (or `#REF!` if that concept has no parcel), never the first concept's number.
+5. Reload the page with the second concept still the last one opened — **expect** `=Site.Acres` still resolves to that SAME concept's acreage after the reload, not the first concept's.
+6. Switch back to the first concept — **expect** `=Site.Acres` reads its acreage again, proving the resolution isn't a one-way latch.
+
+**Result:** ⏳ pending — needs a signed-in account with a real multi-concept project. `Cadence: once`.
+
 ### V930464 — B1281376: the arrangeable dashboard grid's layout saves to the signed-in account and round-trips across a reload AND a different browser `Blocker: auth`
 
 **Why this needs its own real pass, and why it can't run today.** The grid mechanics themselves (drag by header, resize from the corner, remove/add/reset, the narrow single-column fallback, and persistence to the signed-out localStorage mirror) are all proven live in this sandbox with a real headless browser and real mouse gestures — see "What was verified here" below. The one thing this sandbox cannot reach is the signed-in half of persistence: `dashboardPrefs.js` writes the layout to `profiles.prefs.dashboardLayout` (a Supabase row, read-modify-write so it never clobbers the site-planner's own keys in the same `prefs` bag) only when `userId` is set, and this sandbox's egress proxy CORS-blocks the Supabase auth handshake — there is no way to sign in here and prove the cloud row round-trips, or that it reads back correctly in a SECOND browser (a different signed-out-localStorage-mirror entirely).

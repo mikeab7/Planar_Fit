@@ -6,7 +6,7 @@
 // built to make the mechanism observable is usually built to make the reported failure mode
 // disappear — reading the REAL site model is what keeps this from becoming exactly that fixture).
 import { describe, it, expect, beforeEach } from "vitest";
-import { saveSite } from "../src/workspaces/site-planner/lib/storage.js";
+import { saveSite, setCurrentSiteId } from "../src/workspaces/site-planner/lib/storage.js";
 import { buildProjectNames, RESERVED_NAME_PREFIXES } from "../src/workspaces/model/lib/projectRefs.js";
 import { validateNameText } from "../src/workspaces/model/lib/namedRanges.js";
 import { createSheet } from "../src/workspaces/model/lib/sheetModel.js";
@@ -93,6 +93,49 @@ describe("buildProjectNames — Site.* / Plan.<building>.*", () => {
     saveSite({ id: "p6", els: [bld("b2", 20, 20)] });
     expect(buildProjectNames("p6")["plan.building2.sf"]).toBeUndefined();
     expect(buildProjectNames("p6")["plan.building1.sf"].value).toBe(20 * 20);
+  });
+
+  // NEW-1 — a project with several concepts/schemes is several `sites` rows sharing one
+  // `groupId`; `projectId` here is always the GROUP id, which by construction equals the
+  // ORIGINAL concept's own row id (storage.js mints a new project's first plan with
+  // `id === groupId`). Reading `loadSite(projectId)` directly therefore always resolved to
+  // that original concept, no matter which scheme the user actually had open — the live
+  // production bug: open a copy with its parcel deleted, and Site.Acres still reported the
+  // original's acreage. `Site.*` must track the OPEN concept, resolved the same way the Site
+  // Planner tab itself does (the last-opened-plan pointer, `getCurrentSiteId()`).
+  it("Site.Acres follows the OPEN concept/scheme, not the group's original row (B — fixed-concept bug)", () => {
+    const GROUP = "g1";
+    saveSite({ id: GROUP, groupId: GROUP, site: "Concept A", county: "harris", parcels: [{ id: "a", points: SQUARE_1000, active: true }] });
+    saveSite({ id: "g1copy", groupId: GROUP, site: "Concept A (copy)", county: "harris", parcels: [] });
+
+    // Concept A is the last-opened plan → Site.Acres reads Concept A's own acreage.
+    setCurrentSiteId(GROUP);
+    expect(buildProjectNames(GROUP)["site.acres"].value).toBeCloseTo(1000000 / 43560, 6);
+
+    // Switching to the copy (as the Site Planner does via goPlan → setCurrentSiteId) must
+    // change what Site.Acres reports — the copy has no parcel at all, so it reads #REF!,
+    // never the original's 9.9698 ac.
+    setCurrentSiteId("g1copy");
+    const namesForCopy = buildProjectNames(GROUP);
+    expect(isErrVal(namesForCopy["site.acres"].value)).toBe(true);
+    expect(namesForCopy["site.acres"].value.code).toBe(FORMULA_ERRORS.REF);
+
+    // Switching back resolves the original concept's real acreage again — proves this isn't
+    // a one-way latch, and survives a "reload" (a fresh call with no other state) because the
+    // resolution comes from the persisted currentSite pointer, not any in-memory cache.
+    setCurrentSiteId(GROUP);
+    expect(buildProjectNames(GROUP)["site.acres"].value).toBeCloseTo(1000000 / 43560, 6);
+  });
+
+  it("with no last-opened-plan pointer at all, Site.* falls back to the group's newest plan (matching what the Site Planner tab itself would resume into)", () => {
+    const GROUP = "g2";
+    saveSite({ id: GROUP, groupId: GROUP, site: "Concept A", county: "harris", parcels: [{ id: "a", points: SQUARE_1000, active: true }] });
+    saveSite({ id: "g2copy", groupId: GROUP, site: "Concept A (copy)", county: "harris", parcels: [] }); // saved after → newest
+
+    setCurrentSiteId(null); // e.g. a first visit to this project from a device that never opened it in the Site Planner
+    const names = buildProjectNames(GROUP);
+    expect(isErrVal(names["site.acres"].value)).toBe(true);
+    expect(names["site.acres"].value.code).toBe(FORMULA_ERRORS.REF);
   });
 });
 
