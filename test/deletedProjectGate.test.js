@@ -8,31 +8,38 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
  * cannot sign in to Supabase (Blocker: auth), and confirming it needs the exact owner-reported
  * project, not a synthetic one (Blocker: real-data). Both are filed as V### live-verify steps.
  *
- * What IS fully provable here, headless and Node-only: the single-row deletion check the whole
- * gate is built on (`cloudCheckDeleted`) answers every shape of row correctly, and the
- * `checkProjectDeletionStatus` wrapper Shell.jsx actually calls fails OPEN whenever the answer
+ * What IS fully provable here, headless and Node-only: the GROUP-level deletion check the whole
+ * gate is built on (`cloudCheckDeleted`) answers every shape of a project's rows correctly, and
+ * the `checkProjectDeletionStatus` wrapper Shell.jsx actually calls fails OPEN whenever the answer
  * is inconclusive (signed out, a thrown error, a pre-migration DB) — the property STANDING RULE
  * demands: never block a route on an absence of information, only on a proven fact.
  *
  * Mock the supabase client (same pattern as test/cloudListIdIntegrity.test.js) so this runs with
  * no network/config. Hoisted holder — a vi.mock factory can't close over a normal top-level var.
+ * `h.rows` is the in-memory `sites` table: `cloudCheckDeleted` (B1164192) asks it TWICE — once by
+ * `id`, once by `group_id` — since a project is every row sharing a group, not the single row
+ * whose id happens to equal it (see that function's own header).
  */
-const h = vi.hoisted(() => ({ row: null, error: null }));
+const h = vi.hoisted(() => ({ rows: [], error: null }));
 vi.mock("../src/workspaces/site-planner/lib/supabase.js", () => ({
   supabase: {
     from: () => ({
       select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({ data: h.row, error: h.error }),
+        // cloudCheckDeleted awaits this directly (Promise.all of two `.eq()` calls, no
+        // `.maybeSingle()`) — PostgREST-array style: every row matching `field === val`.
+        eq: (field, val) => Promise.resolve({
+          data: h.error ? null : h.rows.filter((r) => r && r[field] === val),
+          error: h.error,
         }),
       }),
       // ensureProjectRow's cloud push (cloudUpsert → casUpsert) INSERTs a brand-new row — the
-      // mock records it and makes it visible to the SAME select().eq().maybeSingle() chain
-      // above, so a later checkProjectDeletionStatus() call for the same id sees it, exactly
-      // as a real reload's fresh gate check would against the real database.
+      // mock records it and makes it visible to the SAME select().eq() lookups above, so a later
+      // checkProjectDeletionStatus() call for the same id sees it, exactly as a real reload's
+      // fresh gate check would against the real database.
       insert: (v) => ({
         select: async () => {
-          h.row = { id: v.id, group_id: v.group_id ?? null, site: v.site ?? null, name: v.name ?? null, deleted_at: null };
+          const row = { id: v.id, group_id: v.group_id ?? null, site: v.site ?? null, name: v.name ?? null, deleted_at: null };
+          h.rows = [...h.rows.filter((r) => r.id !== row.id), row];
           return { data: [{ version: 1 }], error: null };
         },
       }),
@@ -63,7 +70,7 @@ function mockLocalStorage() {
 }
 
 describe("cloudCheckDeleted — the one question a routed project id must answer before a workspace mounts", () => {
-  beforeEach(() => { h.row = null; h.error = null; });
+  beforeEach(() => { h.rows = []; h.error = null; });
 
   it("no signed-in uid → inconclusive, never a positive answer either way", async () => {
     const res = await cloudCheckDeleted(null, "s1");
@@ -72,7 +79,7 @@ describe("cloudCheckDeleted — the one question a routed project id must answer
   });
 
   it("a row that doesn't exist for this user at all reads MISSING, not deleted", async () => {
-    h.row = null;
+    h.rows = [];
     const res = await cloudCheckDeleted("u1", "nonexistent");
     expect(res.ok).toBe(true);
     expect(res.exists).toBe(false);
@@ -80,15 +87,15 @@ describe("cloudCheckDeleted — the one question a routed project id must answer
   });
 
   it("a live row (deleted_at null) reads live", async () => {
-    h.row = { id: "s1", group_id: "g1", site: "Concept A", name: null, deleted_at: null };
+    h.rows = [{ id: "s1", group_id: "g1", site: "Concept A", name: null, deleted_at: null }];
     const res = await cloudCheckDeleted("u1", "s1");
     expect(res.ok).toBe(true);
     expect(res.exists).toBe(true);
     expect(res.deleted).toBe(false);
   });
 
-  it("THE CORE REPRO: a soft-deleted row (deleted_at set) reads deleted, with restore-ready facts", async () => {
-    h.row = { id: "smtjb0lrexb3", group_id: "g1", site: "Concept A", name: null, deleted_at: "2026-09-03T20:13:59+00:00" };
+  it("a single-plan project (its own row IS the whole group) with deleted_at set reads deleted, with restore-ready facts", async () => {
+    h.rows = [{ id: "smtjb0lrexb3", group_id: "g1", site: "Concept A", name: null, deleted_at: "2026-09-03T20:13:59+00:00" }];
     const res = await cloudCheckDeleted("u1", "smtjb0lrexb3");
     expect(res.ok).toBe(true);
     expect(res.exists).toBe(true);
@@ -111,10 +118,78 @@ describe("cloudCheckDeleted — the one question a routed project id must answer
     expect(res.exists).toBe(true);
     expect(res.deleted).toBe(false);
   });
+
+  /* B1164192 (owner report 2026-09-07, "Richfield reads as deleted") — a Planyr project is every
+   * plan row sharing a group_id, not the single row whose id happens to equal it (that row is
+   * merely the ANCHOR — the plan the project was originally created from). A "duplicate and
+   * rename" then deleting the original anchor must NOT read as the whole project having been
+   * deleted while its siblings (the duplicate, and any other plans) are still live. Measured live
+   * on production against exactly this shape: group `smsdrvzr9gzx` ("Richfield", 3 live siblings)
+   * and group `smsrpaiqu5sv` ("Woods Road", 6 live siblings, a shared team project). */
+  describe("B1164192 — THE CORE REPRO: a project's ANCHOR row (id === group id) is soft-deleted but siblings in its group are live", () => {
+    it("reads LIVE, never deleted, when at least one sibling plan is live", async () => {
+      h.rows = [
+        { id: "smsdrvzr9gzx", group_id: "smsdrvzr9gzx", site: "Richfield", name: "Concept A", deleted_at: "2026-08-29T20:49:12+00:00" },
+        { id: "concept-b", group_id: "smsdrvzr9gzx", site: "Richfield", name: "Concept B", deleted_at: null },
+        { id: "concept-a-bn", group_id: "smsdrvzr9gzx", site: "Richfield", name: "Concept A BN", deleted_at: null },
+      ];
+      const res = await cloudCheckDeleted("u1", "smsdrvzr9gzx");
+      expect(res.ok).toBe(true);
+      expect(res.exists).toBe(true);
+      expect(res.deleted).toBe(false);
+      expect(res.deletedAt).toBe(null);
+    });
+
+    it("still reads LIVE when the anchor row was HARD-deleted (no row named by the group id exists at all)", async () => {
+      // The anchor itself is gone (purged, not merely binned) — only its siblings remain on file.
+      h.rows = [
+        { id: "concept-b", group_id: "smsrpaiqu5sv", site: "Woods Road", name: "Concept B", deleted_at: null },
+        { id: "concept-c", group_id: "smsrpaiqu5sv", site: "Woods Road", name: "Concept C", deleted_at: null },
+      ];
+      const res = await cloudCheckDeleted("u1", "smsrpaiqu5sv");
+      expect(res.ok).toBe(true);
+      expect(res.exists).toBe(true);
+      expect(res.deleted).toBe(false);
+    });
+
+    it("a shared TEAM project (rows carry no owning distinction this check reads) is unaffected — same group-liveness rule", async () => {
+      h.rows = [
+        { id: "team-anchor", group_id: "team-anchor", site: "Woods Road", name: "Concept A", deleted_at: "2026-08-13T21:21:18+00:00" },
+        { id: "team-plan-2", group_id: "team-anchor", site: "Woods Road", name: "Concept C", deleted_at: null },
+      ];
+      const res = await cloudCheckDeleted("u1", "team-anchor");
+      expect(res.exists).toBe(true);
+      expect(res.deleted).toBe(false);
+    });
+
+    it("a project where EVERY plan in the group is deleted still reads DELETED — the fix never widens who counts as live", async () => {
+      h.rows = [
+        { id: "gone-anchor", group_id: "gone-anchor", site: "Old Deal", name: "Concept A", deleted_at: "2026-08-01T00:00:00+00:00" },
+        { id: "gone-plan-2", group_id: "gone-anchor", site: "Old Deal (renamed)", name: "Concept B", deleted_at: "2026-08-02T00:00:00+00:00" },
+      ];
+      const res = await cloudCheckDeleted("u1", "gone-anchor");
+      expect(res.ok).toBe(true);
+      expect(res.exists).toBe(true);
+      expect(res.deleted).toBe(true);
+      // Reports the MOST RECENTLY deleted plan's facts — the one a "restore" offer would act on.
+      expect(res.deletedAt).toBe("2026-08-02T00:00:00+00:00");
+      expect(res.name).toBe("Old Deal (renamed)");
+    });
+
+    it("a project whose anchor row is alive (the common case) is untouched", async () => {
+      h.rows = [
+        { id: "healthy", group_id: "healthy", site: "Bain", name: null, deleted_at: null },
+        { id: "healthy-copy", group_id: "healthy", site: "Bain", name: "Copy", deleted_at: null },
+      ];
+      const res = await cloudCheckDeleted("u1", "healthy");
+      expect(res.exists).toBe(true);
+      expect(res.deleted).toBe(false);
+    });
+  });
 });
 
 describe("checkProjectDeletionStatus — the Shell.jsx route gate's own entry point", () => {
-  beforeEach(() => { h.row = null; h.error = null; setActiveUser(null); });
+  beforeEach(() => { h.rows = []; h.error = null; setActiveUser(null); });
 
   it("signed out → fails open (no soft-delete concept for a local-only project)", async () => {
     const res = await checkProjectDeletionStatus("s1");
@@ -123,7 +198,7 @@ describe("checkProjectDeletionStatus — the Shell.jsx route gate's own entry po
 
   it("signed in, delegates straight through to the real check", async () => {
     setActiveUser("u1");
-    h.row = { id: "s1", group_id: "g1", site: "Live One", deleted_at: null };
+    h.rows = [{ id: "s1", group_id: "g1", site: "Live One", deleted_at: null }];
     const res = await checkProjectDeletionStatus("s1");
     expect(res.ok).toBe(true);
     expect(res.deleted).toBe(false);
@@ -218,7 +293,7 @@ describe("projectGateStatus — B1202176: a lazily-created project must not read
  * `markProjectFreshlyMinted`'s grace is still what carries it across a reload for however long
  * its cap allows. */
 describe("ensureProjectRow — B1202176 ×2: the reload case, proven end-to-end through the real transport", () => {
-  beforeEach(() => { h.row = null; h.error = null; mockLocalStorage(); setActiveUser(null); });
+  beforeEach(() => { h.rows = []; h.error = null; mockLocalStorage(); setActiveUser(null); });
 
   it("THE CORE REPRO, closed for real: signed in, ensureProjectRow's write is what a POST-RELOAD gate check (freshlyCreated:false — no session memory) needs to read the project LIVE", async () => {
     setActiveUser("u1");

@@ -1345,8 +1345,40 @@ export async function restoreDeletedProject(ids) {
  * notes) and best-effort: a Drive/index failure here must never block the `sites` purge that
  * already happened, but it must never be silent either (LOUD-FAILURE).
  */
+/* B1164193 (found while investigating B1164192, "Richfield reads as deleted") — a purge must
+ * never destroy a project's shared Drive folder tree while the project still has LIVE plans
+ * hanging off the same group. Both callers below purge only the SPECIFIC plan row(s) named in
+ * `ids`/`row.id` — a plan discarded after a "duplicate and rename," or one that individually aged
+ * past retention — but `project_folders`/the Drive root are keyed on the whole GROUP, shared by
+ * every plan in it. Two of the owner's real projects ("Richfield", "Woods Road") carry exactly
+ * this shape today: one soft-deleted plan sharing a group with several live ones. This guard is
+ * NEW as of this fix, and it closes a live, ticking risk: `purgeProjectFoldersFor` itself (the
+ * function below) only started running at all yesterday (B1235169, pull request 1481) — before that,
+ * neither purge path touched Drive/`project_folders` at all, so this exact danger could not yet
+ * fire. Without this guard, either purge path hard-deleting that one plan would cascade
+ * `purgeProjectFoldersFor` into trashing the WHOLE project's folder tree/Drive root out from under
+ * the plans that are still open and in use — "Woods Road"'s anchor was binned 2026-08-13, so it
+ * had single-digit days left before the 30-day expiry sweep (`purgeExpiredDeletedProjects`, fired
+ * from `ProjectBreadcrumb.jsx` every time the project switcher dropdown opens) would have done
+ * exactly that with no user action at all.
+ *
+ * Fails SAFE: an inconclusive check (`ok:false` — offline, RLS, a thrown error) is treated as
+ * "still live" and the folder purge is skipped rather than risked on a maybe — a destructive,
+ * irreversible action needs a POSITIVE fact that the project is genuinely gone, never the absence
+ * of one. */
+async function groupStillHasLivePlans(groupId) {
+  if (!groupId) return false;
+  const status = await cloudCheckDeleted(activeUid(), groupId).catch(() => null);
+  if (!status || status.ok === false) return true;
+  return !!(status.exists && !status.deleted);
+}
+
 async function purgeProjectFoldersFor(groupId) {
   if (!groupId) return;
+  if (await groupStillHasLivePlans(groupId)) {
+    reportClientEvent("project-folder-purge-skipped", "a purged plan's project still has live plans in its group — its shared folder tree/Drive root was left alone", { groupId });
+    return;
+  }
   try {
     const { purgeProjectFolders } = await import("../../library/lib/folders.js");
     const r = await purgeProjectFolders(groupId);
