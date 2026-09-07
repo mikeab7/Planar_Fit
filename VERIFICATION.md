@@ -164,6 +164,20 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V940768 — B1294592: a `Site.*`/`Plan.*` formula reference tracks the OPEN concept/scheme in a multi-concept project, across a switch and a reload `Blocker: auth` `Blocker: real-data`
+
+**Why this needs its own real pass.** V901056 (`docs/archive/VERIFICATION-DONE.md`) proved the whole Site.*/Plan.*/Comp.* mechanism live end to end for a project with exactly ONE concept. This item's own bug report is specifically about a project with TWO — reproduced live on planyr.io production plus a direct database read (`site_elements`), which this sandbox cannot do (no Supabase credentials, no throwaway multi-concept project to point at). The RESOLUTION RULE itself — which concept a `Site.*`/`Plan.*` reference reads, keyed off `getCurrentSiteId()`/`pickResumeTarget`, the exact function the Site Planner tab's own boot-resume and cross-project-switch logic already goes through — is unit-tested end to end against the real storage/bootResume machinery in `test/modelProjectRefs.test.js`, not re-litigated here.
+
+**Steps, each with a named expected result:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Signed in, open a project with two concepts where the concepts genuinely differ (e.g. draw a boundary on Concept A, duplicate it, then delete the boundary on the copy).
+3. With Concept A open, go to the Spreadsheet tab and type `=Site.Acres` — **expect** it resolves to Concept A's own drawn acreage.
+4. Switch to the other concept via the plan switcher, return to the Spreadsheet tab — **expect** `=Site.Acres` now reads the OTHER concept's own acreage (or `#REF!` if that concept has no parcel), never the first concept's number.
+5. Reload the page with the second concept still the last one opened — **expect** `=Site.Acres` still resolves to that SAME concept's acreage after the reload, not the first concept's.
+6. Switch back to the first concept — **expect** `=Site.Acres` reads its acreage again, proving the resolution isn't a one-way latch.
+
+**Result:** ⏳ pending — needs a signed-in account with a real multi-concept project. `Cadence: once`.
+
 ### V656208 — B1167712: a site plan attaches to a site by footprint/name match, in any upload order, and detach/reattach are real and reversible `Blocker: auth` `Blocker: real-data`
 
 **Why this needs its own real pass, and why it can't run today.** The match rule (does an existing site's own point fall inside the plan's drawn, placed rectangle) and the mint-a-tracked-site fallback both need a real signed-in account's real site portfolio to run against — this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can sign in and exercise the live `resolveOrCreateTrackedSiteForOverlay` path end to end. The RULE itself is proven against the real production coordinates of the owner's own Airtex plan and Core 5 - West Hardy site (not synthetic ones) in `test/overlaySiteMatch.test.js`, including the exact false-positive class (a neighbour within the old comp radius but outside the plan's own footprint) the owner's correction was about.

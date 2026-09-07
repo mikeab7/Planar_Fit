@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-07 @ `09d0ff0c0` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-07 @ `882a5ec3` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -159,7 +159,7 @@ _713 source files mapped._
   - _exports_: `COMMAND_GROUPS`, `COMMANDS`, `decreaseIndentPatch`, `fuzzyScore`, `increaseIndentPatch`, `isCommandDisabled`, `resolveLabel`, `searchCommands`, `toggleBoldPatch`, `toggleItalicPatch`, `toggleStrikePatch`, `toggleUnderlinePatch`, `toggleWrapPatch`
 - **`src/workspaces/model/lib/csvIO.js`** — CSV round-trip: values-only export of the active sheet (via displayFor), import as a new appended sheet. Dependency-free.
   - _exports_: `addSheetFromCsvText`, `csvRowsToSheet`, `parseCsv`, `sheetToCsv`
-- **`src/workspaces/model/lib/editorFallback.js`** — pure helpers that apply a keystroke to `editValue` when a cell-grid keydown reaches the container instead of the focused in-cell `<input>`, so a slow render can no longer silently drop the keystroke
+- **`src/workspaces/model/lib/editorFallback.js`** — the in-cell editor's keystroke fallback: applies a keydown that reached the grid container (never the in-cell input) directly to `editValue`, so a slow-to-focus render can never silently drop a typed character.
   - _exports_: `applyFallbackEdit`, `editorHasFocus`, `fallbackEditAction`
 - **`src/workspaces/model/lib/formulaConsistency.js`** — Flags a formula whose R1C1-style shape breaks its row/column neighbours' pattern, or a hardcoded value sitting inside one; precision-tuned against a realistic pro-forma fixture.
   - _exports_: `findInconsistencies`

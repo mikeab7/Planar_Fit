@@ -54,7 +54,10 @@
  *     (`#NAME?`) and starts resolving the new one — nothing repoints automatically, matching how
  *     the formula engine already treats a renamed [Column] or a renamed named range.
  *   - `Site.Acres` / `Site.County` have no separate "identity" to lose — they always resolve to
- *     the CURRENT project's current site, or `#REF!` if there isn't one.
+ *     the CURRENTLY OPEN CONCEPT/SCHEME within the project (see `siteEntries`'s own header note on
+ *     `pickResumeTarget` — a project with several concepts is several `sites` rows sharing one
+ *     `groupId`, and this must track whichever one the user actually has open, never a fixed row),
+ *     or `#REF!` if there isn't one.
  *
  * DEFERRED, stated rather than silently dropped:
  *   - `Site.Jurisdiction` (in the brief's suggested naming) is NOT built. Unlike acreage/county,
@@ -78,7 +81,8 @@
  */
 import { errVal, FORMULA_ERRORS, makeDate, parseLooseDate } from "../../../shared/formula/formula.js";
 import { RESERVED_NAME_PREFIXES } from "./namedRanges.js";
-import { loadSite } from "../../site-planner/lib/storage.js";
+import { loadSite, loadPlansOfGroup, getCurrentSiteId } from "../../site-planner/lib/storage.js";
+import { pickResumeTarget } from "../../site-planner/lib/bootResume.js";
 import { siteAcres } from "../../site-planner/lib/siteBoundary.js";
 import { elementsOf, isBuilding, buildingNumbers } from "../../site-planner/lib/siteModel.js";
 
@@ -128,14 +132,34 @@ function buildingFootprintSf(el, els) {
  *  site model (see the file header for what's deliberately NOT here — Site.Jurisdiction). `null`/
  *  missing `projectId` reads exactly like a project with no site plan yet: `Site.*` reads
  *  `#REF!`, and no `Plan.*` names are injected at all (so referencing one is an ordinary
- *  `#NAME?`, not a special-cased error). */
+ *  `#NAME?`, not a special-cased error).
+ *
+ *  ⛔ `projectId` IS THE SITE-GROUP ID, NOT A PLAN ID — a project with more than one concept/scheme
+ *  is several `sites` ROWS sharing one `groupId`, and `loadSite(groupId)` only ever resolves the ONE
+ *  row whose own `id` happens to equal the group id (the original concept, by construction — see
+ *  storage.js's `saveSite`, which always mints a brand-new project's first plan with `id === groupId`).
+ *  Reading that row directly used to make `Site.Acres`/`Plan.*` silently quote the ORIGINAL concept's
+ *  geometry no matter which scheme the user actually has open — including after a reload, since the
+ *  reference never consulted which plan was active in the first place. Resolve the OPEN concept the
+ *  same way `SitePlannerApp` itself does: `pickResumeTarget` (bootResume.js) picks the group's plan
+ *  matching the last-opened-plan pointer (`getCurrentSiteId()`), falling back to the newest plan in
+ *  the group — the identical resolution the Site Planner tab is already showing for this project, so
+ *  there is no second "which scheme is open" answer to drift from it. */
 function siteEntries(projectId) {
   const out = {};
   const put = (name, value, sourceLabel) => { out[name.toLowerCase()] = { name, computed: true, value, sourceLabel }; };
 
   let site = null;
   if (projectId) {
-    try { site = loadSite(projectId); } catch (_) { site = null; }
+    try {
+      const openPlanId = pickResumeTarget({
+        routeProjectId: projectId,
+        currentId: getCurrentSiteId(),
+        plansOfGroup: loadPlansOfGroup,
+        hasSite: (id) => !!loadSite(id),
+      }) || projectId; // no plan resolved (e.g. the group's plans aren't loaded locally yet) — fall back to the group id itself, the pre-existing behavior
+      site = loadSite(openPlanId);
+    } catch (_) { site = null; }
   }
 
   // A site record with NO parcels drawn yet — or none currently ACTIVE (deactivated by a split,
