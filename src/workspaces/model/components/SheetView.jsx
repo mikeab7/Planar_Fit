@@ -36,7 +36,7 @@
  * insert/delete row/column and freeze toggles — the toolbar buttons for the SAME actions are a
  * Stage 2 item, so Stage 1 exposes them here first.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { colAt, rawAt, usedRangeEnd, rowHeightAt, DEFAULT_ROW_H, styleAt, mergeAt, isFormulaText, unsupportedFormulaAt, formatAt } from "../lib/sheetModel.js";
 import { displayFor, displayKindFor, displayColorFor, cellColorKind } from "../lib/sheetEngine.js";
 import { fitGeneralNumber } from "../lib/generalFit.js";
@@ -194,7 +194,7 @@ function measureTextWidth(text, font) {
 }
 const CELL_FONT = "12.5px system-ui, sans-serif"; // must match the cell's own rendered font below
 
-export default function SheetView({
+const SheetView = forwardRef(function SheetView({
   sheet, sheetName, evalResult, totalRows,
   selRange, setSelRange,
   onCommit, onBlankRange, onRenameColumn, onAddColumn,
@@ -229,8 +229,14 @@ export default function SheetView({
   // owner's own "let the rest live in the palette and the right-click menu" instruction. Each
   // calls the identical ModelApp.jsx handler the palette does.
   onApplyBorder, onSort, onToggleNameManager,
-}) {
+}, ref) {
   const outerRef = useRef(null);
+  // B1290496 — Name Box / Find / Name Manager navigation happens from an input OUTSIDE this
+  // component, so the DOM focus a mouse click gets for free (cellClick below) never lands here
+  // on its own: the caller has to ask for it explicitly once the jump has landed. Exposed only
+  // to the ONE caller that actually needs it (the Name Box's Enter handler) — Find/Name Manager
+  // deliberately keep focus in their own panel so repeated Enter/"Go" clicks keep working.
+  useImperativeHandle(ref, () => ({ focusGrid: () => outerRef.current?.focus() }), []);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(400);
   const [edit, setEdit] = useState(null);      // { r, c } | null
@@ -1382,4 +1388,6 @@ export default function SheetView({
       )}
     </div>
   );
-}
+});
+
+export default SheetView;

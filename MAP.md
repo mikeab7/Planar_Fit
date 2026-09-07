@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-07 @ `3e6587ee` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-07 @ `90fbb6268` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -152,7 +152,7 @@ _712 source files mapped._
 - **`src/workspaces/model/components/Ribbon.jsx`** — The Home-tab ribbon (Clipboard/Font/Borders/Alignment/Number/Cells/Sort & Filter), responsive via ribbonLayout.js — every group collapses into its own "…" popover as the container narrows.
   - _exports_: `AuditGroup`, `default (Ribbon)`
 - **`src/workspaces/model/components/SheetView.jsx`** — The virtualised sheet grid: row virtualization, rectangular selection, keyboard nav and the inline cell editor, mechanism lifted from the Schedule module's GridView.
-  - _exports_: `default (SheetView)`, `HEADER_H`, `ROW_H`
+  - _exports_: `default`, `HEADER_H`, `ROW_H`
 - **`src/workspaces/model/components/TabStrip.jsx`** — The sheet tab strip: add/rename (inline)/duplicate/delete/reorder (drag) a workbook sheet, pinned below the grid, outside its own scroller.
   - _exports_: `default`, `TAB_STRIP_HEIGHT`
 - **`src/workspaces/model/lib/commandRegistry.js`** — the ONE list of every Model workspace action, shared by the command palette and the Ribbon so neither can drift from what the other does

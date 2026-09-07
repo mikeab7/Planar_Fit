@@ -16,7 +16,7 @@ function colLabel(colIndex) {
   return s;
 }
 
-export default function FormulaBar({ sheet, row, col, onCommit, onGoTo, nameBoxRef }) {
+export default function FormulaBar({ sheet, row, col, onCommit, onGoTo, nameBoxRef, focusGrid }) {
   const address = `${colLabel(col)}${row + 1}`;
   const [value, setValue] = useState(() => formulaBarText(sheet, row, col));
   const [nameValue, setNameValue] = useState(address);
@@ -39,9 +39,9 @@ export default function FormulaBar({ sheet, row, col, onCommit, onGoTo, nameBoxR
 
   const commit = () => onCommit(row, col, value);
 
-  // Returns whether the jump succeeded, so the Enter handler knows whether to blur (leave a
-  // rejected entry focused and visibly flagged so the user can fix it in place, matching
-  // Excel's own Name Box — never hand focus away from an error the user hasn't seen yet).
+  // Returns whether the jump succeeded, so the Enter handler knows whether to hand focus to the
+  // grid (a rejected entry stays focused here, visibly flagged, so the user can fix it in place,
+  // matching Excel's own Name Box — never hand focus away from an error the user hasn't seen yet).
   const goToTyped = () => {
     const target = parseNameBoxAddress(nameValue, sheet.rowCount, sheet.columns.length);
     if (target) { onGoTo(target.r1, target.c1, target.r2, target.c2); return true; }
@@ -67,8 +67,14 @@ export default function FormulaBar({ sheet, row, col, onCommit, onGoTo, nameBoxR
         onFocus={(e) => { setNameFocused(true); setInvalid(false); e.target.select(); }}
         onChange={(e) => { setNameValue(e.target.value); setInvalid(false); }}
         onKeyDown={(e) => {
-          if (e.key === "Enter") { e.preventDefault(); if (goToTyped()) e.currentTarget.blur(); }
-          else if (e.key === "Escape") { e.preventDefault(); setNameValue(address); setInvalid(false); e.currentTarget.blur(); }
+          // ⛔ B1290496 — a resolved jump used to just `blur()` this input, which (with nothing
+          // else to take focus) leaves `document.activeElement === document.body`: the selection
+          // moves to the target cell but the KEYBOARD does not, so every keystroke typed right
+          // after is silently discarded — no error, nothing selected, nothing typed. `focusGrid()`
+          // hands DOM focus to the sheet grid itself (the same element a mouse click on the target
+          // cell would focus), so typing goes straight into the cell exactly like it does in Excel.
+          if (e.key === "Enter") { e.preventDefault(); if (goToTyped()) focusGrid?.(); }
+          else if (e.key === "Escape") { e.preventDefault(); setNameValue(address); setInvalid(false); focusGrid?.(); }
         }}
         onBlur={() => { setNameFocused(false); setNameValue(address); }}
         style={{
