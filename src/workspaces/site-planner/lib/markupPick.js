@@ -5,12 +5,16 @@
 // deliberately does NOT own for this surface — see its header note. Two things still need the
 // stack in PURE JS, independent of the DOM, and this sibling of measureHit.js (B910) provides them:
 //
-//   • B920 / NEW-1 — the ONE fill-aware rule the DOM render also follows: a CLOSED markup grabs by
-//     its whole INTERIOR only when it is FILLED (fillOpacity > 0 or a hatch is visible). An UNFILLED closed markup grabs
-//     on its STROKE + a tolerance only — so a big invisible boundary can't blanket everything under
-//     it (the reported "can't click the roads — a transparent polygon eats every click" bug). The
-//     canvas render sets pointerEvents "all" vs "stroke" off the very same visible-fill test,
-//     so the declarative hit area and this predicate agree by construction.
+//   • B920 / NEW-1 — the ONE fill-and-lock-aware rule the DOM render also follows: a CLOSED markup
+//     grabs by its whole INTERIOR when it is FILLED (fillOpacity > 0 or a hatch is visible), OR
+//     simply UNLOCKED — the ordinary case (draw a shape, click inside it to select it, exactly like
+//     every other drawing tool). Only a LOCKED + unfilled shape keeps the original B920 stroke-only
+//     grab: locking is the explicit signal a shape is a passive backdrop reference, and the reported
+//     case was exactly that — a locked, whole-site invisible boundary that must not blanket clicks on
+//     the roads under it (2026-07-21). A freshly drawn, unlocked polygon is not that case, and B920's
+//     fix had made it unselectable by interior click too (2026-09-07 owner report). The canvas render
+//     sets pointerEvents "all" vs "stroke" off the very same rule, so the declarative hit area and
+//     this predicate agree by construction.
 //   • B921 / NEW-2 — repeat-click / Alt-click must CYCLE down through every markup under the pointer
 //     so a covered shape is always reachable. Smaller-area-first (a small markup on a big one wins,
 //     matching the shared picker's B374 rule), array index breaks ties so the cycle is stable.
@@ -22,7 +26,8 @@ import { pointInRing, ringArea } from "./ringMath.js";
 
 const hyp = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const DEG = Math.PI / 180;
-const hasVisibleFill = (m) => (m.fillOpacity || 0) > 0 || (!!m.hatch && m.hatch !== "none");
+// NEW-1 (2026-09-07) — see the header note above: filled, OR unlocked, grabs by the whole body.
+const grabsWholeBody = (m) => (m.fillOpacity || 0) > 0 || (!!m.hatch && m.hatch !== "none") || !m.locked;
 
 // Ring area magnitude (feet²) — used only to RANK overlapping hits, so the sign is dropped.
 // One implementation, in ringMath.js; re-exported because callers and tests import it here.
@@ -85,14 +90,49 @@ export function markupHitModel(m) {
     case "traced":
     case "infwater": return { path: m.pts || [], closed: false, filled: false, area: 0 };
     case "polygon":
-    case "cloud": return { ring: m.pts || [], closed: true, filled: hasVisibleFill(m), area: ringArea(m.pts || []) };
-    case "rect": return { ring: boxCorners(m), closed: true, filled: hasVisibleFill(m), area: Math.abs((m.w || 0) * (m.h || 0)) };
-    case "ellipse": return { ring: ellipseRing(m), closed: true, filled: hasVisibleFill(m), area: Math.abs(Math.PI * (m.w || 0) * (m.h || 0) / 4) };
+    case "cloud": return { ring: m.pts || [], closed: true, filled: grabsWholeBody(m), area: ringArea(m.pts || []) };
+    case "rect": return { ring: boxCorners(m), closed: true, filled: grabsWholeBody(m), area: Math.abs((m.w || 0) * (m.h || 0)) };
+    case "ellipse": return { ring: ellipseRing(m), closed: true, filled: grabsWholeBody(m), area: Math.abs(Math.PI * (m.w || 0) * (m.h || 0) / 4) };
     case "encumbrance":
     case "easement": return { ring: m.pts || [], closed: true, filled: true, area: ringArea(m.pts || []) };
     case "utilRoute": return { ring: m.corridor || [], closed: true, filled: true, area: ringArea(m.corridor || []) };
     default: return null;
   }
+}
+
+// Sum of consecutive segment lengths (feet) — the open-path twin of `ringPerimeter` below.
+function polylineLength(pts) {
+  if (!pts || pts.length < 2) return 0;
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) L += hyp(pts[i - 1], pts[i]);
+  return L;
+}
+
+// Perimeter (feet) of a closed ring, including the closing edge back to the first vertex.
+function ringPerimeter(ring) {
+  if (!ring || ring.length < 2) return 0;
+  let L = 0;
+  for (let i = 0; i < ring.length; i++) L += hyp(ring[i], ring[(i + 1) % ring.length]);
+  return L;
+}
+
+// NEW-3 — a closed markup's user-facing SIZE: area (feet²) + perimeter (feet). Reads off the SAME
+// ring `markupHitModel` already builds for hit-testing (m.pts for polygon/cloud, the rotated
+// corners for rect, the sampled boundary for ellipse) — never a second geometry derivation, so this
+// can't disagree with what's drawn or with what the hit test already ranks by. Returns null for a
+// kind with no closed interior (an open path, or a kind not offered this readout).
+export function closedMarkupSize(m) {
+  const g = markupHitModel(m);
+  if (!g || !g.closed || !g.ring || g.ring.length < 2) return null;
+  return { area: g.area, perimeter: ringPerimeter(g.ring) };
+}
+
+// NEW-3 — an open markup's user-facing LENGTH (feet), off the SAME path the renderer draws
+// (m.a/m.b for a line, m.pts for a polyline). Returns null for a closed kind.
+export function openMarkupLength(m) {
+  const g = markupHitModel(m);
+  if (!g || g.closed) return null;
+  return polylineLength(g.path);
 }
 
 // Does feet-point `p` land on markup `m` within `tol` feet? Returns { area } (the ranking key) or
