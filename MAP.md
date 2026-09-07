@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-07 @ `882a5ec3` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-07 @ `00e5d8d` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -176,7 +176,7 @@ _713 source files mapped._
 - **`src/workspaces/model/lib/projectCompsFetch.js`** — Minimal, narrowly-scoped read of `public.comps` (own+team rows) for the `Comp.<title>.*` live data refs — deliberately not the shared comps lib, to avoid pulling its unused derivations into the Site route's bundle.
   - _exports_: `fetchProjectNameComps`
 - **`src/workspaces/model/lib/projectRefs.js`** — Exposes the open project's site plan / leasing comps as read-only, namespaced formula names (`Site.Acres`, `Plan.Building1.SF`, `Comp.<title>.RentPSF`), resolved through the same "name" AST node as a user-defined named range.
-  - _exports_: `buildProjectNames`, `RESERVED_NAME_PREFIXES`
+  - _exports_: `buildProjectNames`, `openConceptName`, `RESERVED_NAME_PREFIXES`
 - **`src/workspaces/model/lib/ribbonLayout.js`** — Pure, DOM-free math deciding which ribbon groups fit inline vs. collapse into a "More ▾" popover at a given container width.
   - _exports_: `computeRibbonLayout`, `MORE_BUTTON_WIDTH`, `RIBBON_GROUPS`
 - **`src/workspaces/model/lib/rowLayout.js`** — Pure variable-row-height offset/search math behind SheetView's virtualized window (cumulative offsets + binary search), DOM-free for unit testing.
