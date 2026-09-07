@@ -562,9 +562,13 @@ export default function ProjectBreadcrumb({
     // group at all (never pulled, or a stale/emptied cache) — a legitimate "nothing to delete here"
     // outcome that used to read as a silent no-op with no message at all, indistinguishable from the
     // menu simply being broken. Surface it the same way a real cloud failure is surfaced.
+    // ⛔ B1303824 — `deleteSiteGroup` now asks the CLOUD directly whenever the local cache is empty
+    // (see its own header), so `removed: 0` means neither this device NOR the account has anything
+    // by that id — the old "reload and try again" advice no longer applies (a reload can't surface
+    // a project that genuinely isn't there).
     Promise.resolve(storeDelete(id)).then((res) => {
       if (res && res.ok === false) flashToast(res.error || "That project couldn't be fully deleted — it may reappear when you reload.");
-      else if (res && res.ok && res.removed === 0) flashToast("Nothing was deleted — this device doesn't have that project's plans loaded. Reload and try again.");
+      else if (res && res.ok && res.removed === 0) flashToast("Nothing was deleted — this project doesn't exist on this device or in your account.");
       refresh();
       notifyStoreChange();
     });
@@ -977,7 +981,10 @@ export default function ProjectBreadcrumb({
                   {/* NEW-1 — the delete is now recoverable, so the confirm says so instead of the
                       old "can't be undone" (which is no longer true, and made the stakes read higher
                       than they are). Permanent destruction lives behind "Delete forever" in the bin. */}
-                  Delete <strong style={{ color: "var(--text-primary)" }}>{menuFor.name}</strong>? It moves to Recently deleted — you can restore it for {DELETED_RETENTION_DAYS} days.
+                  {/* B1303825 — a destructive confirmation must always name its target; a falsy
+                      `menuFor.name` (never expected, but not provably impossible — `openManageMenu`
+                      snapshots `p.name` at click time) must never render as a blank "Delete ?". */}
+                  Delete <strong style={{ color: "var(--text-primary)" }}>{menuFor.name || "this project"}</strong>? It moves to Recently deleted — you can restore it for {DELETED_RETENTION_DAYS} days.
                   {/* NEW-3 — say what ELSE is filed here, in as many words, before it goes.
                       Absent when there is nothing to say (PANEL-BREVITY); an unknown count is
                       NAMED as unknown, never rendered as a confident zero. */}

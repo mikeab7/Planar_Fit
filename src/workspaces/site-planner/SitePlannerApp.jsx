@@ -17,7 +17,7 @@ import { loadUserPrefs } from "./lib/userPrefs.js";
  * Site route's own tier (`SitePlanner.jsx` imports userPrefs statically), so these are plain
  * static edges and add no chunk. */
 const SHARE_LOADERS = { loadPrefs: loadUserPrefs, listTeams: listMyTeams };
-import { migrateOldAutosave, migrateSiteGroups, migrateScenarios, initHistoryStore, loadSitesList, loadPlansOfGroup, renameSiteGroup, repairSplitProjectNames, groupOf, loadSite, saveSite, deleteSite, getCurrentSiteId, setCurrentSiteId, setActiveUser, pushSiteToCloud, pullCloud, importLegacyIntoCloud, pendingLegacyCount, stageLegacySite, discardLegacySite } from "./lib/storage.js";
+import { migrateOldAutosave, migrateSiteGroups, migrateScenarios, initHistoryStore, loadSitesList, loadPlansOfGroup, renameSiteGroup, deleteSiteGroup as storageDeleteSiteGroup, repairSplitProjectNames, groupOf, loadSite, saveSite, deleteSite, getCurrentSiteId, setCurrentSiteId, setActiveUser, pushSiteToCloud, pullCloud, importLegacyIntoCloud, pendingLegacyCount, stageLegacySite, discardLegacySite } from "./lib/storage.js";
 import { cloudParcelRows, cloudElementRecency } from "./lib/cloudSync.js";
 import { summarizeParcelRows } from "./lib/parcelSummary.js";
 import { summarizeElementRecency, groupRecencyMs } from "./lib/siteRecency.js";
@@ -898,14 +898,35 @@ export default function App({
 
   // Delete a whole site (every plan in its group) — used from the map, where each
   // entry represents a location, not an individual plan.
+  //
+  // ⛔ B1303824 — `loadSite(id)` was a bare local-cache lookup, so `!rec` (no plan cached under
+  // this exact id on THIS device) made the whole function return with NO error, NO toast, and NO
+  // network call at all — a project genuinely live in the cloud (created elsewhere, or not yet
+  // pulled here) silently failed to delete, indistinguishable from a broken button. `id` IS the
+  // group id whenever this device has nothing cached for it (every caller of onDeleteSite passes a
+  // site's own `.id`, which for an ungrouped/never-pulled record already equals its group id), so
+  // fall back to it and let storage.js's deleteSiteGroup ask the cloud directly rather than
+  // reporting a false "there's nothing to delete" via total silence.
   const deleteSiteGroup = async (id) => {
-    const rec = loadSite(id); if (!rec) return;
-    const plans = loadPlansOfGroup(groupOf(rec));
+    const rec = loadSite(id);
+    const groupId = rec ? groupOf(rec) : id;
+    const plans = loadPlansOfGroup(groupId);
     const hadActive = plans.some((s) => s.id === activeSiteId);
-    const label = rec.site || rec.name || "this site";
+    const label = (rec && (rec.site || rec.name)) || "this site";
     // Unmount the (now tombstone-protected) planner BEFORE removing rows so its persist-on-leave
     // can't race the delete; the storage guard (B372) makes it safe even if the order shifts.
     if (hadActive) setActiveSiteId(null);
+    if (!plans.length) {
+      const res = await storageDeleteSiteGroup(groupId);
+      refreshSites();
+      // B1303824 — distinct from reportDeleteResult's ordinary 0-row-is-fine reading (a per-plan
+      // cloudDelete legitimately returns removed:0 for "already gone"): THIS branch only runs when
+      // the local cache had nothing to enumerate at all, so a genuine removed:0 here means the
+      // project doesn't exist locally OR in the cloud — worth saying, not a silent close.
+      if (res && res.ok !== false && res.removed === 0) setDeleteError(`${label} doesn't exist on this device or in your account — nothing was deleted.`);
+      else await reportDeleteResult([res], `"${label}"`);
+      return;
+    }
     const results = await Promise.all(plans.map((s) => deleteSite(s.id)));
     refreshSites();
     await reportDeleteResult(results, `"${label}"`);
