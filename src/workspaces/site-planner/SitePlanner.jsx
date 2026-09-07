@@ -149,6 +149,7 @@ import PanelChrome from "../../shared/ui/PanelChrome.jsx";
 import FloatingPanel from "../../shared/ui/FloatingPanel.jsx";
 import { clampToBounds, initialFloatPos, reconcileForNarrow, shouldInspectorTakeDock, dockAfterRelinquish, FLOAT_MIN_WIDTH, FLOAT_SIZE } from "../../shared/ui/floatingPanel.js";
 import { safeAreaInsets } from "../../shared/ui/safeAreaInsets.js";
+import { publishBottomSheetHeight } from "../../shared/ui/bottomSheetTracker.js";
 import { isPhoneSheetMode, heightForSnap, resolveDragSnap, keyboardInsetPx, clampSheetHeightForKeyboard, selectionCoverDeltaPx } from "./lib/propertiesSheet.js";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
 /* NEW-2 — the ONE floor a header crumb may be squeezed to, shared with the project crumb so the
@@ -17641,6 +17642,22 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     sheetRenderH = clampSheetHeightForKeyboard(sheetHeightPx, vh, sheetKbInset);
   }
 
+  /* B1215682/NEW-3 (owner iPhone review) — the global help/report "?" FAB (app/HelpReportControl.jsx)
+   * is fixed bottom-right with no idea this sheet exists, so it used to render on top of the
+   * sheet's own top-right corner, over the "Element" collapse/close row. Lifting it above the
+   * sheet's own top edge (the `data-canvas-corner` contract `cornerClearanceFromBottom` already
+   * offers) was tried and measured to collide with the map's own "View"/"Layers" pills at the
+   * sheet's taller drag detent (cornerClearanceFromBottom only reasons about occupants near the
+   * bottom edge, not chrome pinned near the top competing for the same vertical band) — so the
+   * control hides outright instead, reusing the SAME shared signal FloatingNotice already
+   * subscribes to for the Food module's bottom sheet (`bottomSheetTracker.js`'s own header:
+   * "a floating notice can mount from anywhere... there is no shared ancestor" applies here
+   * identically). Zeroed whenever the sheet is closed or this component unmounts. */
+  useEffect(() => {
+    publishBottomSheetHeight(phoneSheetSolo ? sheetRenderH : 0);
+    return () => publishBottomSheetHeight(0);
+  }, [phoneSheetSolo, sheetRenderH]);
+
   const onSheetHandlePointerDown = (e) => {
     if (e.button != null && e.button !== 0) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -24447,7 +24464,20 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
                 control INSIDE the sheet is bumped to the new `touch` step via one scoped rule
                 keyed off the token's CSS mirror (`--control-h-touch`, index.css) — never a raw
                 number, and never touching a control anywhere else in the app. */}
-            <style>{`[data-bottom-sheet="properties"] button, [data-bottom-sheet="properties"] input, [data-bottom-sheet="properties"] select, [data-bottom-sheet="properties"] textarea { min-height: var(--control-h-touch); } [data-bottom-sheet="properties"] button { min-width: var(--control-h-touch); }`}</style>
+            <style>{`[data-bottom-sheet="properties"] button, [data-bottom-sheet="properties"] input, [data-bottom-sheet="properties"] select, [data-bottom-sheet="properties"] textarea { min-height: var(--control-h-touch); } [data-bottom-sheet="properties"] button { min-width: var(--control-h-touch); }
+              /* B1215682/NEW-4 — the ▲/▼ number stepper reads as a spinner ATTACHED to its field,
+                 not two loose buttons floating beside it: laid out side-by-side instead of stacked,
+                 each no taller than the input's own touch-floor height, narrower than the blanket
+                 44px button floor above (a stepper half is still ≥32px wide against the input's
+                 full 44px height — an elongated pair, same shape every platform quantity-stepper
+                 uses, not a square-per-button minimum). */
+              [data-bottom-sheet="properties"] [data-num-stepper] { flex-direction: row !important; gap: 3px !important; align-self: stretch; }
+              [data-bottom-sheet="properties"] [data-num-stepper] button { min-width: 32px; }
+              /* B1215682/NEW-5 — label and value sit ADJACENT, not at opposite edges of the full
+                 sheet width: the row's own inline justify-content is overridden (it is set inline,
+                 so this needs the specificity bump) rather than pushing the control flush right
+                 with the whole sheet's width of dead air between the two. */
+              [data-bottom-sheet="properties"] [data-field-group] { justify-content: flex-start !important; }`}</style>
             <div data-testid="properties-sheet-handle" onPointerDown={onSheetHandlePointerDown} onPointerMove={onSheetHandlePointerMove} onPointerUp={endSheetHandleDrag} onPointerCancel={endSheetHandleDrag}
               style={{ flex: "0 0 auto", display: "flex", justifyContent: "center", alignItems: "center", height: CONTROL_H.touch, cursor: "grab", touchAction: "none" }}>
               <span aria-hidden="true" style={{ width: 36, height: 4, borderRadius: RADIUS.pill, background: "var(--border-strong)" }} />
@@ -24529,7 +24559,12 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               // resolve to 2 elements (a Playwright strict-mode violation) any time a multi-selection's
               // Properties was open.
               <div>
-              <Section title={`${multi.length} selected`}>
+              {/* B1215682/NEW-2 — on the phone bottom sheet, the chrome row directly above (the
+                  "Element" collapse header) already reads "N selected" verbatim — an exact
+                  byte-for-byte duplicate, unlike the desktop docked panel where this Section is
+                  the ONLY place that count appears. Suppressing it here (not on desktop) reclaims
+                  a whole card's worth of vertical space with zero information loss. */}
+              <Section title={phoneSheetSolo ? false : `${multi.length} selected`}>
                 {caps.includes("fillOpacity") && (
                   <Field label="Opacity">
                     <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -25005,9 +25040,17 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               row above already reads "ELEMENT · DETENTION POND" and carries the collapse chevron, so
               a repeated "DETENTION POND" section header was a double title. The title string
               "DETENTION POND" now appears exactly once (in the chrome). Other element types keep
-              their "Selected · {label}" section header. */}
+              their "Selected · {label}" section header — desktop has the vertical room to spare and
+              a few types (e.g. "Paving / Drive") carry a qualifier the chrome row's own shortened
+              label drops.
+              ⛔ B1215682/NEW-2 (owner iPhone review) — ON THE PHONE SHEET the pond exception above
+              generalizes to every type whose full label matches what the chrome already shows: the
+              sheet's own screenshot showed "ELEMENT · BUILDING" then "SELECTED · BUILDING" stacked
+              with two cards' worth of padding between them and only two fields left on screen. Never
+              drop a type whose label carries a " / " qualifier (paving) — that text exists nowhere
+              else, so suppressing it there would be a real information loss, not just tidying. */}
           {!multiStyleable && selEl && (
-            <Section title={selEl.type === "pond" ? false : `Selected · ${TYPE[selEl.type].label}`}>
+            <Section title={selEl.type === "pond" || (phoneSheetSolo && !(TYPE[selEl.type]?.label || "").includes(" / ")) ? false : `Selected · ${TYPE[selEl.type].label}`}>
               {/* NEW-1/B872 — a RESHAPED building (footEdit: points + a dock frame) keeps the full building
                   inspector (Footprint reshape controls, dock zones, structure, column grid), routed through
                   the isBuilding branch below whose Footprint group handles the polygon case. A hand-CLICK-
@@ -29366,7 +29409,13 @@ function NumInput({ value, onCommit, min, max, style, placeholder, step, coarse,
   return stack(
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
       {input}
-      <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {/* B1215682/NEW-4 (owner iPhone review) — `data-num-stepper` is a plain marker, invisible
+          outside the phone sheet: the touch-floor rule above (`min-height`/`min-width:
+          var(--control-h-touch)`) bumps EVERY button uniformly, so this 18×12 desktop pair became
+          two stacked 44×44 boxes — taller than the 44px input beside them and read as two loose
+          buttons rather than a spinner attached to the field. The scoped stylesheet re-lays this
+          one marked span into a side-by-side pair sized to the input's own height instead. */}
+      <span data-num-stepper="1" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         <button type="button" style={spinBtn} aria-label="Increase" title="Increase (↑ · Shift for a larger step)"
           onMouseDown={(e) => e.preventDefault()} onClick={() => nudge(step)}>▲</button>
         <button type="button" style={spinBtn} aria-label="Decrease" title="Decrease (↓ · Shift for a larger step)"
