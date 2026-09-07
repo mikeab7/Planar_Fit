@@ -13,11 +13,30 @@
  * Card content is read-only and best-effort: every data source degrades to an empty/"no data"
  * state on failure (LOUD-FAILURE is for writes; a dashboard summary card that can't reach one of
  * five independent sources should still render the other four, not blank the page).
+ *
+ * ── The arrangeable grid (NEW-1, the react-grid-layout rework) ────────────────────────────────
+ * The original release (B1213313) hand-rolled HTML5 native drag-and-drop over a CSS auto-fit
+ * grid, with resize limited to one wide/normal toggle. This uses react-grid-layout (MIT; pulls
+ * react-draggable + react-resizable, ~35 KB minified combined — well inside the bundle budget,
+ * see the item this shipped under) for real free-form drag/resize: cards drag by their own
+ * header only (DashboardCard's `dashboard-card-drag-handle` class, matched via `draggableHandle`
+ * below — a native-drag whole-card wrapper couldn't tell "reorder this" from "scroll this card's
+ * list"), resize from the bottom-right corner only (`resizeHandles={["se"]}`), and every card
+ * type carries its own minimum footprint (CARD_DEFS' minW/minH) so it can't be crushed to
+ * unreadable.
+ *
+ * Below NARROW_BREAKPOINT_PX react-grid-layout isn't mounted at all — "don't let a phone
+ * drag-resize a grid it cannot see" is satisfied by there being no grid to drag in the first
+ * place; cards render as a plain single-column stack, ordered by the position the user actually
+ * arranged on the wide grid (lib/dashboardLayout.js's narrowOrder — top-to-bottom, left-to-right
+ * by x/y, never by array storage order, which carries no meaning once cards have x/y positions).
+ * Remove / Add / Reset stay live at any width; only the drag/resize gesture is width-gated.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import GridLayout, { WidthProvider } from "react-grid-layout";
+import "react-grid-layout/css/styles.css";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
 import { Button, ToggleChip } from "../../shared/ui/controls.jsx";
-import { RADIUS } from "../../shared/ui/radius.js";
 import DashboardCard from "./components/DashboardCard.jsx";
 import {
   JumpBackInCard, PipelineCard, GoingQuietCard, CompsSummaryCard, ScheduleHealthCard,
@@ -25,7 +44,10 @@ import {
 } from "./components/DashboardCards.jsx";
 import { NeedsAttentionCard } from "./components/NeedsAttentionCard.jsx";
 import { PursuitsCard } from "./components/PursuitsCard.jsx";
-import { CARD_DEFS, normalizeLayout, availableToAdd, addCard, removeCard, toggleCardSize, moveCard } from "./lib/dashboardLayout.js";
+import {
+  CARD_DEFS, GRID_COLS, normalizeLayout, availableToAdd, addCard, removeCard, resetLayout,
+  applyGridChange, narrowOrder, toRglItem,
+} from "./lib/dashboardLayout.js";
 import { loadDashboardLayout, saveDashboardLayout } from "./lib/dashboardPrefs.js";
 import { fetchSiteSummaries } from "./lib/dashboardSitesFetch.js";
 import { fetchCompsCounts } from "./lib/dashboardCompsFetch.js";
@@ -40,15 +62,44 @@ import { needsAttentionList } from "./lib/needsAttentionList.js";
 import { pursuitsTable, quietDaysByGroupFromRows } from "./lib/pursuitsList.js";
 
 const SAVE_DEBOUNCE_MS = 900;
+const ROW_HEIGHT_PX = 32;
+const GRID_MARGIN_PX = 14;
+// Below this measured grid-width, react-grid-layout's 12-column grid has no room left to be
+// useful (a card's own minW alone would crowd several columns), so the Dashboard renders a plain
+// single-column stack instead — see this file's own header, "don't let a phone drag-resize a
+// grid it cannot see".
+const NARROW_BREAKPOINT_PX = 640;
+
+const ReactGridLayout = WidthProvider(GridLayout);
+
+function layoutKeyOf(layout) {
+  return JSON.stringify([...layout].sort((a, b) => a.key.localeCompare(b.key)));
+}
+
+function useMeasuredWidth() {
+  const ref = useRef(null);
+  const [width, setWidth] = useState(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width;
+      if (typeof w === "number") setWidth(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width];
+}
 
 export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler }) {
   const [layout, setLayout] = useState(() => normalizeLayout(null));
   const [customizing, setCustomizing] = useState(false);
   const [saveNote, setSaveNote] = useState(null); // null | "saved" | "local" | "error"
-  const dragFromRef = useRef(null);
-  const [dragOverIndex, setDragOverIndex] = useState(null);
   const layoutLoadedRef = useRef(false);
   const saveTimerRef = useRef(null);
+  const [gridWrapRef, gridWidth] = useMeasuredWidth();
+  const isNarrow = gridWidth != null && gridWidth < NARROW_BREAKPOINT_PX;
 
   // Load the saved layout once per mount (this component is not kept alive — see Shell.jsx).
   useEffect(() => {
@@ -72,6 +123,17 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout, userId]);
+
+  // react-grid-layout calls onLayoutChange on mount and on every width recalculation, not just a
+  // real drag/resize — most of those echo back the SAME grid-unit positions (only pixel sizes
+  // changed), so this skips the state update (and the save-debounce it would otherwise re-arm)
+  // when nothing actually moved.
+  const onGridLayoutChange = (rglLayout) => {
+    setLayout((l) => {
+      const next = applyGridChange(l, rglLayout);
+      return layoutKeyOf(next) === layoutKeyOf(l) ? l : next;
+    });
+  };
 
   // ── Data: one fetch per source, in parallel, once per mount. ──────────────────────────────
   const [sites, setSites] = useState([]);
@@ -139,7 +201,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   const openTask = (row) => onOpenTaskInScheduler?.({ linkedSiteId: row.linkedSiteId, taskId: row.taskId });
 
   // NEW-1 — while data is still loading every slot renders the SAME stable-height skeleton
-  // instead of its real (variable-height) card; see the `dataReady` effect above.
+  // instead of its real (variable-height) content; see the `dataReady` effect above.
   const SKELETON_ROWS = { jumpBackIn: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 2, goingQuiet: 3 };
   const CARD_RENDERERS = dataReady ? {
     jumpBackIn: () => <JumpBackInCard {...cardData.jumpBackIn} onOpenProject={openProject} onOpenDoc={openDoc} />,
@@ -152,6 +214,23 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   } : Object.fromEntries(Object.keys(CARD_DEFS).map((k) => [k, () => <CardSkeleton rows={SKELETON_ROWS[k]} />]));
 
   const toAdd = availableToAdd(layout);
+  const orderedForNarrow = isNarrow ? narrowOrder(layout) : layout;
+
+  const cardEl = (entry) => {
+    const def = CARD_DEFS[entry.key];
+    const render = CARD_RENDERERS[entry.key];
+    if (!def || !render) return null;
+    return (
+      <DashboardCard
+        title={def.title}
+        customizing={customizing}
+        showDragHandle={!isNarrow}
+        onRemove={() => setLayout((l) => removeCard(l, entry.key))}
+      >
+        {render()}
+      </DashboardCard>
+    );
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -172,6 +251,9 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
               {saveNote === "saved" ? "Saved" : saveNote === "local" ? "Saved on this device" : "Couldn't save — try again"}
             </span>
           )}
+          {customizing && (
+            <Button size="sm" variant="ghost" onClick={() => setLayout(resetLayout())}>Reset layout</Button>
+          )}
           <Button
             size="sm"
             variant={customizing ? "primary" : "ghost"}
@@ -181,43 +263,33 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
           </Button>
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-            gap: 14,
-            maxWidth: 1040,
-            margin: "0 auto",
-          }}
-        >
-          {layout.map((entry, i) => {
-            const def = CARD_DEFS[entry.key];
-            const render = CARD_RENDERERS[entry.key];
-            if (!def || !render) return null;
-            return (
-              <DashboardCard
-                key={entry.key}
-                title={def.title}
-                wide={entry.size === "wide"}
-                customizing={customizing}
-                dragOver={dragOverIndex === i}
-                draggable={customizing}
-                onDragStart={() => { dragFromRef.current = i; }}
-                onDragOver={(e) => { if (customizing) { e.preventDefault(); setDragOverIndex(i); } }}
-                onDragEnd={() => setDragOverIndex(null)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  if (dragFromRef.current != null) setLayout((l) => moveCard(l, dragFromRef.current, i));
-                  dragFromRef.current = null;
-                  setDragOverIndex(null);
-                }}
-                onToggleSize={() => setLayout((l) => toggleCardSize(l, entry.key))}
-                onRemove={() => setLayout((l) => removeCard(l, entry.key))}
-              >
-                {render()}
-              </DashboardCard>
-            );
-          })}
+        <div ref={gridWrapRef} style={{ maxWidth: 1040, margin: "0 auto" }}>
+          {isNarrow ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: GRID_MARGIN_PX }}>
+              {orderedForNarrow.map((entry) => (
+                <div key={entry.key}>{cardEl(entry)}</div>
+              ))}
+            </div>
+          ) : (
+            <ReactGridLayout
+              className="dashboard-grid"
+              layout={layout.map(toRglItem)}
+              cols={GRID_COLS}
+              rowHeight={ROW_HEIGHT_PX}
+              margin={[GRID_MARGIN_PX, GRID_MARGIN_PX]}
+              containerPadding={[0, 0]}
+              isDraggable={customizing}
+              isResizable={customizing}
+              draggableHandle=".dashboard-card-drag-handle"
+              resizeHandles={["se"]}
+              compactType="vertical"
+              onLayoutChange={onGridLayoutChange}
+            >
+              {layout.map((entry) => (
+                <div key={entry.key}>{cardEl(entry)}</div>
+              ))}
+            </ReactGridLayout>
+          )}
         </div>
 
         {customizing && (
