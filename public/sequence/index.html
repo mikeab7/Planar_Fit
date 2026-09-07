@@ -6954,15 +6954,13 @@ function App() {
     (mq.addEventListener ? mq.addEventListener('change', h) : mq.addListener(h));
     return () => (mq.removeEventListener ? mq.removeEventListener('change', h) : mq.removeListener(h));
   }, []);
-  // Which half of Split view shows at phone width (isMobile) — Split cannot show two panes on a
-  // phone (each would be an unusable strip), so it collapses to ONE SCREEN AT A TIME. B1241747
-  // (NEW-4) — set by tapping Grid/Gantt on the EXISTING header pill (never a second, phone-only
-  // switcher — see that pill's own comment for the mechanism), so `data.view` itself never leaves
-  // "split" and a wider screen still opens on the real two-pane Split with nothing forgotten.
-  // Irrelevant at tablet/desktop width, where Split still renders both panes exactly as before.
-  // Defaults to "grid" — the same pane phone width showed (silently, with no way off it) before
-  // #1490's fix, so a phone session that never taps Gantt sees no change.
-  const [phonePane, setPhonePane] = useState("grid");
+  // B1281648 (RECURRENCE ×3 of B1241745) — Split at phone width used to collapse to ONE pane at a
+  // time (a `phonePane` state switched by the header pill — see the pill's own history comment
+  // below). The owner rejected that shape on a real iPhone across three shipped attempts (#1490,
+  // #1497, #1504): a single pane behind the "Split" tab is indistinguishable from just picking
+  // Grid or Gantt directly, so it reads as "nothing happens." Split now renders BOTH panes at
+  // once, stacked vertically, at every width (`SplitView`'s own `isMobile` branch) — so there is
+  // no longer a "which pane is phone-Split showing" question, and this state is gone.
   const [pdfExportOpen, setPdfExportOpen] = useState(false);
   const [projCtx,    setProjCtx]    = useState(null);
   const [taskCtx,    setTaskCtx]    = useState(null);
@@ -8914,13 +8912,11 @@ function App() {
     if (!inShell || !data) return;
     const sec = data.section ?? "projects";
     const section = sec === "suggestions" ? "projects" : sec;
-    // B1241744/B1241745/B1241747 — effective view: never persisted to data.view. At phone width,
-    // Gantt/Grid render exactly what the user picked (no silent override); Split collapses to
-    // whichever pane `phonePane` names (set via the header's own Grid/Split/Gantt pill — see its
-    // comment — never a second switcher) since it cannot show two panes on a phone. Must match the
-    // body switch below exactly, or the shell's lifted zoom control (which reads `zoomable` off
-    // this) can disagree with what is actually on screen.
-    const view = isMobile ? (data.view === "split" ? phonePane : (data.view ?? "grid")) : (data.view ?? "grid");
+    // B1281648 — effective view is simply `data.view` at every width now: Split renders both
+    // panes stacked at phone width instead of collapsing to one, so there is no longer a
+    // width-dependent override here. Must match the body switch below exactly, or the shell's
+    // lifted zoom control (which reads `zoomable` off this) can disagree with what is on screen.
+    const view = data.view ?? "grid";
     const state = {
       view, section, isMobile: !!isMobile,
       zoomPct: Math.round((ganttPPD || 22) / 6 * 100),
@@ -9194,7 +9190,7 @@ function App() {
   // right-clicked/context row for "Move to…"); structuralTargets expands it to the whole active
   // selection when the anchor is part of one, exactly like indent/outdent do.
   const moveRows = (anchorId, destParentId, insertAfterId) => moveSelectionByIds(structuralTargets(anchorId), destParentId, insertAfterId);
-  const shared = {tasks: flatTasks, succMap, updateTask, deleteTask, getTaskName, proj, setData, setNotesCtx, edit, setEdit, editStartChar, selectedId, setSelectedId, selRange, setSelRange, selectedColIdx, setSelectedColIdx, goToFocus, ganttPPD, setGanttPPD, gridZoom, setHoverZone, insertTask, insertTaskBelow, addTask, addSubtask, duplicateTask, setTaskCtx, rolledHealthMap, healthColStyle: data.healthColStyle || "stoplight", setHealthColStyle: v => setData(d => ({...d, healthColStyle: v})), data, moveRows};
+  const shared = {tasks: flatTasks, succMap, updateTask, deleteTask, getTaskName, proj, setData, setNotesCtx, edit, setEdit, editStartChar, selectedId, setSelectedId, selRange, setSelRange, selectedColIdx, setSelectedColIdx, goToFocus, ganttPPD, setGanttPPD, gridZoom, setHoverZone, insertTask, insertTaskBelow, addTask, addSubtask, duplicateTask, setTaskCtx, rolledHealthMap, healthColStyle: data.healthColStyle || "stoplight", setHealthColStyle: v => setData(d => ({...d, healthColStyle: v})), data, moveRows, isMobile};
 
   let section = data.section ?? "projects";
   if (section === "suggestions") section = "projects";   // Suggestions tab removed — Review now lives inside Projects
@@ -9329,45 +9325,23 @@ function App() {
         )}
 
         {/* View switcher — hidden while reviewing (review is grid-only; prevents losing review state on remount).
-            B1241747 (NEW-4) — this is the ONLY view switcher at every width. #1490 first fixed
-            Split-at-phone-width by adding a second, phone-only Grid/Gantt pill underneath this one
-            — correct to the letter of that brief, wrong because this pill already does the job, so
-            a phone screen showed two stacked switchers (owner screenshot, 2026-09-06: "I just want
-            the existing Gantt and Split buttons to work"). Deleted; this pill now does double duty.
-            THE GENERAL LESSON: when a brief asks for "a way to do X," check whether the app
-            already has one before building a second — a duplicated control is worse than the bug
-            it was meant to fix, because now two things must stay in sync and the user has to guess
-            which one is real.
-            THE MECHANISM: at phone width, Split can't show two panes, so it shows ONE — and the
-            way to see the other is this pill, not a parallel control. While already in Split at
-            phone width (`inPhoneSplit`), tapping Grid or Gantt does NOT leave Split — it updates
-            `phonePane` (kept from #1490) so a wider screen, or the same phone rotated wide enough,
-            still opens on the real two-pane Split with nothing forgotten. Tapping Split itself, or
-            any tap at desktop width or away from Split, is the ORIGINAL, untouched behavior: a
-            direct `data.view` write.
-            ⛔ NEXT-DAY CORRECTION (same B#, owner report on a real iPhone: "Gantt works, split does
-            not") — the FIRST cut of this made Grid/Gantt STEAL the active highlight while
-            `inPhoneSplit`, so tapping Gantt to peek at it made the pill show "Gantt" selected with
-            no visible sign Split was still the real, persisted view — reproduced live (real
-            touch-viewport diagnostic, not assumed): fresh Grid → tap Split renders Grid with NO
-            change at all (Grid stays highlighted), which reads exactly like "Split does nothing."
-            The active tab is now simply `data.view === v`, UNCONDITIONALLY — the same expression
-            this pill has always used outside phone-collapsed Split. "Split" now stays visibly
-            selected for as long as `data.view === "split"`, regardless of which pane `phonePane`
-            is currently showing — Grid/Gantt taps change the PANE, not the VIEW, and the pill says
-            so truthfully the whole time. This is a strict widening of the invariant, not a new one:
-            `inPhoneSplit` only ever differs from `data.view === v` for `v !== "split"`, so desktop
-            (`inPhoneSplit` always false there) is byte-for-byte unaffected. */}
+            This is the ONLY view switcher at every width, and it is now the SAME simple pill at
+            every width: tap a tab, `data.view` becomes that tab, and the tapped tab highlights.
+            B1281648 (RECURRENCE ×3 of B1241745) — a prior mechanism here had Split, at phone
+            width, collapse to ONE pane and repoint Grid/Gantt taps at a `phonePane` state instead
+            of leaving Split. The owner rejected that shape on his own iPhone across three shipped
+            builds (#1490, #1497, #1504): a single pane behind the "Split" tab looks and behaves
+            exactly like just tapping Grid or Gantt, so it read as "Split does nothing" every time,
+            no matter how the pill's own highlight was fixed. Split now renders BOTH panes at once,
+            stacked, at every width (see `SplitView`'s own `isMobile` branch) — so there is no
+            "which pane" state to route around here any more, and this pill needs no special case
+            for phone width at all. */}
         {section === "projects" && !reviewOpen && (
           <div className="hdr-view" style={{display:"flex",background:"#f0f0f0",borderRadius:7,padding:"3px",gap:2,marginLeft:8,flexShrink:0}}>
             {[["grid","Grid"],["split","Split"],["gantt","Gantt"]].map(([v,label]) => {
-              const inPhoneSplit = isMobile && data.view === "split";
               const active = data.view === v;
               return (
-                <button key={v} onClick={()=>{
-                    if (inPhoneSplit && v !== "split") setPhonePane(v);
-                    else setData(d=>({...d,view:v}));
-                  }}
+                <button key={v} onClick={()=>setData(d=>({...d,view:v}))}
                   style={{border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?600:500,
                     letterSpacing:".01em",padding:"5px 12px",borderRadius:5,transition:"all .15s",
                     background:active?"#fff":"transparent",
@@ -9419,7 +9393,9 @@ function App() {
               stopped being silently replaced by Grid. Same two buttons, touch-sized (44px —
               the WCAG/platform floor CONTROL_H.touch also uses) under a coarse pointer only;
               a narrow desktop window with a mouse keeps the desktop pair's own compact size. */}
-          {isMobile && (data.view==="gantt" || (data.view==="split" && phonePane==="gantt")) && (
+          {/* B1281648 — Split now always shows its Gantt pane too (stacked), so the phone zoom
+              control applies whenever a Gantt is on screen at all: "gantt" or "split". */}
+          {isMobile && (data.view==="gantt" || data.view==="split") && (
             <div style={{display:"flex",alignItems:"center",gap:coarsePointer?4:1}}>
               <button style={{padding:"0 10px",fontSize:15,height:coarsePointer?44:26,minWidth:coarsePointer?44:26,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",border:"1px solid var(--bd2)",borderRadius:5,background:"none",color:"var(--mut)",cursor:"pointer"}} title="Zoom out" onClick={()=>setGanttPPD(z=>Math.max(1,Math.floor(z/1.35)))}>−</button>
               <span style={{fontSize:11,color:"var(--mut)",width:30,textAlign:"center",userSelect:"none"}}>{Math.round(ganttPPD/6*100)}%</span>
@@ -9665,14 +9641,14 @@ function App() {
       {/* BODY */}
       <div style={{flex:1,overflow:"hidden",display:"flex"}}>
         <ErrorBoundary key={data.view}>
-        {/* B1241744/B1241745/B1241747 — effective view (must match the toolbar-bridge copy above
-            exactly). Split never renders below at phone width; a phone session that picked Split
-            instead gets ONE of its two panes, chosen via the SAME header Grid/Split/Gantt pill
-            (its onClick below sets `phonePane` instead of leaving Split, exactly when this applies)
-            — never a second, separate switcher. See the pill's own comment for the full mechanism. */}
-        {section === "projects" && !reviewOpen && (isMobile ? (data.view === "split" ? phonePane : (data.view ?? "grid")) : (data.view ?? "grid"))==="grid"  && <GridView   {...shared} />}
-        {section === "projects" && !reviewOpen && (isMobile ? (data.view === "split" ? phonePane : (data.view ?? "grid")) : (data.view ?? "grid"))==="gantt" && <GanttView  tasks={flatTasks} updateTask={updateTask} pxPerDay={ganttPPD} onZoomChange={setGanttPPD} rolledHealthMap={rolledHealthMap} proj={proj} onMouseEnter={()=>setHoverZone('gantt')} selectedId={selectedId} setSelectedId={setSelectedId} settings={data.settings} />}
-        {section === "projects" && !reviewOpen && !isMobile && data.view==="split" && <SplitView  {...shared} />}
+        {/* B1281648 — effective view is just `data.view` at every width now (must match the
+            toolbar-bridge copy above exactly). Split renders at every width — `SplitView` itself
+            branches on `isMobile` (carried in `shared`) to stack its two panes vertically on a
+            phone instead of the desktop's resizable side-by-side layout; Grid/Gantt are always
+            full-height, single-pane, unchanged at any width. */}
+        {section === "projects" && !reviewOpen && (data.view ?? "grid")==="grid"  && <GridView   {...shared} />}
+        {section === "projects" && !reviewOpen && (data.view ?? "grid")==="gantt" && <GanttView  tasks={flatTasks} updateTask={updateTask} pxPerDay={ganttPPD} onZoomChange={setGanttPPD} rolledHealthMap={rolledHealthMap} proj={proj} onMouseEnter={()=>setHoverZone('gantt')} selectedId={selectedId} setSelectedId={setSelectedId} settings={data.settings} />}
+        {section === "projects" && !reviewOpen && data.view==="split" && <SplitView  {...shared} />}
         {section === "reports"                         && <MasterView data={data} setData={setData} updateTask={updateTask} setNotesCtx={setNotesCtx} goToTask={goToTask} />}
         {section === "projects" && reviewOpen           && <SuggestionsView data={data} updateTask={updateTask} setData={setData} rows={reviewRows} setRows={setReviewRows} loading={reviewLoading} onClose={()=>setReviewOpen(false)} gridProps={shared} activeIdx={reviewIdx} setActiveIdx={setReviewIdx} />}
         </ErrorBoundary>
@@ -13183,7 +13159,7 @@ function GanttView({tasks, updateTask, pxPerDay, onZoomChange, scrollRef, onScro
             // than a rendering glitch — never a silent void. Hardcoded light hues to match this
             // (always-light) chart body, like the bar labels above.
             if (isBlankDates) {
-              return <div key={task.id} onClick={()=>setSelectedId?.(task.id)}
+              return <div key={task.id} data-gantt-row={task.id} onClick={()=>setSelectedId?.(task.id)}
                 style={{position:"absolute",top:ri*ROW_H,left:0,right:0,height:ROW_H,
                   display:"flex",alignItems:"center",
                   borderBottom:"1px solid rgba(0,0,0,0.1)",
@@ -13198,7 +13174,7 @@ function GanttView({tasks, updateTask, pxPerDay, onZoomChange, scrollRef, onScro
             }
 
             return (
-              <div key={task.id} onClick={()=>setSelectedId?.(task.id)} style={{position:"absolute",top:ri*ROW_H,left:0,right:0,height:ROW_H,borderBottom:"1px solid rgba(0,0,0,0.1)",borderLeft:isGanttSel?"3px solid var(--blue)":"3px solid transparent",background:isGanttSel?(task.rowColor||"#eff6ff"):rowBg,cursor:"default"}}>
+              <div key={task.id} data-gantt-row={task.id} onClick={()=>setSelectedId?.(task.id)} style={{position:"absolute",top:ri*ROW_H,left:0,right:0,height:ROW_H,borderBottom:"1px solid rgba(0,0,0,0.1)",borderLeft:isGanttSel?"3px solid var(--blue)":"3px solid transparent",background:isGanttSel?(task.rowColor||"#eff6ff"):rowBg,cursor:"default"}}>
 
                 {/* B222 — Bars, milestone diamonds and summary brackets keep their OWN identity
                     hue (neutral gray / depth-navy), INDEPENDENT of the row fill. rowColor paints
@@ -14198,8 +14174,51 @@ function AutomationPanel({data, setData, onClose}) {
   );
 }
 
-// ── SplitView (resizable) ────────────────────────────────
+// ── SplitView ─────────────────────────────────────────────
+// B1281648 (RECURRENCE ×3 of B1241745) — dispatches to the phone-width stacked layout or the
+// desktop resizable side-by-side layout. See PhoneSplitView's own header comment for why the
+// phone shape changed from "one pane at a time" to "both panes, stacked."
 function SplitView(props) {
+  return props.isMobile ? <PhoneSplitView {...props} /> : <DesktopSplitView {...props} />;
+}
+
+// ── PhoneSplitView (stacked, B1281648) ───────────────────
+// The owner's report, verbatim, on a real iPhone after three prior shipped fixes (#1490, #1497,
+// #1504): "Nothing happens, it's stays or goes to gant or grid." Every prior fix kept Split
+// showing exactly ONE pane at phone width (first via its own switcher, then via the header's
+// existing Grid/Split/Gantt pill) — which is indistinguishable from just picking Grid or Gantt
+// directly, so from his chair Split was a dead button no matter how correctly the pill's own
+// highlight tracked it. THE FIX IS STRUCTURAL, not another highlight tweak: at phone width, Split
+// now renders the task grid AND the Gantt chart at the same time, one above the other, each in
+// its own independently-scrolling pane, with a visible divider between them — so it is
+// immediately obvious Split is a third thing, never a relabelled Grid or Gantt. Grid and Gantt
+// picked directly are UNCHANGED — still full-height, single-pane, at every width.
+// Deliberately NOT draggable/resizable (unlike the desktop divider below) — a touch-drag divider
+// risks fighting the page's own vertical scroll gestures, and the brief did not ask for resize;
+// the split ratio reuses the existing Settings › "default split" percentage (the same number that
+// already means "how much of Split's space goes to grid vs. gantt" on desktop) so a session that
+// prefers more Gantt there gets the same preference here, clamped to a range that keeps either
+// phone pane from shrinking to nothing.
+function PhoneSplitView(props) {
+  const settings = props.data?.settings || DEFAULT_SETTINGS;
+  const topPct = Math.min(70, Math.max(30, settings.defaultSplit || 60));
+  return (
+    <div data-split-stack="1" style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
+      <div data-split-pane="grid" style={{flex:`0 0 ${topPct}%`,minHeight:0,overflow:"hidden",display:"flex"}}>
+        <GridView {...props} />
+      </div>
+      <div data-split-divider="1" style={{height:9,flexShrink:0,background:"var(--bd2)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{width:32,height:3,borderRadius:2,background:"var(--mut)",opacity:0.5}} />
+      </div>
+      <div data-split-pane="gantt" style={{flex:1,minHeight:0,overflow:"hidden",display:"flex"}}>
+        <GanttView tasks={props.tasks} updateTask={props.updateTask} pxPerDay={props.ganttPPD} onZoomChange={props.setGanttPPD} rolledHealthMap={props.rolledHealthMap} proj={props.proj} onMouseEnter={()=>props.setHoverZone?.('gantt')} selectedId={props.selectedId} setSelectedId={props.setSelectedId} settings={props.data?.settings} rowZoom={props.gridZoom || 1} />
+      </div>
+    </div>
+  );
+}
+
+// ── DesktopSplitView (resizable) ──────────────────────────
+function DesktopSplitView(props) {
   const settings = props.data?.settings || DEFAULT_SETTINGS;
   const gridRef      = useRef(null);
   const ganttRef     = useRef(null);
