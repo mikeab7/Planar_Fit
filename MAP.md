@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-07 @ `c25f0192c` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-07 @ `aef8564a8` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -15,7 +15,7 @@
 > iframe), **Doc Review**, **Library**. `/server` is listed as folder structure only (below) —
 > never its contents or secrets.
 
-_712 source files mapped._
+_713 source files mapped._
 
 ## infra
 
@@ -159,6 +159,8 @@ _712 source files mapped._
   - _exports_: `COMMAND_GROUPS`, `COMMANDS`, `decreaseIndentPatch`, `fuzzyScore`, `increaseIndentPatch`, `isCommandDisabled`, `resolveLabel`, `searchCommands`, `toggleBoldPatch`, `toggleItalicPatch`, `toggleStrikePatch`, `toggleUnderlinePatch`, `toggleWrapPatch`
 - **`src/workspaces/model/lib/csvIO.js`** — CSV round-trip: values-only export of the active sheet (via displayFor), import as a new appended sheet. Dependency-free.
   - _exports_: `addSheetFromCsvText`, `csvRowsToSheet`, `parseCsv`, `sheetToCsv`
+- **`src/workspaces/model/lib/editorFallback.js`** — pure helpers that apply a keystroke to `editValue` when a cell-grid keydown reaches the container instead of the focused in-cell `<input>`, so a slow render can no longer silently drop the keystroke
+  - _exports_: `applyFallbackEdit`, `editorHasFocus`, `fallbackEditAction`
 - **`src/workspaces/model/lib/formulaConsistency.js`** — Flags a formula whose R1C1-style shape breaks its row/column neighbours' pattern, or a hardcoded value sitting inside one; precision-tuned against a realistic pro-forma fixture.
   - _exports_: `findInconsistencies`
 - **`src/workspaces/model/lib/generalFit.js`** — Excel-style General-format column-width fit: narrows displayed precision (never the stored value) as a column narrows, falling back to a "#" fill when even a bare/scientific form won't fit.
