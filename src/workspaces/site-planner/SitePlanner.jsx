@@ -35,7 +35,7 @@ import { groupCasEnabled } from "./lib/groupCas.js";
 import { extendMergeSelection } from "./lib/parcelSelect.js";
 import { measuresUnderPoint, nextMeasureSelection } from "./lib/measureHit.js";
 import { nearestBoundaryEdge, constrainToEdgeAngle, edgeLockTolFt } from "./lib/edgeConstrain.js";
-import { markupsUnderPoint, nextMarkupSelection, boxCorners } from "./lib/markupPick.js";
+import { markupsUnderPoint, nextMarkupSelection, boxCorners, closedMarkupSize, openMarkupLength } from "./lib/markupPick.js";
 import {
   CLOUD_ARC_PRESETS, CLOUD_ARC_MIN_FT, CLOUD_ARC_MAX_FT, CLOUD_ARC_DEFAULT_FT, CLOUD_STATUS_OPTIONS,
   clampCloudArcFt, cloudScallopPath, simplifyPath, cloudMetaDefaults,
@@ -21780,22 +21780,24 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
                 // so a plain "pointer" reads honestly.
                 const mkCursor = { cursor: (tool === "select" && !editingCorners) ? (m.locked ? "pointer" : "move") : "crosshair" };
                 const common = { stroke: nStroke, strokeWidth: vsw, strokeDasharray: da, fill: "none", style: mkCursor, onPointerDown: (e) => startMoveMarkup(e, m.id), onContextMenu: (e) => onMarkupContext(e, m.id) };
-                // B920/NEW-1 — a closed shape (rect/ellipse/polygon) grabs by its whole INTERIOR only
-                // when it is FILLED. An UNFILLED one (fillOpacity 0) grabs on its stroke + a forgiving
-                // buffer ONLY, via a fat transparent hit companion (the line/polyline technique) — so a
-                // big invisible boundary stops blanketing everything under it (the reported bug: an
-                // unfilled ~5,000-ft polygon swallowed every off-road click, and "Send to Back" was
-                // powerless because it's a hit-AREA problem, not paint order). Small FILLED annotations
-                // still select by interior (B155/B156 preserved). markupPick.js reads the SAME
-                // visible-fill rule (solid opacity or supported hatch), so the JS cycle (B921) and
-                // this declarative hit area never diverge.
+                // B920/NEW-1 — a closed shape (rect/ellipse/polygon) grabs by its whole INTERIOR when
+                // it is FILLED, or simply UNLOCKED — the ordinary case: draw a shape, click inside it
+                // to select it, exactly like every other drawing tool (2026-09-07 owner report: "if I
+                // draw a polygon... the properties menu shows up terribly" traced to interior clicks
+                // silently selecting nothing). Only a LOCKED + unfilled shape keeps the original B920
+                // stroke-only grab, via a fat transparent hit companion (the line/polyline technique):
+                // locking is the explicit signal a shape is a passive backdrop reference, and the
+                // reported B920 case was exactly that — a LOCKED ~5,000-ft invisible boundary
+                // swallowing every off-road click. A freshly drawn, unlocked shape is not that case.
+                // markupPick.js reads the SAME fill-or-unlocked rule, so the JS cycle (B921) and this
+                // declarative hit area never diverge.
                 const hasHatch = ["rect", "ellipse", "polygon"].includes(m.kind) && !!m.hatch && m.hatch !== "none";
                 const closedFill = (m.fillOpacity ?? 0) > 0 || hasHatch;
                 const visFill = hasHatch
                   ? { fill: `url(#pat-markup-${m.id})` }
                   : closedFill ? { fill: m.fill, fillOpacity: m.fillOpacity } : { fill: "none" };
                 const visibleStroke = { strokeOpacity: m.strokeOpacity ?? 1 };
-                const closedHitPE = closedFill ? "all" : "stroke"; // whole-body vs stroke-only grab (B920)
+                const closedHitPE = (closedFill || !m.locked) ? "all" : "stroke"; // whole-body vs stroke-only grab (B920/NEW-1)
                 // Top-centre screen anchor for the selected-locked 🔒 cue (B922/NEW-3), per markup kind.
                 const mkLockAnchor = () => {
                   const pts = m.kind === "line" ? [m.a, m.b]
@@ -24697,8 +24699,12 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
             // top, so a hardcoded surface colour blanked every colour chip in these panels: the
             // control you click to change a colour showed no colour. Leave it to ColorField.
             const swatch = { width: 34, height: 26, padding: 0, border: BORDER_1, borderRadius: 6, cursor: "pointer" };
+            // NEW-3 — the same bold/tabular-numeral value style the measurement panel's Area/Length
+            // rows already use, so a markup's size reads exactly like every other size in this app.
+            const valStyle = { fontFamily: NUM_FONT, fontVariantNumeric: TABULAR_NUMS, fontWeight: 700, fontSize: 13, color: PAL.ink };
             const isCloud = selMarkup.kind === "cloud";
             const closed = selMarkup.kind === "rect" || selMarkup.kind === "ellipse" || selMarkup.kind === "polygon" || isCloud;
+            const isOpenPath = selMarkup.kind === "line" || selMarkup.kind === "polyline";
             // Cloud writes its OWN sticky style (mkCloudStyle), never the shared mkStyle every other
             // markup tool draws from next — see MK_CLOUD_DEFAULT.
             const setStyle = isCloud ? setSelMarkupCloud : setSelMarkup;
@@ -24707,32 +24713,34 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               // NEW-1 — plain wrapper (see the multi-select branch above for why the duplicate testid was removed).
               <div>
               <Section title={simpleClosedMarkup ? null : (isCloud ? "Markup · Cloud" : `Markup · ${selMarkup.kind[0].toUpperCase()}${selMarkup.kind.slice(1)}`)}>
-                {simpleClosedMarkup ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", border: BORDER_1, borderRadius: 8, overflow: "hidden" }}>
-                    <div style={{ padding: 12, borderRight: BORDER_1 }}>
-                      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 10 }}>Outline</div>
-                      <Field label="Color"><ColorField value={toHex6(selMarkup.stroke)} {...colorCtl((v) => liveStyle({ stroke: v }))} seed={COLOR_SEED} title="Outline color" style={swatch} /></Field>
-                      <Field label="Line width"><span style={{ display: "flex", alignItems: "center", gap: 4 }}><NumInput style={{ ...numInput, width: 62 }} value={selMarkup.weight ?? 2} min={0.5} step={0.5} coarse={2} onCommit={(n) => setStyle({ weight: n })} /><span style={{ fontSize: 11, color: PAL.muted }}>pt</span></span></Field>
-                      <Field label="Line style">
-                        <select style={{ ...numInput, width: 104, fontFamily: "inherit" }} value={selMarkup.dash || "solid"} onChange={(e) => setStyle({ dash: e.target.value })}>
-                          {DASH_OPTIONS}
-                        </select>
-                      </Field>
-                      <Field label="Opacity"><span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}><input style={{ minWidth: 0, width: "100%" }} type="range" min={0} max={1} step={0.05} value={selMarkup.strokeOpacity ?? 1} {...sliderHistory((e) => liveStyle({ strokeOpacity: +e.target.value }))} /><span style={{ fontSize: 10.5, minWidth: 30, textAlign: "right" }}>{Math.round((selMarkup.strokeOpacity ?? 1) * 100)}%</span></span></Field>
-                    </div>
-                    <div style={{ padding: 12 }}>
-                      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 10 }}>Fill</div>
-                      <Field label="Color"><ColorField value={toHex6(selMarkup.fill)} {...colorCtl((v) => liveStyle({ fill: v }))} seed={COLOR_SEED} title="Fill color" style={swatch} /></Field>
-                      <Field label="Hatch">
-                        <select style={{ ...numInput, width: 122, fontFamily: "inherit" }} value={selMarkup.hatch || "none"} onChange={(e) => setStyle({ hatch: e.target.value })}>
-                          {HATCH_OPTIONS.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
-                        </select>
-                      </Field>
-                      <Field label="Hatch color"><ColorField value={toHex6(selMarkup.hatchColor || selMarkup.stroke || selMarkup.fill)} {...colorCtl((v) => liveStyle({ hatchColor: v }))} seed={COLOR_SEED} title="Hatch color" style={swatch} /></Field>
-                      <Field label="Opacity"><span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}><input style={{ minWidth: 0, width: "100%" }} type="range" min={0} max={1} step={0.05} value={selMarkup.fillOpacity ?? 0} {...sliderHistory((e) => liveStyle({ fillOpacity: +e.target.value }))} /><span style={{ fontSize: 10.5, minWidth: 30, textAlign: "right" }}>{Math.round((selMarkup.fillOpacity ?? 0) * 100)}%</span></span></Field>
-                    </div>
-                  </div>
-                ) : (<>
+                {/* NEW-2 (2026-09-07) — this used to be a 2-column grid crammed into the ~294px
+                    panel: the "pt" unit label overlapped "Hatch" in the next column, the Hatch
+                    dropdown clipped to "None (flat f…", and "Line width"/"Line style" wrapped onto
+                    two lines while their controls stayed on one. A single column always fits the
+                    panel at its real width, with plenty of vertical room to spend (PANEL-BREVITY:
+                    collapsing width for width's sake was the wrong axis — this panel's height was
+                    never the scarce resource). Outline/Fill stay visually grouped via StdSubLabel,
+                    same pattern the measurement panel's own Line/Fill groups already use. */}
+                {simpleClosedMarkup ? (<>
+                  <StdSubLabel>Outline</StdSubLabel>
+                  <Field label="Color"><ColorField value={toHex6(selMarkup.stroke)} {...colorCtl((v) => liveStyle({ stroke: v }))} seed={COLOR_SEED} title="Outline color" style={swatch} /></Field>
+                  <Field label="Line width"><span style={{ display: "flex", alignItems: "center", gap: 4 }}><NumInput style={{ ...numInput, width: 62 }} value={selMarkup.weight ?? 2} min={0.5} step={0.5} coarse={2} onCommit={(n) => setStyle({ weight: n })} /><span style={{ fontSize: 11, color: PAL.muted }}>pt</span></span></Field>
+                  <Field label="Line style">
+                    <select style={{ ...numInput, width: 104, fontFamily: "inherit" }} value={selMarkup.dash || "solid"} onChange={(e) => setStyle({ dash: e.target.value })}>
+                      {DASH_OPTIONS}
+                    </select>
+                  </Field>
+                  <Field label="Line opacity"><span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: "1 1 auto" }}><input style={{ minWidth: 0, flex: "1 1 auto" }} type="range" min={0} max={1} step={0.05} value={selMarkup.strokeOpacity ?? 1} {...sliderHistory((e) => liveStyle({ strokeOpacity: +e.target.value }))} /><span style={{ fontSize: 10.5, minWidth: 30, textAlign: "right", flex: "none" }}>{Math.round((selMarkup.strokeOpacity ?? 1) * 100)}%</span></span></Field>
+                  <StdSubLabel>Fill</StdSubLabel>
+                  <Field label="Color"><ColorField value={toHex6(selMarkup.fill)} {...colorCtl((v) => liveStyle({ fill: v }))} seed={COLOR_SEED} title="Fill color" style={swatch} /></Field>
+                  <Field label="Hatch">
+                    <select style={{ ...numInput, width: 122, fontFamily: "inherit" }} value={selMarkup.hatch || "none"} onChange={(e) => setStyle({ hatch: e.target.value })}>
+                      {HATCH_OPTIONS.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Hatch color"><ColorField value={toHex6(selMarkup.hatchColor || selMarkup.stroke || selMarkup.fill)} {...colorCtl((v) => liveStyle({ hatchColor: v }))} seed={COLOR_SEED} title="Hatch color" style={swatch} /></Field>
+                  <Field label="Fill opacity"><span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: "1 1 auto" }}><input style={{ minWidth: 0, flex: "1 1 auto" }} type="range" min={0} max={1} step={0.05} value={selMarkup.fillOpacity ?? 0} {...sliderHistory((e) => liveStyle({ fillOpacity: +e.target.value }))} /><span style={{ fontSize: 10.5, minWidth: 30, textAlign: "right", flex: "none" }}>{Math.round((selMarkup.fillOpacity ?? 0) * 100)}%</span></span></Field>
+                </>) : (<>
                   <Field label="Outline"><ColorField value={toHex6(selMarkup.stroke)} {...colorCtl((v) => liveStyle({ stroke: v }))} seed={COLOR_SEED} title="Outline color" style={swatch} /></Field>
                   <Field label="Line weight"><NumInput style={numInput} value={selMarkup.weight ?? 2} min={0.5} step={0.5} coarse={2} onCommit={(n) => setStyle({ weight: n })} /></Field>
                   <Field label="Dash">
@@ -24747,7 +24755,9 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
                 {/* B620 — inline label riding the line (open paths only; double-click the line also opens this in
                     place). NON-sticky (direct setMarkups, never setMkStyle) so the text can't bleed into the next
                     drawn shape; onFocus pushes ONE undo frame per edit (not one per keystroke). */}
-                {(selMarkup.kind === "line" || selMarkup.kind === "polyline") && (<>
+                {isOpenPath && (<>
+                  {/* NEW-3 — the drawn line/polyline's LENGTH, off the same points the renderer draws. */}
+                  <Field label="Length"><span style={valStyle}>{fmtFeet(openMarkupLength(selMarkup) || 0)}</span></Field>
                   <Field label="Inline label"><input value={selMarkup.inlineLabel || ""} maxLength={120}
                     onFocus={() => pushHistory()}
                     onChange={(e) => setMarkups((a) => a.map((m) => (m.id === selMarkup.id ? { ...m, inlineLabel: e.target.value } : m)))}
@@ -24759,6 +24769,19 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
                   <Field label="Fill"><ColorField value={toHex6(selMarkup.fill)} {...colorCtl((v) => liveStyle({ fill: v }))} seed={COLOR_SEED} title="Fill color" style={swatch} /></Field>
                   <Field label="Fill opacity"><input type="range" min={0} max={1} step={0.05} value={selMarkup.fillOpacity ?? 0} {...sliderHistory((e) => liveStyle({ fillOpacity: +e.target.value }))} /></Field>
                 </>}
+                {/* NEW-3 — a closed shape's SIZE, read off the SAME geometry the canvas draws (never
+                    a second calculation): reuses markupPick.js's `closedMarkupSize`, which derives
+                    from the identical ring/area the hit-test already computes. Same place + format
+                    the building Footprint line and the measurement panel's Area row already use. */}
+                {closed && (() => {
+                  const size = closedMarkupSize(selMarkup);
+                  if (!size) return null;
+                  return (<>
+                    <StdSubLabel>Size</StdSubLabel>
+                    <Field label="Area"><span style={valStyle}>{fmtSf(size.area)} · {fmtAcres(size.area / SQFT_PER_ACRE)}</span></Field>
+                    <Field label="Perimeter"><span style={valStyle}>{fmtFeet(size.perimeter)}</span></Field>
+                  </>);
+                })()}
                 {isCloud && (() => {
                   const cs = { display: "flex", gap: 5, width: 150 };
                   const fmtWhen = (iso) => { try { return iso ? new Date(iso).toLocaleString() : "—"; } catch (_) { return "—"; } };
