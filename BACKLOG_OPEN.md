@@ -297,7 +297,7 @@
 | B1260000 | Backspace on an empty bullet with a nested child deleted the paragraph ABOVE the list | [Notes] | #notes #keyboard | ⏳ live — awaiting |
 | B1238304 | The map's scale bar and north arrow sit in a fixed white plate that never follows dark mode | [Site Planner / Map Finder] | #site-planner #ui #gis #export | ⏳ live — awaiting |
 | B1241744 | The Gantt is unusable at phone width — tapping the "Gantt" tab silently kept showing the spreadsheet grid | [Scheduler] | #scheduler #gantt #ui #mobile | ⏳ live — awaiting |
-| B1241745 | The Schedule split view does not work at phone width — Split silently rendered Grid alone, with no way to reach Gantt | [Scheduler] | #scheduler #gantt #ui #mobile | ⏳ live — awaiting |
+| B1241745 (×3) | The Schedule split view does not work at phone width — Split silently rendered Grid alone, with no way to reach Gantt | [Scheduler] | #scheduler #gantt #ui #mobile | ⏳ live — awaiting |
 | B1257072 | AMENDMENT to B1241745: the phone Split collapse built a SECOND view switcher instead of reusing the app's existing one | [Scheduler] | #scheduler #gantt #ui #mobile | ⏳ live — awaiting |
 | B1263824 | AMENDMENT to B1257072: the header pill loses its own "Split" highlight when switching panes at phone width, reading as "Split does not work" | [Scheduler] | #scheduler #gantt #ui #mobile | ⏳ live — awaiting |
 | B1237920 | The perf recorder is structurally blind for the exact "first 5 to 10 seconds" window the owner reports — confirmed, and now closed | [Shared / Telemetry] | #infra #testing #perf #site-planner | ⏳ live — awaiting |
