@@ -6922,6 +6922,20 @@ function stripViewState(d) {
   return out;
 }
 
+// NEW-1 (recurrence of B1080547, owner report 2026-09-07: "how come I still can't make multiple
+// schedules per project?") — which of a SITE's several linked schedules was most recently active.
+// Deliberately NOT a view-state key (must live in the versioned document, not sessionStorage/
+// localStorage): a brand-new tab has no per-tab aPid yet (see B1107680 above) and falls back to
+// whichever project sorts first; the cross-module carry-in (planar:nav-select-by-site) used to make
+// the exact same "first linked, always" choice — so a second/third schedule created for a site was
+// reachable only by luck of staying in the same tab forever. This map is the durable memory that
+// closes both gaps at once. Pure; a no-op (same object) when the recorded id is already current.
+function withLastActiveSite(d, siteId, scheduleId) {
+  if (siteId == null || scheduleId == null) return d;
+  if (d.lastActiveBySite && d.lastActiveBySite[siteId] === scheduleId) return d;
+  return { ...d, lastActiveBySite: { ...(d.lastActiveBySite || {}), [siteId]: scheduleId } };
+}
+
 // Persist whichever of the 13 keys actually changed since the last render — cheap (a few small JSON
 // blobs), and this never touches the cloud.
 function persistViewState(prev, next) {
@@ -8770,8 +8784,10 @@ function App() {
       const id = d.nPid;
       const proj = {id, name: o.name || `Project ${id}`, tasks: []};
       if (o.linkedSiteId != null) { proj.linkedSiteId = o.linkedSiteId; proj.linkedSiteName = o.linkedSiteName || null; }
-      return {...d, nPid: id+1, aPid: id, nTid: {...d.nTid, [id]: 1},
+      const nd = {...d, nPid: id+1, aPid: id, nTid: {...d.nTid, [id]: 1},
         projects: {...d.projects, [id]: proj}};
+      // NEW-1 — a newly-created linked schedule is the one to come back to on this site later.
+      return o.linkedSiteId != null ? withLastActiveSite(nd, o.linkedSiteId, id) : nd;
     });
   }, []);
 
@@ -8905,29 +8921,49 @@ function App() {
         } catch (_) {}
       };
       if (m.type === "planar:nav-select" && m.id != null) {
-        setData(d => (d.projects && d.projects[m.id]) ? { ...d, section: "projects", aPid: m.id } : d);
+        setData(d => {
+          const proj = d.projects && d.projects[m.id];
+          if (!proj) return d;
+          const nd = { ...d, section: "projects", aPid: m.id };
+          return proj.linkedSiteId != null ? withLastActiveSite(nd, proj.linkedSiteId, m.id) : nd;
+        });
       } else if (m.type === "planar:nav-select-by-site" && m.siteId != null) {
         // Project-aware header tabs: activate the schedule linked to this Site Planner project
         // (group_id). No link yet → leave state untouched; the shell shows the resolution panel.
         setData(d => {
-          const match = Object.values(d.projects || {}).find(p => p && p.linkedSiteId != null && p.linkedSiteId === m.siteId);
-          if (!match) return d;
+          const linked = Object.values(d.projects || {}).filter(p => p && p.linkedSiteId != null && p.linkedSiteId === m.siteId);
+          if (!linked.length) return d;
+          // NEW-1 (recurrence of B1080547, owner report 2026-09-07: "how come I still can't make
+          // multiple schedules per project?") — a site can carry SEVERAL linked schedules once
+          // B1080547 lifted the one-schedule-per-site constraint. Always resolving to whichever
+          // sorts first (lowest id — always the oldest, by construction) meant creating a second
+          // or third schedule and then coming back later (a fresh tab — see B1107680's aPid
+          // migration above — or simply navigating elsewhere and back) silently snapped the grid
+          // back to the ORIGINAL schedule every time, with no visible sign the newer ones still
+          // existed. Prefer whichever schedule was last recorded active for this site; fall back
+          // to the first-linked only when nothing is remembered yet (a brand-new link).
+          const preferredId = d.lastActiveBySite ? d.lastActiveBySite[m.siteId] : null;
+          const match = (preferredId != null && linked.find(p => p.id === preferredId)) || linked[0];
           // No-op if that schedule is ALREADY active in the projects section — return the same
           // state object so React doesn't re-run the auto-save effect. The shell re-posts this on
           // every switch; without the guard a burst of identical carry-ins fired a burst of saves
           // that tripped the optimistic-save guard against this tab's own write (the false "newer
           // version saved on another device" banner, B560).
           if (d.aPid === match.id && (d.section ?? "projects") === "projects") return d;
-          return { ...d, section: "projects", aPid: match.id };
+          return withLastActiveSite({ ...d, section: "projects", aPid: match.id }, m.siteId, match.id);
         });
       } else if (m.type === "planar:nav-link" && m.id != null) {
         // Set (m.siteId present) or clear (m.siteId null) the link on an existing schedule.
         setData(d => {
           if (!d.projects || !d.projects[m.id]) return d;
           const proj = { ...d.projects[m.id] };
-          if (m.siteId != null) { proj.linkedSiteId = m.siteId; proj.linkedSiteName = m.siteName || null; }
-          else { delete proj.linkedSiteId; delete proj.linkedSiteName; }
-          return { ...d, section: "projects", aPid: m.id, projects: { ...d.projects, [m.id]: proj } };
+          const base = { ...d, section: "projects", aPid: m.id };
+          if (m.siteId != null) {
+            proj.linkedSiteId = m.siteId; proj.linkedSiteName = m.siteName || null;
+            return withLastActiveSite({ ...base, projects: { ...d.projects, [m.id]: proj } }, m.siteId, m.id);
+          }
+          delete proj.linkedSiteId; delete proj.linkedSiteName;
+          return { ...base, projects: { ...d.projects, [m.id]: proj } };
         });
         emitLinkChanged(m.siteId ?? null, m.id, m.siteName ?? null);
       } else if (m.type === "planar:nav-create-linked") {
@@ -8972,7 +9008,22 @@ function App() {
         // lookup planar:nav-select-by-site uses above), then reuse the existing internal
         // goToTask jump — the same one the in-app Master view's row and the successor-prompt
         // modal already use — rather than inventing a second "select a task" mechanism.
-        const match = latestData.current && Object.values(latestData.current.projects || {}).find(p => p && p.linkedSiteId != null && p.linkedSiteId === m.siteId);
+        // NEW-1 (B1080547 recurrence) — a site can now carry several linked schedules, and a
+        // task id is only meaningful within ONE of them (small per-schedule sequential integers)
+        // — a bare "first linked" guess is the same defect as planar:nav-select-by-site above,
+        // and here it can land on an unrelated task that happens to share the id in the wrong
+        // schedule. Prefer the last-active schedule WHEN it actually contains the task (resolves
+        // a genuine id collision the way the user's own recent activity would suggest); otherwise
+        // whichever linked schedule does contain it (the unambiguous single-owner case); otherwise
+        // the last-active one anyway (task not found — best guess); otherwise the first linked.
+        const linkedForTask = latestData.current ? Object.values(latestData.current.projects || {}).filter(p => p && p.linkedSiteId != null && p.linkedSiteId === m.siteId) : [];
+        const preferredForTask = latestData.current && latestData.current.lastActiveBySite ? latestData.current.lastActiveBySite[m.siteId] : null;
+        const preferredScheduleForTask = preferredForTask != null ? linkedForTask.find(p => p.id === preferredForTask) : null;
+        const hasTask = (p) => p && Array.isArray(p.tasks) && p.tasks.some(t => t.id === m.taskId);
+        const match = (hasTask(preferredScheduleForTask) && preferredScheduleForTask)
+          || linkedForTask.find(hasTask)
+          || preferredScheduleForTask
+          || linkedForTask[0];
         if (match) goToTask(match.id, m.taskId);
       }
     };
