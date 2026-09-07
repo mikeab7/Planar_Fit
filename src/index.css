@@ -839,3 +839,13 @@ kbd {
 :root .leaflet-container .leaflet-control-attribution a {
   color: var(--chrome-text);
 }
+
+/* Dashboard grid (NEW-1, react-grid-layout) — the vendor stylesheet
+ * (react-grid-layout/css/styles.css) hardcodes its bottom-right resize-handle glyph as
+ * `rgba(0,0,0,0.4)`, which is nearly invisible on the dark theme's raised card surface (the same
+ * vendor-is-theme-blind species as the Leaflet overrides above, just from a different library).
+ * `:root` outranks the vendor rule's own specificity the same belt-and-suspenders way. */
+:root .react-grid-item > .react-resizable-handle::after {
+  border-right-color: var(--text-secondary);
+  border-bottom-color: var(--text-secondary);
+}
