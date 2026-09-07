@@ -43,6 +43,7 @@ import { fitGeneralNumber } from "../lib/generalFit.js";
 import { ctrlArrowTarget } from "../lib/sheetOps.js";
 import { buildRowOffsets, visibleRowRange, rowAtOffset } from "../lib/rowLayout.js";
 import { MIN_ZOOM, MAX_ZOOM, DEFAULT_ZOOM, zoomFromWheelDelta, zoomStepButton } from "../lib/sheetZoom.js";
+import { editorHasFocus, fallbackEditAction, applyFallbackEdit } from "../lib/editorFallback.js";
 import { RADIUS } from "../../../shared/ui/radius.js";
 // SPACE.sm / SPACE.md / CONTROL_H.md are used below as the LITERAL values 6 / 8 / 26
 // (src/shared/ui/designTokens.js), never imported — this file is lazy-loaded only on the
@@ -537,6 +538,19 @@ export default function SheetView({
       if (e.key === "Enter") { e.preventDefault(); commitEdit(e.shiftKey ? "up" : "down"); }
       else if (e.key === "Tab") { e.preventDefault(); commitEdit(e.shiftKey ? "left" : "right"); }
       else if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
+      // ⛔ B1287888 — "cell entry silently truncates to the first character after ~22 entries."
+      // Nothing guarantees the just-mounted in-cell <input> has actually taken DOM focus by
+      // the time the NEXT keystroke arrives (a slow-enough render — more rows, more undo
+      // history — can leave this container still focused for one or more further keydowns,
+      // and that gap widens over a long session, which is why the failure got WORSE the
+      // longer a session ran). A keystroke that reaches here instead of the input's own
+      // onChange must never be silently dropped — apply it directly to `editValue`, exactly
+      // what the input would have done with it. A no-op (`action === null`, e.g. an arrow key)
+      // falls through untouched. See lib/editorFallback.js for the full mechanism.
+      else if (!editorHasFocus(e.target, inputRef.current)) {
+        const action = fallbackEditAction(e.key, e);
+        if (action) { e.preventDefault(); setEditValue((v) => applyFallbackEdit(v, action, e.key)); }
+      }
       return;
     }
     const shift = e.shiftKey, meta = e.ctrlKey || e.metaKey;
