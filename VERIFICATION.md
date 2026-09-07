@@ -185,6 +185,31 @@ was never clicked" quietly ships broken.
 6. Confirm both are gone — this closes the owner's original blocking request as well as the verification.
 
 **Result:** ⏳ pending — needs a real signed-in browser session on production; not reachable from this sandbox. `Cadence: once`.
+### V946304 — B1307664: the Library folder tree's decorative folder emoji is actually gone on a real signed-in project's populated tree `Blocker: auth`
+
+**Why this needs its own real pass.** `FolderTree.jsx` only renders real, populated rows against a signed-in project's actual folder data (`listFolders`) — this sandbox's proxy CORS-blocks the Supabase auth handshake, so the populated-row branch this fix touches can never execute here. What's proven without a browser: the empty-project template-preview branch (the other place the emoji lived) renders correctly with no emoji, with a precondition proving the render actually reached that branch before trusting the negative assertion; a source sweep confirms neither glyph (📁/📂) appears anywhere else in the module; and the full test suite, lint, build, and `ci-parity`'s visual-regression gate (which captures the `library` surface signed-out, so it can't see this change either way) are all green.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, in the Library workspace, inside any project with an existing folder tree:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Open the Library tab for any project that already has its standard folder structure created. **Expect:** every row in the left-rail folder tree shows only the ▸/▾ disclosure triangle and the folder name — no 📁 or 📂 glyph anywhere in the tree, at any depth, open or collapsed.
+3. Right-click empty tree space → **New folder**, or expand a branch with subfolders. **Expect:** newly-created and nested rows are equally emoji-free — this isn't just the top-level rows.
+4. Open a brand-new (or never-scaffolded) project's Library. **Expect:** the "Create the standard N-folder structure" preview below the button also shows no folder emoji on any of its dimmed preview rows.
+5. Confirm nothing else on the row shifted or misaligned — the disclosure triangle, the indentation per depth, and the row height should look exactly as before, just without the icon.
+
+**Result:** ⏳ pending — needs a real signed-in browser session; not reachable from this sandbox. `Cadence: once`.
+
+### V946305 — B1307665: the muted per-folder file-count mark reads clearly now that the emoji is gone, on a real project's folder tree `Blocker: auth`
+
+**Why this needs its own real pass.** The brief explicitly asked for a live look, not a unit-test-only close-out: *"Verify both by opening a real project's Library on production and looking at it, not by unit test alone."* The underlying mechanism (a muted rolled-up subtree file count, shown only when `count > 0`) was audited and found to already exist and already be wired into this exact row — see B1307665's own note — so this check is about the RESULT reading clearly to a human eye now that the emoji it used to compete with is gone, not about whether the number is computed correctly (that part is unchanged, pre-existing code).
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, in the Library workspace, inside a project with files filed into at least one folder and at least one genuinely empty folder:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Open that project's Library and look at the left-rail folder tree. **Expect:** a folder that has files somewhere in its own subtree shows a small, muted (grey, not accent-colored) number beside its name; a genuinely empty folder (and empty scaffolding elsewhere in the tree) shows nothing at all beside its name — no dot, no zero, no placeholder.
+3. Expand a branch two or more levels deep where a file sits in a leaf folder. **Expect:** every ancestor folder up to the top level also shows a count that includes that file — the mark is a true subtree roll-up, not a direct-children-only count.
+4. Compare the overall first impression to before this change. **Expect:** with the folder emoji gone (B1307664), the muted count is now the one thing that visually distinguishes a folder with work in it from empty scaffolding — confirm it actually reads that way to the eye, not just that the number is technically present.
+5. Star (pin) a folder that has files. **Expect (pre-existing, unchanged behavior — not a defect to fix here):** the row shows the ★ pin marker instead of the count. Note whether this reads as confusing in practice; it's filed as a known, deliberately out-of-scope edge case on B1307665, not something this check should fail on.
+
+**Result:** ⏳ pending — needs a real signed-in browser session with real filed data; not reachable from this sandbox. `Cadence: once`.
 
 ### V652688 — B1164192: Richfield (and Woods Road) open normally, with every live plan visible, instead of showing a deleted-project notice `Blocker: auth`
 

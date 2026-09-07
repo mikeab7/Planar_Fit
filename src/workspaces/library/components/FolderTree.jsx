@@ -54,7 +54,6 @@ const previewRows = (nodes, depth = 0) =>
     <div key={`${depth}-${i}-${n.name}`}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", paddingLeft: 8 + depth * 16, minHeight: 26 }}>
         <span aria-hidden style={{ width: 16 }} />
-        <span aria-hidden>📁</span>
         <span style={{ flex: 1, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.name}</span>
       </div>
       {n.children && n.children.length ? previewRows(n.children, depth + 1) : null}
@@ -359,7 +358,6 @@ export default function FolderTree({
             aria-label={open ? "Collapse" : "Expand"}
             style={{ width: 16, height: 16, border: "none", background: "none", cursor: kids.length ? "pointer" : "default", color: T.faint, fontSize: 10, padding: 0, visibility: kids.length ? "visible" : "hidden" }}
           >{open ? "▾" : "▸"}</button>
-          <span aria-hidden style={{ color: T.accentText }}>{kids.length ? (open ? "📂" : "📁") : "📁"}</span>
 
           {isEditing ? (
             <input
