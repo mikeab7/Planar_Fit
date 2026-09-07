@@ -229,6 +229,14 @@ export default function ModelApp({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const tabStripRef = useRef(null);
   const fileMenuRef = useRef(null);
+  // B1290496 — `sheetViewRef` lets the Name Box (FormulaBar.jsx) hand DOM focus back to the grid
+  // once a typed jump lands. Navigating from the Name Box calls `onGoTo` (below) same as a mouse
+  // click does, but a mouse click also focuses the grid container as a side effect of the click
+  // itself (SheetView's own `cellClick`) — the Name Box has no such side effect, so without this
+  // the grid's `selRange` moves but DOM focus is left on nothing (the box blurs to `document.body`)
+  // and every keystroke typed right after is silently discarded.
+  const sheetViewRef = useRef(null);
+  const focusGrid = useCallback(() => sheetViewRef.current?.focusGrid(), []);
   // STAGE 3 (NEW-1) — trace precedents/dependents. Plain view state, like `zoom`/`painter` below
   // — never through the undo stack, never synced to the cloud. `null` = no trace active; see
   // lib/traceAudit.js's own header for the shape. Cleared on ANY real workbook edit (the effect
@@ -894,7 +902,7 @@ export default function ModelApp({
             }}
           >
           <Ribbon ctx={ctx} />
-          <FormulaBar sheet={sheet} row={selRange.r1} col={selRange.c1} onCommit={onCommitCell} onGoTo={onGoTo} nameBoxRef={nameBoxRef} />
+          <FormulaBar sheet={sheet} row={selRange.r1} col={selRange.c1} onCommit={onCommitCell} onGoTo={onGoTo} nameBoxRef={nameBoxRef} focusGrid={focusGrid} />
           </div>
           {/* NEW-1 (B1251888) — Find/Replace, Name Manager, and the Inconsistencies panel all
               render IN NORMAL FLOW here, below the header row and the ribbon/formula-bar card
@@ -933,6 +941,7 @@ export default function ModelApp({
             onDismiss={onDismissInconsistency}
           />
           <SheetView
+            ref={sheetViewRef}
             sheet={sheet}
             sheetName={sheetName}
             evalResult={evalResult}
