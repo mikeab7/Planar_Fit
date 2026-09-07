@@ -438,6 +438,12 @@ were split out of this file.
    them into one dismissal. (See B1037952, B1048400.)
 7. **(2026-08-22) A live check runs on a throwaway duplicate of a real plan, never on one of
    Michael's real plans** — and the session says exactly what was touched.
+8. **(2026-09-07) Split stays a phone-width Schedule option — do not remove it, do not re-ask.**
+   Michael, verbatim: "Yes make split an option on the phone." Separately, a one-pane-at-a-time
+   Split (any variant, however its highlight is drawn) is a rejected shape, not an open design
+   question — three real-device rejections of exactly that mechanism, the last verbatim: "Nothing
+   happens, it stays or goes to gantt or grid." Phone Split must show the grid and the Gantt at
+   once (stacked); never ship a phone Split that collapses to one pane. (See B1241745 (×3), V930736.)
 
 ## What Planyr is
 A proprietary, TestFit-style web app for industrial real estate site work, built by
