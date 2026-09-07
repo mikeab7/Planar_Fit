@@ -263,9 +263,41 @@ let failures = [];
  * it: it burns the main thread from an `addInitScript` — BEFORE the page's own first script runs,
  * long before any idle callback could possibly fire — and only then waits for the recorder to
  * install and checks that the boot capture still landed. If this arm goes red, the whole design
- * is unsound on a real busy boot even though the "burn right after install" case would look fine. */
+ * is unsound on a real busy boot even though the "burn right after install" case would look fine.
+ *
+ * ⛔ NEW-1 (2026-09-07) — THIS ARM USED TO COMPUTE `earlyBurnFrames` AND PRINT IT WITHOUT EVER
+ * ASSERTING ON IT, so this whole guard was green whether or not the boot judgment's own facts
+ * actually reached a durable capture. Two real boot captures landed from the owner's own signed-in
+ * machine on 2026-09-06 (V900704) — both carried nonzero frame tracks (23 and 63 frames) — and on
+ * 2026-09-07 the owner decided a FRAMELESS boot capture on THIS PARTICULAR ARM (the pre-install
+ * burn) is a correct, accepted outcome, not a defect: `feedBootTask` fires synchronously inside the
+ * buffered `PerformanceObserver`'s replay callback, the instant `observeTasks()` subscribes — before
+ * the boot free-run's own `requestAnimationFrame` loop has ticked even once. So `earlyBurnFrames`
+ * is legitimately 0 here and **must never be asserted `> 0`** — see `CLAUDE.md`'s NEW-1 entry;
+ * don't re-open this a third time. What GUARD 3 asserts instead are the bounds that ARE true on
+ * current main: a pre-install burn produces a boot capture at all (already covered below by
+ * `earlyBurnFires`), and that capture's own `bootTrigger`/`bootTaskMs`/`bootTaskCount` are real,
+ * non-empty facts. Those three fields are NOT on `window.pfRec.captures()`'s trimmed in-memory
+ * record (`perfRecorder.js`'s `rec` carries only `bootTrigger`) — they exist only on the FULL
+ * capture object, which `perfRecorder.js`'s existing, unmodified `capture()` already persists to
+ * IndexedDB via `perfCaptureStore.js` (DB `planyr`, store `kv`, keys prefixed `perfcap:`). So this
+ * guard reads that store directly (`readIdbCaptures`/`pollForPersistedBootCapture` below) — a plain
+ * IndexedDB cursor walk mirroring `originStore.js`'s own `walkOriginStore`, not a recorder change. */
 async function openPageWithEarlyBurn(burnMs) {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 850 } });
+  /* Prime the ON-DEVICE "kv" IndexedDB store (same DB "planyr" / store "kv" / version 1 schema
+   * `localDb.js` owns) BEFORE anything else runs. `originStore.js`'s `putOriginRecord` — the write
+   * `perfCaptureStore.js` uses, unmodified — opens WITHOUT a version and deliberately does nothing
+   * if the store doesn't exist yet, because creating it is `localDb.js`'s job alone. On a real
+   * signed-in boot that store already exists from a prior session; this harness starts every
+   * context from a brand-new empty profile, so nothing has created it yet and the boot capture's
+   * write would silently no-op — not a recorder defect, a fixture gap this guard closes itself. */
+  await ctx.addInitScript(() => {
+    try {
+      const req = indexedDB.open("planyr", 1);
+      req.onupgradeneeded = () => { try { if (!req.result.objectStoreNames.contains("kv")) req.result.createObjectStore("kv"); } catch (_) { /* ignore */ } };
+    } catch (_) { /* ignore */ }
+  });
   await ctx.addInitScript((cfg) => { window.__PLANYR_PERFREC = cfg; }, FAST);
   await ctx.addInitScript((ms) => {
     const end = Date.now() + ms;
@@ -277,6 +309,53 @@ async function openPageWithEarlyBurn(burnMs) {
   await page.goto(BASE, { waitUntil: "load" });
   await page.waitForFunction(() => !!window.pfRec, null, { timeout: 30000 });
   return { ctx, page };
+}
+
+/* Read the FULL, persisted capture objects straight out of the browser's own IndexedDB store —
+ * never `window.pfRec`, which only exposes the trimmed in-memory summary. Plain cursor walk over
+ * DB "planyr" / store "kv" / key prefix "perfcap:", the exact shape `originStore.js`'s own
+ * `walkOriginStore` already uses — reproduced here rather than imported because this script drives
+ * the page from the outside and has no loader for app ES modules. Resolves []  on any failure. */
+async function readIdbCaptures(page) {
+  return page.evaluate(() => new Promise((resolve) => {
+    try {
+      const req = indexedDB.open("planyr");
+      req.onerror = () => resolve([]);
+      req.onsuccess = () => {
+        const db = req.result;
+        if (!db || !db.objectStoreNames.contains("kv")) { resolve([]); return; }
+        let tx;
+        try { tx = db.transaction("kv", "readonly"); } catch (_) { resolve([]); return; }
+        const out = [];
+        tx.onerror = () => resolve(out);
+        tx.onabort = () => resolve(out);
+        let cur;
+        try {
+          const range = IDBKeyRange.bound("perfcap:", "perfcap:￿", false, true);
+          cur = tx.objectStore("kv").openCursor(range);
+        } catch (_) { resolve(out); return; }
+        cur.onsuccess = () => {
+          const c = cur.result;
+          if (!c) { resolve(out); return; }
+          try { out.push(JSON.parse(c.value)); } catch (_) { /* a malformed row is skipped, not fatal */ }
+          c.continue();
+        };
+        cur.onerror = () => resolve(out);
+      };
+    } catch (_) { resolve([]); }
+  }));
+}
+
+/* `perfRecorder.js`'s `capture()` fires the IndexedDB write and does NOT await it, so poll a few
+ * short beats rather than assuming one read lands after it. */
+async function pollForPersistedBootCapture(page, { tries = 6, intervalMs = 250 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    const caps = await readIdbCaptures(page);
+    const boot = caps.find((c) => c && c.bootTrigger);
+    if (boot) return boot;
+    await page.waitForTimeout(intervalMs);
+  }
+  return null;
 }
 
 {
@@ -293,6 +372,7 @@ async function openPageWithEarlyBurn(burnMs) {
   const { ctx: c2, page: p2 } = await openPageWithEarlyBurn(300);
   await p2.waitForTimeout(1500);   // let the buffered PerformanceObserver entry land
   out.boot.earlyBurn = await p2.evaluate(() => ({ ...window.pfRec.state(), captures: window.pfRec.captures() }));
+  out.boot.persistedBootCapture = await pollForPersistedBootCapture(p2);
   await c2.close();
 
   const controlBootFires = (out.boot.control.captures || []).filter((c) => c.bootTrigger).length;
@@ -306,6 +386,21 @@ async function openPageWithEarlyBurn(burnMs) {
   if (out.boot.controlFramesCollected === 0) failures.push("BOOT FREE-RUN NOT OBSERVING: zero frames were collected with no interaction at all — the boot free-run window is not running");
   if (controlBootFires > 0) failures.push(`the boot CONTROL arm fired ${controlBootFires} time(s) with no induced task — the boot judgment is not discriminating`);
   if (earlyBurnFires === 0) failures.push("BOOT TRIGGER NOT OBSERVING: a 300 ms task that ran BEFORE the recorder could install produced no boot capture — the buffered PerformanceObserver pickup did not work as assumed");
+
+  /* NEW-1 — GUARD 3 previously asserted nothing about the boot judgment's OWN facts (bootTrigger /
+   * bootTaskMs / bootTaskCount), only that a boot capture fired at all. `earlyBurnFrames` above is
+   * printed but deliberately NEVER asserted `> 0` — see the header note above `openPageWithEarlyBurn`
+   * for why 0 is the decided-correct reading on this exact arm. These bounds ARE asserted, because
+   * they are true on current main and their absence would mean the boot judgment's verdict never
+   * reached a durable capture. */
+  const persisted = out.boot.persistedBootCapture;
+  if (!persisted) {
+    failures.push("BOOT CAPTURE NOT PERSISTED: no boot-triggered capture reached the device's own capture store (IndexedDB) — GUARD 3's boot arm produced nothing durable to assert on");
+  } else {
+    if (!persisted.bootTrigger) failures.push(`the persisted boot capture's own bootTrigger is falsy (${JSON.stringify(persisted.bootTrigger)}) — the boot judgment's verdict did not reach the stored capture`);
+    if (!(persisted.bootTaskMs > 0)) failures.push(`the persisted boot capture's bootTaskMs is ${persisted.bootTaskMs}, not a positive number`);
+    if (!(persisted.bootTaskCount > 0)) failures.push(`the persisted boot capture's bootTaskCount is ${persisted.bootTaskCount}, not a positive number`);
+  }
 }
 
 await browser.close();
@@ -331,7 +426,10 @@ console.log("\n  BOOT WINDOW (guard 3)");
 console.log(`    frames collected, zero interaction   ${out.boot?.controlFramesCollected}   ← must be > 0 (the free-run proof)`);
 console.log(`    boot captures on the CONTROL         ${out.boot?.controlBootFires}   ← must be 0`);
 console.log(`    boot captures on an EARLY burn        ${out.boot?.earlyBurnBootFires}   ← must be ≥ 1, or this guard is not observing`);
-console.log(`    that capture's own frame count       ${out.boot?.earlyBurnFrames}`);
+console.log(`    persisted capture's bootTrigger       ${JSON.stringify(out.boot?.persistedBootCapture?.bootTrigger)}   ← must be truthy`);
+console.log(`    persisted capture's bootTaskMs        ${out.boot?.persistedBootCapture?.bootTaskMs}   ← must be > 0`);
+console.log(`    persisted capture's bootTaskCount     ${out.boot?.persistedBootCapture?.bootTaskCount}   ← must be > 0`);
+console.log(`    that capture's own frame count       ${out.boot?.earlyBurnFrames}   (0 here is a DECIDED, ACCEPTED reading — never assert >0 on this arm; see the 2026-09-07 note above openPageWithEarlyBurn and CLAUDE.md's NEW-1 entry)`);
 
 if (failures.length) {
   console.error(`\n⛔ ${failures.length} failure(s):`);
