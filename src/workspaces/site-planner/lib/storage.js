@@ -567,6 +567,36 @@ export async function resolveOrCreateTrackedSiteForComp({ title, lat, lon, count
   return { groupId: id, created: true, matched: false };
 }
 
+/* B1167712 (NEW-1, owner correction 2026-09-07) — the overlay counterpart of
+ * resolveOrCreateTrackedSiteForComp, immediately above. A site plan is matched by a DIFFERENT
+ * rule than a comp — shared/sitePlans/lib/overlaySiteMatch.js's findMatchingSiteForOverlay, whose
+ * own header explains why compSiteMatch.js's comp-calibrated radius does not transfer to a
+ * drawing that covers area — but it MINTS exactly the same way: a "tracked" (market-record) site
+ * when nothing plausible matches, never leaving a placed plan with no home at all. Never sticks
+ * silently: the SitePlansSection.jsx caller writes the returned `groupId` as `project_id` and
+ * shows + lets the owner change/detach it on the plan itself, every time — see that module's
+ * "Site" control and `site_link_declined` (site_plan_overlays_site_link.sql). */
+export async function resolveOrCreateTrackedSiteForOverlay(overlay) {
+  if (!overlay || typeof overlay.centerLat !== "number" || typeof overlay.centerLon !== "number" ||
+      !Number.isFinite(overlay.centerLat) || !Number.isFinite(overlay.centerLon)) {
+    return { groupId: null, created: false, matched: false };
+  }
+  const { findMatchingSiteForOverlay } = await import("../../../shared/sitePlans/lib/overlaySiteMatch.js");
+  const all = loadSitesList(); // every role, every stage — same matching scope the comp path uses
+  const match = findMatchingSiteForOverlay(overlay, all);
+  if (match) return { groupId: match.groupId, created: false, matched: true, matchedName: match.name, matchedBy: match.matchedBy };
+
+  const id = "trk" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const name = (overlay.docTitle && String(overlay.docTitle).trim()) || "Tracked property";
+  saveSite({ id, groupId: id, site: name, name: "Market record", role: "tracked", origin: { lat: overlay.centerLat, lon: overlay.centerLon }, county: null, els: [], measures: [], settings: {} });
+  const r = await pushSiteToCloud(id).catch((e) => ({ ok: false, error: (e && e.message) || "" }));
+  if (r && r.ok === false) {
+    reportClientEvent("cloud-push-failed", "tracked site created for a site plan didn't reach the cloud — plan will save unattached", { id });
+    return { groupId: null, created: false, matched: false, error: "Couldn't create a site to attach this to — try again once you're back online." };
+  }
+  return { groupId: id, created: true, matched: false };
+}
+
 /* NEW-5 (adversarial review of PR 1431) — a "tracked" (market-record) site auto-minted for a comp
  * is otherwise permanent and invisible: it's filtered out of the Sites list by design (role !==
  * "pursuit"), so once its last comp is gone the only place it's still reachable at all is the comp
