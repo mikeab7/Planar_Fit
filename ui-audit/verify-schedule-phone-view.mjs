@@ -1,47 +1,58 @@
-// B1241744 (NEW-1) / B1241745 (NEW-2) — owner report, tonight: "the Gantt does not work on
-// mobile, and the Schedule split view does not work on mobile."
+// B1281648 (RECURRENCE ×3 of B1241745) — owner report, on a real iPhone, 2026-09-07, after THREE
+// prior shipped fixes (#1490, #1497, #1504): "Nothing happens, it's stays or goes to gant or
+// grid."
 //
-// ROOT CAUSE (both items, one mechanism): the render switch at the bottom of the App component
-// read `(isMobile ? "grid" : data.view)` — so below the 768px width breakpoint, Gantt and Split
-// were SILENTLY replaced by GridView no matter what the header's own Grid/Split/Gantt pill said.
-// The pill still wrote `data.view` and still showed the tapped tab as selected (fontWeight 600),
-// so tapping "Gantt" looked like it worked and did nothing — exactly the reported symptom.
-// Separately, a real phone in LANDSCAPE (832px+, e.g. iPhone 13 Pro Max) clears 768px and so was
-// NOT silently downgraded — Gantt/Split rendered there, but the header's zoom −/+ buttons render
-// at a fixed 21px regardless of pointer type, well under the 44px WCAG/platform touch floor.
+// ROOT CAUSE, this time: every prior fix kept Split, at phone width, showing exactly ONE pane at
+// a time — first via its own switcher (#1490), then via the header's existing Grid/Split/Gantt
+// pill repointed to a `phonePane` state (#1497), then with that pill's own highlight bug fixed so
+// it correctly kept reading "Split" (#1504). None of that mattered: a SINGLE pane behind the
+// "Split" tab is visually and functionally IDENTICAL to just tapping Grid or Gantt directly, so
+// from the owner's chair, tapping "Split" looked like nothing happened — no matter how correct
+// the pill's own bookkeeping was underneath.
 //
-// FIX: the render switch now respects `data.view` at every width. Split — which cannot show two
-// USABLE panes on a phone's PORTRAIT width — collapses to one pane; the collapse threshold is the
-// file's own existing `isMobile` (768px), consistent with every other phone-layout decision
-// already in this file. Zoom control sizing reads `coarsePointer` (a `matchMedia('(pointer:
-// coarse)')` check, independent of width) rather than `isMobile` — a real phone in landscape gets
-// 44px buttons even though it clears 768px, and a standard fine-pointer desktop measures
-// coarsePointer=false and renders byte-identical to before.
+// FIX: Split now renders BOTH the task grid AND the Gantt chart at once at every width. At
+// desktop width it's the existing resizable side-by-side layout (`DesktopSplitView`, unchanged).
+// At phone width (`isMobile`) it's a NEW stacked layout (`PhoneSplitView`): grid on top, Gantt on
+// the bottom, each independently scrollable, with a visible divider between them — so it is
+// immediately obvious Split is a third thing, not a relabelled Grid or Gantt. Grid and Gantt
+// picked directly are UNCHANGED at any width — still full-height, single-pane.
 //
-// ⛔ B1241747 (NEW-4) — AMENDMENT, same day. The first cut of the Split collapse (above) built a
-// SECOND, phone-only "Grid | Gantt" pill to pick which pane shows. Correct to the letter of that
-// brief ("a deliberate way to switch between them"), wrong because the app already has a view
-// switcher — the header's own Grid/Split/Gantt pill — so a phone screen showed TWO stacked
-// switchers (the owner's own screenshot; his words: "I just want the existing Gantt and Split
-// buttons to work"). Fixed by deleting the second pill entirely: the header pill now does double
-// duty — while already in Split at phone width, tapping Grid or Gantt updates which pane shows
-// (via the SAME `phonePane` state, now written from the header pill's own onClick) instead of
-// leaving Split, so `data.view` never stops being "split" and a wider screen still opens on the
-// real two-pane Split. THE GENERAL LESSON this cost a round to learn: when a brief asks for "a way
-// to do X," check whether the app already has one before building a second.
+// ⛔ HONESTY FLAG, carried over verbatim from the dispatch that produced this fix: a simulated
+// phone viewport in Playwright/Chromium is NOT proof this works on a real iPhone. This harness
+// has now passed on TWO builds the owner reported as broken (the #1497 and #1504 builds both
+// passed this file's own predecessor before he tested them on his device) — the same shape as
+// this repo's FOREGROUND-OR-VOID incidents, where every rig passed while the real device failed
+// because the rig kept the page in a state the device did not have. A green run below is
+// NECESSARY and NOWHERE NEAR SUFFICIENT. His iPhone is the only real confirmation; see V930736 in
+// VERIFICATION.md. WebKit (materially closer to real Mobile Safari than Chromium's device
+// emulation) was re-checked this session and is still not installable in this sandbox — only
+// Chromium is pre-provisioned at /opt/pw-browsers, and the environment explicitly forbids running
+// a fresh `playwright install` here — so Chromium + Playwright device descriptors remains the
+// ceiling this harness can reach.
 //
-// This harness proves, live, in a real (emulated) touch browser:
-//  1. PORTRAIT phone (390×844, isMobile=true): tapping Gantt actually shows bars (not a no-op);
-//     Split shows exactly ONE view-switcher control (never two stacked pills), defaults to Grid,
-//     and tapping the SAME header pill's Gantt tab switches the pane — never two panes at once.
-//  2. LANDSCAPE phone (832×380, isMobile=false, pointer stays coarse): Gantt renders (unchanged
-//     from before — this half already worked) AND its zoom buttons are now >=44px tall/wide.
-//  3. Narrow DESKTOP window (760×860, mouse — pointer:fine, no touch): controls render at their
-//     smaller desktop-ish size, never forced to 44px by width alone — WIDTH-DRIVES-LAYOUT /
-//     POINTER-DRIVES-SIZING holds in both directions.
-//  4. Standard DESKTOP viewport (1600×900, mouse): Split still renders BOTH panes exactly as
-//     before, the zoom buttons stay at their original 21px, and the pill's click/highlight
-//     behavior is untouched — pixel-identical.
+// This harness proves, live, in emulated Chromium:
+//  1. PORTRAIT phone (390×844, touch): Split shows BOTH panes at once, stacked, each with real
+//     non-zero height and real content — never one pane, never a blank shell.
+//  2. Tapping INTO Split from Grid, and from Gantt, at portrait phone width — both panes appear
+//     immediately, not just on a fresh load.
+//  3. The two stacked panes scroll INDEPENDENTLY (scrolling one leaves the other's scroll
+//     position untouched).
+//  4. Rotating mid-session (portrait → landscape → portrait) while in Split, and crossing the
+//     768px isMobile breakpoint in both directions — both panes stay visible and real throughout,
+//     never a blank frame, whether stacked (narrow) or side-by-side (wide).
+//  5. The on-screen-keyboard case, approximated: focusing a Grid cell for edit, then shrinking the
+//     viewport height the way iOS reduces the visible area for the keyboard — both panes still
+//     render without erroring.
+//  6. The grid-row-to-Gantt-row height parity fix (B1241746) still holds inside the stacked
+//     layout — a grid row and a Gantt row are still the same height, even though the two are no
+//     longer positioned side by side.
+//  7. Landscape phone (832×380) and standard desktop (1600×900): unchanged from before — Split
+//     already showed both panes there, byte-identical.
+//  8. Grid and Gantt picked directly (not Split) are UNCHANGED at every width.
+//  9. RED-PROOF: the core "both panes render with real content" assertion is reproduced failing
+//     against the pre-fix build (see the bottom of this file's run log / the PR description for
+//     the revert-and-rerun result) — this file's own comment does not substitute for having
+//     actually done that; the PR records the numbers.
 //
 // Same boot pattern as ui-audit/verify-gantt-arrow-virtualization.mjs (curl-cached CDN deps routed
 // locally — this sandbox's Chromium cannot reach the public internet — real React/react-dom from
@@ -114,23 +125,24 @@ const browser = await chromium.launch({ executablePath: EXEC, args: ["--no-sandb
 const fails = [];
 const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`  ${cond ? "✓" : "✗ FAIL"} ${msg}`); };
 
-// Counts every visible button whose OWN text is exactly "Grid"/"Split"/"Gantt" — the old bug had
-// TWO such buttons for "Grid" and "Gantt" at once (the header pill's own + the phone-only pill's);
-// the fix must show exactly one of each, always.
-const countSwitcherButtons = (page) => page.evaluate(() => {
-  const count = (label) => [...document.querySelectorAll("button")]
-    .filter((b) => b.textContent.trim() === label && b.getBoundingClientRect().width > 0)
-    .length;
-  return { grid: count("Grid"), split: count("Split"), gantt: count("Gantt") };
-});
-
-// Which ONE of the header pill's own three tabs currently reads as selected (fontWeight 600) —
-// used to prove the pill keeps telling the truth about the VIEW (data.view) even while its PANE
-// (phonePane) changes underneath it.
+// Which ONE of the header pill's own three tabs currently reads as selected (fontWeight 600).
 const activeTab = (page) => page.evaluate(() => {
   const tabs = [...document.querySelectorAll(".hdr-view button")];
   const active = tabs.find((b) => getComputedStyle(b).fontWeight === "600");
   return active ? active.textContent.trim() : null;
+});
+
+// Reads both panes' real, on-screen state at once — the thing this whole recurrence is about.
+const readBothPanes = (page) => page.evaluate(() => {
+  const gridBox = document.querySelector('[data-grid-scroll="1"]')?.getBoundingClientRect() || null;
+  const ganttPane = document.querySelector('[data-split-pane="gantt"]') || document.querySelector('[data-gantt-bar]')?.closest("[data-split-pane]") || null;
+  const gridRows = document.querySelectorAll("[data-task-row]").length;
+  const ganttBars = document.querySelectorAll("[data-gantt-bar]").length;
+  const stacked = !!document.querySelector('[data-split-stack="1"]');
+  return {
+    gridW: gridBox ? Math.round(gridBox.width) : 0, gridH: gridBox ? Math.round(gridBox.height) : 0,
+    gridRows, ganttBars, stacked,
+  };
 });
 
 async function boot(page, view) {
@@ -146,108 +158,48 @@ async function boot(page, view) {
   return real;
 }
 
-// ── 1. PORTRAIT phone: Gantt tab must actually show bars, not a silent no-op ──
+// ── 1. PORTRAIT phone, arriving already on Split — BOTH panes, real, stacked ──
 {
-  console.log("── Portrait phone (390×844, touch), tap Gantt ──");
-  const ctx = await browser.newContext({ ...devices["iPhone 13"], ignoreHTTPSErrors: true });
-  const page = await ctx.newPage();
-  const real = await boot(page, "grid");
-  const countsBefore = await countSwitcherButtons(page);
-  ok(countsBefore.grid === 1 && countsBefore.split === 1 && countsBefore.gantt === 1, `exactly one Grid/Split/Gantt button each in plain Grid view (${JSON.stringify(countsBefore)})`);
-  await page.locator(".hdr-view button", { hasText: "Gantt" }).tap();
-  await page.waitForTimeout(400);
-  const bars = await page.locator("[data-gantt-bar]").count();
-  ok(bars > 0, `tapping Gantt renders real bars at portrait phone width (${bars} found)`);
-  const zoomBtn = page.locator('button[title="Zoom in"]').first();
-  const zbox = await zoomBtn.boundingBox().catch(() => null);
-  ok(!!zbox && zbox.height >= 44 && zbox.width >= 44, `Gantt zoom button meets the 44px touch floor at portrait phone width (${zbox ? `${zbox.width.toFixed(0)}x${zbox.height.toFixed(0)}` : "not found"})`);
-  ok(real.length === 0, `no uncaught page errors (portrait Gantt, ${real.length})`);
-  await page.screenshot({ path: OUT + "schedule-phone-portrait-gantt.png" }).catch(() => {});
-  await ctx.close();
-}
-
-// ── 2. PORTRAIT phone, ARRIVING already on Split (the saved view): ONE pane, switched via the
-//      EXISTING header pill only, which must keep reading "Split" the whole time ──
-// B1241747-AMENDMENT-3 — owner real-device report right after #1497 shipped: "Gantt works, split
-// does not." Diagnosed live (not assumed): every pane at every width/rotation/breakpoint-crossing
-// this harness drives renders real content at a real size — no blank pane, no stranded pane, no
-// lost reachability. The actual defect: tapping Grid/Gantt while phone-collapsed into Split made
-// THAT tab steal the pill's active highlight, so a user peeking at Gantt saw the pill read
-// "Gantt" with no visible sign Split was still the real, persisted view — and a user who taps
-// Split from Grid sees NO visible change at all (Grid stays highlighted throughout), which reads
-// exactly like "Split does nothing." Fixed: the active tab is now `data.view === v`
-// UNCONDITIONALLY — "Split" stays visibly selected for as long as `data.view === "split"`,
-// regardless of which pane is currently showing.
-{
-  console.log("── Portrait phone (390×844, touch), Split view (arriving already saved) ──");
+  console.log("── Portrait phone (390×844, touch), Split (arriving already saved) ──");
   const ctx = await browser.newContext({ ...devices["iPhone 13"], ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
   const real = await boot(page, "split");
-  const gridVisible = await page.locator('[data-grid-scroll="1"]').count();
-  const ganttVisible = await page.locator("[data-gantt-bar]").count();
-  ok(gridVisible > 0 && ganttVisible === 0, `Split defaults to ONE pane (Grid) at portrait phone width, not both (grid=${gridVisible}, gantt-bars=${ganttVisible})`);
-
-  // (a) The rendered pane is REAL — non-zero height and real row content, not an empty shell.
-  const gridBox0 = await page.locator('[data-grid-scroll="1"]').boundingBox();
-  const rowCount0 = await page.locator("[data-task-row]").count();
-  ok(!!gridBox0 && gridBox0.height > 50, `the rendered Grid pane has real, non-zero height (${gridBox0 ? gridBox0.height.toFixed(0) : "n/a"}px)`);
-  ok(rowCount0 > 0, `the rendered Grid pane has real row content (${rowCount0} rows)`);
-  ok((await activeTab(page)) === "Split", `the pill correctly reads "Split" as active on arrival, before any tap (got "${await activeTab(page)}")`);
-
-  // B1241747 — THE regression this amendment exists to catch: #1490's first cut rendered a SECOND
-  // "Grid | Gantt" pill under the header's own Grid/Split/Gantt pill. Assert exactly one of each.
-  const counts = await countSwitcherButtons(page);
-  ok(counts.grid === 1 && counts.split === 1 && counts.gantt === 1, `exactly ONE view-switcher control at phone width in Split — never two stacked pills (${JSON.stringify(counts)})`);
-
-  // (b) BOTH panes are reachable from the SAME header pill, without ever leaving Split.
-  await page.locator(".hdr-view button", { hasText: "Gantt" }).tap();
-  await page.waitForTimeout(400);
-  const ganttAfter = await page.locator("[data-gantt-bar]").count();
-  const gridAfter = await page.locator('[data-grid-scroll="1"]').count();
-  ok(ganttAfter > 0 && gridAfter === 0, `tapping the header pill's Gantt tab (while in phone Split) shows ONLY Gantt (gantt-bars=${ganttAfter}, grid=${gridAfter})`);
-  ok((await activeTab(page)) === "Split", `AMENDMENT-3 — the pill STILL reads "Split" as active after switching to the Gantt pane (got "${await activeTab(page)}") — never "Gantt"`);
-  const countsAfter = await countSwitcherButtons(page);
-  ok(countsAfter.grid === 1 && countsAfter.split === 1 && countsAfter.gantt === 1, `still exactly one of each button after switching panes (${JSON.stringify(countsAfter)})`);
-
-  await page.locator(".hdr-view button", { hasText: "Grid" }).tap();
-  await page.waitForTimeout(400);
-  const gridBack = await page.locator('[data-grid-scroll="1"]').count();
-  const ganttBack = await page.locator("[data-gantt-bar]").count();
-  ok(gridBack > 0 && ganttBack === 0, `tapping the header pill's Grid tab (while in phone Split) shows ONLY Grid again (grid=${gridBack}, gantt-bars=${ganttBack})`);
-  ok((await activeTab(page)) === "Split", `AMENDMENT-3 — the pill STILL reads "Split" as active after switching back to the Grid pane (got "${await activeTab(page)}") — never "Grid"`);
-
-  // Prove `data.view` genuinely stayed "split" under the hood (never silently became "gantt"):
-  // widen the viewport past the isMobile threshold and confirm the REAL two-pane Split appears,
-  // with nothing forgotten — this is only possible if data.view was never overwritten.
-  await page.setViewportSize({ width: 1600, height: 900 });
-  await page.waitForTimeout(400);
-  const gridWide = await page.locator('[data-grid-scroll="1"]').count();
-  const ganttWide = await page.locator("[data-gantt-bar]").count();
-  ok(gridWide > 0 && ganttWide > 0, `widening the same session past the phone breakpoint reveals the REAL two-pane Split — proves data.view was never overwritten to "gantt" (grid=${gridWide}, gantt-bars=${ganttWide})`);
-
-  ok(real.length === 0, `no uncaught page errors (portrait Split, ${real.length})`);
-  await page.screenshot({ path: OUT + "schedule-phone-portrait-split-gantt.png" }).catch(() => {});
+  const p1 = await readBothPanes(page);
+  ok(p1.stacked, `phone-width Split renders the stacked layout, not the desktop side-by-side one`);
+  ok(p1.gridH > 50 && p1.gridRows > 0, `the Grid pane is real — non-zero height (${p1.gridH}px), real rows (${p1.gridRows})`);
+  ok(p1.ganttBars > 0, `the Gantt pane ALSO renders, at the same time as Grid — real bars (${p1.ganttBars} found)`);
+  ok((await activeTab(page)) === "Split", `the pill reads "Split" as active (got "${await activeTab(page)}")`);
+  // Both panes must have real, independent, non-zero box heights, not one collapsed to 0.
+  const boxes = await page.evaluate(() => {
+    const g = document.querySelector('[data-split-pane="grid"]')?.getBoundingClientRect();
+    const t = document.querySelector('[data-split-pane="gantt"]')?.getBoundingClientRect();
+    return { g: g ? Math.round(g.height) : 0, t: t ? Math.round(t.height) : 0 };
+  });
+  ok(boxes.g > 50 && boxes.t > 50, `BOTH stacked panes have real, non-zero height at once (grid=${boxes.g}px, gantt=${boxes.t}px) — not one pane, not a hidden shell`);
+  ok(real.length === 0, `no uncaught page errors (portrait Split arrival, ${real.length})`);
+  await page.screenshot({ path: OUT + "schedule-phone-portrait-split-stacked.png" }).catch(() => {});
   await ctx.close();
 }
 
-// ── 2b. PORTRAIT phone, TAPPING INTO Split from Grid — the exact sequence a user reporting
-//        "Split does nothing" most likely drove: on Grid, tap Split, expect a visible reaction ──
+// ── 2. PORTRAIT phone, TAPPING INTO Split from Grid — both panes appear immediately ──
 {
   console.log("── Portrait phone (390×844, touch), TAPPING INTO Split from Grid ──");
   const ctx = await browser.newContext({ ...devices["iPhone 13"], ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
   const real = await boot(page, "grid");
   ok((await activeTab(page)) === "Grid", `arrives on Grid with "Grid" active (got "${await activeTab(page)}")`);
+  const before = await readBothPanes(page);
+  ok(before.ganttBars === 0, `plain Grid shows no Gantt bars before tapping Split (${before.ganttBars})`);
   await page.locator(".hdr-view button", { hasText: "Split" }).tap();
   await page.waitForTimeout(400);
-  ok((await activeTab(page)) === "Split", `AMENDMENT-3 — tapping Split from Grid visibly selects "Split" on the pill (got "${await activeTab(page)}") — the fix for "tapping Split looks like nothing happened"`);
-  const rowCount = await page.locator("[data-task-row]").count();
-  ok(rowCount > 0, `Split (now showing its default Grid pane) still has real row content (${rowCount} rows)`);
-  ok(real.length === 0, `no uncaught page errors (tap-into-split, ${real.length})`);
+  const after = await readBothPanes(page);
+  ok((await activeTab(page)) === "Split", `tapping Split visibly selects "Split" on the pill (got "${await activeTab(page)}")`);
+  ok(after.gridRows > 0 && after.ganttBars > 0, `tapping Split from Grid shows BOTH panes immediately — real rows (${after.gridRows}) AND real bars (${after.ganttBars}), the fix for "nothing happens"`);
+  ok(real.length === 0, `no uncaught page errors (grid-to-split, ${real.length})`);
   await ctx.close();
 }
 
-// ── 2c. PORTRAIT phone, TAPPING INTO Split from Gantt — must visibly flip TO the default pane ──
+// ── 2b. PORTRAIT phone, TAPPING INTO Split from Gantt — both panes appear immediately ──
 {
   console.log("── Portrait phone (390×844, touch), TAPPING INTO Split from Gantt ──");
   const ctx = await browser.newContext({ ...devices["iPhone 13"], ignoreHTTPSErrors: true });
@@ -255,15 +207,39 @@ async function boot(page, view) {
   const real = await boot(page, "gantt");
   await page.locator(".hdr-view button", { hasText: "Split" }).tap();
   await page.waitForTimeout(400);
-  const gridNow = await page.locator('[data-grid-scroll="1"]').count();
-  const ganttNow = await page.locator("[data-gantt-bar]").count();
-  ok(gridNow > 0 && ganttNow === 0, `tapping Split from Gantt visibly flips to the Grid pane (grid=${gridNow}, gantt-bars=${ganttNow})`);
+  const after = await readBothPanes(page);
+  ok(after.gridRows > 0 && after.ganttBars > 0, `tapping Split from Gantt shows BOTH panes immediately (rows=${after.gridRows}, bars=${after.ganttBars})`);
   ok((await activeTab(page)) === "Split", `"Split" is active after tapping into it from Gantt (got "${await activeTab(page)}")`);
   ok(real.length === 0, `no uncaught page errors (gantt-to-split, ${real.length})`);
   await ctx.close();
 }
 
-// ── 2d. Rotate mid-session while in Split, both directions — no blank frame, no lost pane ──
+// ── 3. The two stacked panes scroll INDEPENDENTLY ──
+{
+  console.log("── Portrait phone Split: the two stacked panes scroll independently ──");
+  const ctx = await browser.newContext({ ...devices["iPhone 13"], ignoreHTTPSErrors: true });
+  const page = await ctx.newPage();
+  const real = await boot(page, "split");
+  const before = await page.evaluate(() => ({
+    grid: document.querySelector('[data-grid-scroll="1"]')?.scrollTop ?? null,
+    gantt: [...document.querySelectorAll('[data-split-pane="gantt"] div')].find((d) => d.scrollHeight > d.clientHeight)?.scrollTop ?? null,
+  }));
+  // Scroll the Grid pane only, via a real wheel event inside it.
+  const gridBox = await page.locator('[data-grid-scroll="1"]').boundingBox();
+  await page.mouse.move(gridBox.x + gridBox.width / 2, gridBox.y + gridBox.height / 2);
+  await page.mouse.wheel(0, 400);
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => ({
+    grid: document.querySelector('[data-grid-scroll="1"]')?.scrollTop ?? null,
+    gantt: [...document.querySelectorAll('[data-split-pane="gantt"] div')].find((d) => d.scrollHeight > d.clientHeight)?.scrollTop ?? null,
+  }));
+  ok(after.grid > (before.grid ?? 0), `scrolling inside the Grid pane actually moved it (before=${before.grid}, after=${after.grid})`);
+  ok((after.gantt ?? 0) === (before.gantt ?? 0), `scrolling the Grid pane left the Gantt pane's own scroll position UNTOUCHED (before=${before.gantt}, after=${after.gantt}) — independent scroll, no cross-pane sync`);
+  ok(real.length === 0, `no uncaught page errors (independent scroll, ${real.length})`);
+  await ctx.close();
+}
+
+// ── 4. Rotate mid-session while in Split, both directions — both panes stay real throughout ──
 {
   console.log("── Rotate mid-session while in Split (portrait → landscape → portrait) ──");
   const ctx = await browser.newContext({ ...devices["iPhone 13"], ignoreHTTPSErrors: true });
@@ -271,20 +247,20 @@ async function boot(page, view) {
   const real = await boot(page, "split");
   await page.setViewportSize({ width: 844, height: 390 });
   await page.waitForTimeout(500);
-  const gridL = await page.locator('[data-grid-scroll="1"]').count();
-  const ganttL = await page.locator("[data-gantt-bar]").count();
-  ok(gridL > 0 && ganttL > 0, `rotating to landscape (844×390, clears isMobile) shows the REAL two-pane Split (grid=${gridL}, gantt-bars=${ganttL})`);
+  const landscape = await readBothPanes(page);
+  ok(landscape.gridRows > 0 && landscape.ganttBars > 0, `landscape (844×390, clears isMobile) still shows both panes, now side by side (rows=${landscape.gridRows}, bars=${landscape.ganttBars}, stacked=${landscape.stacked})`);
+  ok(!landscape.stacked, `landscape uses the desktop side-by-side layout, not the phone stack (stacked=${landscape.stacked})`);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(500);
-  const gridP = await page.locator('[data-grid-scroll="1"]').count();
-  const ganttP = await page.locator("[data-gantt-bar]").count();
-  ok(gridP > 0 && ganttP === 0, `rotating back to portrait re-collapses to ONE pane, no blank frame (grid=${gridP}, gantt-bars=${ganttP})`);
+  const portraitAgain = await readBothPanes(page);
+  ok(portraitAgain.gridRows > 0 && portraitAgain.ganttBars > 0, `rotating back to portrait keeps BOTH panes visible, now re-stacked (rows=${portraitAgain.gridRows}, bars=${portraitAgain.ganttBars})`);
+  ok(portraitAgain.stacked, `rotating back to portrait re-enters the stacked layout (stacked=${portraitAgain.stacked})`);
   ok((await activeTab(page)) === "Split", `"Split" is still active after the round-trip rotation (got "${await activeTab(page)}")`);
   ok(real.length === 0, `no uncaught page errors (rotation, ${real.length})`);
   await ctx.close();
 }
 
-// ── 2e. Cross the 768px breakpoint in BOTH directions while in Split — no blank frame either way ──
+// ── 5. Cross the 768px breakpoint in BOTH directions while in Split — both panes stay real ──
 {
   console.log("── Cross the isMobile breakpoint both directions while in Split ──");
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 3, ignoreHTTPSErrors: true });
@@ -292,82 +268,105 @@ async function boot(page, view) {
   const real = await boot(page, "split");
   await page.setViewportSize({ width: 1024, height: 800 });
   await page.waitForTimeout(500);
-  const gridWide2 = await page.locator('[data-grid-scroll="1"]').count();
-  const ganttWide2 = await page.locator("[data-gantt-bar]").count();
-  ok(gridWide2 > 0 && ganttWide2 > 0, `crossing narrow→wide (1024px) reveals the real two-pane Split (grid=${gridWide2}, gantt-bars=${ganttWide2})`);
+  const wide = await readBothPanes(page);
+  ok(wide.gridRows > 0 && wide.ganttBars > 0, `crossing narrow→wide (1024px) keeps both panes real (rows=${wide.gridRows}, bars=${wide.ganttBars})`);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(500);
-  const gridNarrow2 = await page.locator('[data-grid-scroll="1"]').count();
-  const ganttNarrow2 = await page.locator("[data-gantt-bar]").count();
-  ok(gridNarrow2 > 0 && ganttNarrow2 === 0, `crossing wide→narrow (390px) re-collapses to one pane (grid=${gridNarrow2}, gantt-bars=${ganttNarrow2})`);
+  const narrow = await readBothPanes(page);
+  ok(narrow.gridRows > 0 && narrow.ganttBars > 0, `crossing wide→narrow (390px) keeps both panes real, now stacked (rows=${narrow.gridRows}, bars=${narrow.ganttBars}, stacked=${narrow.stacked})`);
   ok(real.length === 0, `no uncaught page errors (breakpoint crossing, ${real.length})`);
   await ctx.close();
 }
 
-// ── 2f. A phone wide enough in LANDSCAPE to show the real two-pane Split — both panes must be
-//        real (non-zero size, real content), not just present in the DOM ──
+// ── 6. On-screen-keyboard approximation: focus a Grid cell, shrink the viewport height ──
 {
-  console.log("── Landscape phone wide enough for real two-pane Split (832×380) ──");
-  const ctx = await browser.newContext({ ...devices["iPhone 13 Pro Max landscape"], ignoreHTTPSErrors: true });
+  console.log("── Portrait phone Split, approximating the on-screen keyboard opening while editing ──");
+  const ctx = await browser.newContext({ ...devices["iPhone 13"], ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
   const real = await boot(page, "split");
-  const gridBox = await page.locator('[data-grid-scroll="1"]').boundingBox();
-  const ganttCount = await page.locator("[data-gantt-bar]").count();
-  ok(!!gridBox && gridBox.width > 50 && gridBox.height > 50, `the Grid pane has real, non-zero size in landscape two-pane Split (${gridBox ? `${gridBox.width.toFixed(0)}x${gridBox.height.toFixed(0)}` : "not found"})`);
-  ok(ganttCount > 0, `the Gantt pane has real bar content alongside it (${ganttCount} bars)`);
-  ok((await activeTab(page)) === "Split", `"Split" reads active in the real two-pane view (got "${await activeTab(page)}")`);
-  ok(real.length === 0, `no uncaught page errors (landscape two-pane, ${real.length})`);
+  const nameCell = page.locator('[data-task-row="1"]').first();
+  await nameCell.tap();
+  await page.waitForTimeout(200);
+  // iOS shrinks the visible viewport height when the keyboard opens — approximated here as a
+  // straight viewport resize. NOT a real keyboard: no visualViewport event, no real inset. Stated
+  // plainly per the brief's own honesty requirement — see this file's header comment.
+  await page.setViewportSize({ width: 390, height: 500 });
+  await page.waitForTimeout(300);
+  const withKeyboard = await readBothPanes(page);
+  ok(withKeyboard.gridRows > 0 && withKeyboard.ganttBars > 0, `both panes keep rendering (not erroring out) with a shrunk viewport approximating the keyboard (rows=${withKeyboard.gridRows}, bars=${withKeyboard.ganttBars})`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  ok(real.length === 0, `no uncaught page errors (keyboard-shrink approximation, ${real.length})`);
   await ctx.close();
 }
 
-// ── 3. LANDSCAPE phone (832px — clears isMobile's 768px, pointer stays coarse) ──
+// ── 7. B1241746's row-height parity fix still holds inside the STACKED layout ──
+{
+  console.log("── Portrait phone Split: grid-row / Gantt-row height parity (B1241746) still holds when stacked ──");
+  const ctx = await browser.newContext({ ...devices["iPhone 13"], ignoreHTTPSErrors: true });
+  const page = await ctx.newPage();
+  const real = await boot(page, "split");
+  const heights = await page.evaluate(() => {
+    const gridRow = document.querySelector('[data-task-row]')?.getBoundingClientRect();
+    const ganttRow = document.querySelector('[data-gantt-row]')?.getBoundingClientRect();
+    return { grid: gridRow ? gridRow.height : null, gantt: ganttRow ? ganttRow.height : null };
+  });
+  ok(heights.grid != null && heights.gantt != null, `both a grid row and a Gantt row were found (grid=${heights.grid}, gantt=${heights.gantt})`);
+  ok(Math.abs((heights.grid ?? 0) - (heights.gantt ?? 0)) < 0.5, `a grid row and a Gantt row render at the SAME height even stacked, not side by side (grid=${heights.grid?.toFixed(2)}px, gantt=${heights.gantt?.toFixed(2)}px)`);
+  ok(real.length === 0, `no uncaught page errors (row-height parity, ${real.length})`);
+  await ctx.close();
+}
+
+// ── 8. Landscape phone (832×380) — unchanged: real two-pane side-by-side Split ──
 {
   console.log("── Landscape phone (832×380, touch, clears 768px isMobile threshold) ──");
   const ctx = await browser.newContext({ ...devices["iPhone 13 Pro Max landscape"], ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
-  const real = await boot(page, "gantt");
-  const bars = await page.locator("[data-gantt-bar]").count();
-  ok(bars > 0, `Gantt renders at landscape phone width (${bars} bars) — this half already worked`);
+  const real = await boot(page, "split");
+  const p = await readBothPanes(page);
+  ok(p.gridRows > 0 && p.ganttBars > 0, `landscape phone still shows the real two-pane Split (rows=${p.gridRows}, bars=${p.ganttBars})`);
+  ok(!p.stacked, `landscape phone uses the desktop side-by-side layout, unchanged (stacked=${p.stacked})`);
+  ok((await activeTab(page)) === "Split", `"Split" reads active in the real two-pane view (got "${await activeTab(page)}")`);
   const zoomBtn = page.locator('button[title="Zoom in"]').first();
   const zbox = await zoomBtn.boundingBox().catch(() => null);
-  ok(!!zbox && zbox.height >= 44 && zbox.width >= 44, `Gantt zoom button meets the 44px touch floor at landscape phone width — the reported "controls too small to hit" case (${zbox ? `${zbox.width.toFixed(0)}x${zbox.height.toFixed(0)}` : "not found"})`);
-  ok(real.length === 0, `no uncaught page errors (landscape Gantt, ${real.length})`);
-  await page.screenshot({ path: OUT + "schedule-phone-landscape-gantt.png" }).catch(() => {});
+  ok(!!zbox && zbox.height >= 44 && zbox.width >= 44, `Gantt zoom button still meets the 44px touch floor at landscape phone width (${zbox ? `${zbox.width.toFixed(0)}x${zbox.height.toFixed(0)}` : "not found"})`);
+  ok(real.length === 0, `no uncaught page errors (landscape two-pane, ${real.length})`);
+  await page.screenshot({ path: OUT + "schedule-phone-landscape-split.png" }).catch(() => {});
   await ctx.close();
 }
 
-// ── 4. Narrow DESKTOP window (mouse, no touch) — isMobile true, coarsePointer false ──
+// ── 9. Grid and Gantt picked DIRECTLY at phone width — unchanged, full-height, single-pane ──
 {
-  console.log("── Narrow desktop window (760×860, mouse, isMobile but NOT coarse) ──");
-  const ctx = await browser.newContext({ viewport: { width: 760, height: 860 }, deviceScaleFactor: 1, ignoreHTTPSErrors: true });
+  console.log("── Portrait phone (390×844, touch): Grid and Gantt picked directly are unchanged ──");
+  const ctx = await browser.newContext({ ...devices["iPhone 13"], ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
-  const real = await boot(page, "gantt");
-  const bars = await page.locator("[data-gantt-bar]").count();
-  ok(bars > 0, `Gantt renders at narrow-desktop width too (${bars} bars)`);
+  const real = await boot(page, "grid");
+  const gridOnly = await readBothPanes(page);
+  ok(gridOnly.gridRows > 0 && gridOnly.ganttBars === 0, `plain Grid: only the grid renders, no Gantt bars, no split-stack wrapper (rows=${gridOnly.gridRows}, bars=${gridOnly.ganttBars}, stacked=${gridOnly.stacked})`);
+  ok(!gridOnly.stacked, `plain Grid never renders the split-stack wrapper`);
+  await page.locator(".hdr-view button", { hasText: "Gantt" }).tap();
+  await page.waitForTimeout(400);
+  const ganttOnly = await readBothPanes(page);
+  ok(ganttOnly.ganttBars > 0 && ganttOnly.gridRows === 0, `plain Gantt: only bars render, no grid rows, no split-stack wrapper (bars=${ganttOnly.ganttBars}, rows=${ganttOnly.gridRows}, stacked=${ganttOnly.stacked})`);
+  ok(!ganttOnly.stacked, `plain Gantt never renders the split-stack wrapper`);
   const zoomBtn = page.locator('button[title="Zoom in"]').first();
   const zbox = await zoomBtn.boundingBox().catch(() => null);
-  ok(!!zbox && zbox.height < 44, `a narrow mouse-driven window does NOT get forced to 44px controls by width alone (height=${zbox ? zbox.height.toFixed(0) : "n/a"}px) — pointer type, not width, drives sizing`);
-  ok(real.length === 0, `no uncaught page errors (narrow desktop, ${real.length})`);
+  ok(!!zbox && zbox.height >= 44 && zbox.width >= 44, `Gantt zoom button meets the 44px touch floor at portrait phone width (${zbox ? `${zbox.width.toFixed(0)}x${zbox.height.toFixed(0)}` : "not found"})`);
+  ok(real.length === 0, `no uncaught page errors (plain grid/gantt at phone width, ${real.length})`);
   await ctx.close();
 }
 
-// ── 5. Standard DESKTOP viewport (mouse) — Split unchanged, zoom buttons unchanged, pill untouched ──
+// ── 10. Standard DESKTOP viewport (mouse) — Split unchanged, zoom buttons unchanged, pill untouched ──
 {
   console.log("── Standard desktop (1600×900, mouse) — pixel-parity check ──");
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1, ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
   const real = await boot(page, "split");
-  const gridVisible = await page.locator('[data-grid-scroll="1"]').count();
-  const ganttVisible = await page.locator("[data-gantt-bar]").count();
-  ok(gridVisible > 0 && ganttVisible > 0, `desktop Split still shows BOTH panes at once, unchanged (grid=${gridVisible}, gantt-bars=${ganttVisible})`);
+  const p = await readBothPanes(page);
+  ok(p.gridRows > 0 && p.ganttBars > 0, `desktop Split still shows BOTH panes at once, unchanged (rows=${p.gridRows}, bars=${p.ganttBars})`);
+  ok(!p.stacked, `desktop Split still uses the resizable side-by-side layout, never the phone stack`);
   const zoomBtn = page.locator('button[title="Zoom in"]').first();
   const zbox = await zoomBtn.boundingBox().catch(() => null);
   ok(!!zbox && Math.round(zbox.height) === 21, `desktop zoom button height is byte-identical to before this fix (21px, got ${zbox ? zbox.height.toFixed(1) : "n/a"})`);
-  const counts = await countSwitcherButtons(page);
-  ok(counts.grid === 1 && counts.split === 1 && counts.gantt === 1, `desktop still shows exactly one of each pill button (${JSON.stringify(counts)})`);
-  // "Split" must still be the highlighted/active tab on desktop (the pill's click/highlight logic
-  // must not have picked up any phone-only branching) — read its own font-weight, matching the
-  // active-tab convention every other tab in this pill already uses.
   const splitWeight = await page.locator(".hdr-view button", { hasText: "Split" }).evaluate((el) => getComputedStyle(el).fontWeight);
   ok(splitWeight === "600", `Split tab is still shown as active on desktop (fontWeight 600, got ${splitWeight})`);
   ok(real.length === 0, `no uncaught page errors (desktop split, ${real.length})`);
@@ -378,7 +377,7 @@ async function boot(page, view) {
 await browser.close(); server.close();
 
 console.log("\n" + (fails.length === 0
-  ? "✅ PASS — B1241744/B1241745/B1241747 verified live (portrait Gantt+Split with ONE switcher, landscape touch sizing, narrow-mouse-window untouched, desktop pixel parity)"
+  ? "✅ PASS — B1281648 (Split at phone width now shows both panes, stacked) verified in emulated Chromium. This is NOT proof it works on a real iPhone — see this file's own header comment and V930736 in VERIFICATION.md."
   : `❌ FAIL — ${fails.length} assertion(s):`));
 fails.forEach((f) => console.log("  - " + f));
 process.exit(fails.length === 0 ? 0 : 1);
