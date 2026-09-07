@@ -39,6 +39,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
+import { CRUMB_MIN_W } from "../../shared/ui/ProjectBreadcrumb.jsx";
 import SheetView from "./components/SheetView.jsx";
 import FormulaBar from "./components/FormulaBar.jsx";
 import FindReplaceBar from "./components/FindReplaceBar.jsx";
@@ -79,7 +80,7 @@ import { addSheetFromCsvText, sheetToCsv } from "./lib/csvIO.js";
 // `onProjectsChanged` shape exactly) so a live edit made in the still-mounted Site Planner tab
 // recalculates a formula here without a reload. `fetchAllComps` is the same async/Supabase-only
 // read CompsPanel.jsx uses — there is no synchronous comps cache anywhere in this repo.
-import { buildProjectNames } from "./lib/projectRefs.js";
+import { buildProjectNames, openConceptName } from "./lib/projectRefs.js";
 import { onSiteModelChanged } from "../site-planner/lib/storage.js";
 import { fetchProjectNameComps } from "./lib/projectCompsFetch.js";
 
@@ -203,6 +204,15 @@ export default function ModelApp({
     return () => { off(); clearTimeout(siteTickTimer.current); };
   }, []);
   const projectNames = useMemo(() => buildProjectNames(projectId, { comps }), [projectId, comps, siteTick]);
+  // spreadsheet-concept-crumb (NEW-1) — the header dropped the concept/scheme segment the Site tab
+  // shows (Map / Project / Concept ▾), so once a project held more than one concept there was no
+  // way to tell, from this tab alone, which scheme's geometry Site.*/Plan.* were quoting — exactly
+  // the ambiguity #1516 fixed the RESOLUTION half of. Same trigger as `projectNames` above
+  // (`siteTick`, bumped by `onSiteModelChanged` — which a plan switch's `flushSite()` fires too, so
+  // this reads live the instant the Site tab's plan crumb changes), and the identical resolution
+  // (`openConceptName` shares `projectRefs.js`'s one `loadOpenSite`) — no second "which scheme is
+  // open" answer to drift from what the sheet is actually evaluating.
+  const conceptName = useMemo(() => openConceptName(projectId), [projectId, siteTick]);
   const cloudVersionRef = useRef(null);
   const pushTimer = useRef(0);
   const loadTokenRef = useRef(0);
@@ -810,6 +820,30 @@ export default function ModelApp({
   if (projectId) { try { const p = listProjects().find((pp) => pp.id === projectId); if (p) projectName = p.name; } catch (_) {} }
   const currentProject = projectId ? { id: projectId, name: projectName || "Untitled project" } : null;
 
+  // spreadsheet-concept-crumb (NEW-1) — a trailing breadcrumb crumb, same slot/geometry the Site
+  // tab's own plan switcher occupies (ProjectBreadcrumb.jsx's `planSlot`), naming which concept the
+  // sheet's Site.*/Plan.* values are quoting. `null` (no trailing crumb at all) when the project has
+  // never touched the Site Planner — nothing to name, same as `Site.Acres` reading `#REF!` then.
+  // Read-only here on purpose: switching concepts is the Site tab's own affordance (its plan
+  // crumb), so this jumps there rather than duplicating that switcher's state/menu in this workspace.
+  const conceptCrumb = openProject && conceptName ? (
+    <button
+      type="button"
+      className="dbtn"
+      onClick={() => onShellSwitch?.("site-planner")}
+      title={`“${conceptName}” is the open scheme — its Site plan is what Site.*/Plan.* formulas read. Click to switch to the Site tab.`}
+      data-testid="model-concept-crumb"
+      style={{
+        display: "flex", alignItems: "center", gap: 5, flex: "0 1 auto", minWidth: CRUMB_MIN_W, maxWidth: 200,
+        height: 30, padding: "0 12px", borderRadius: RADIUS.md, border: "none",
+        background: "transparent", cursor: "pointer", fontFamily: "inherit",
+        fontSize: 12, fontWeight: 500, color: "var(--chrome-text)", whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{conceptName}</span>
+    </button>
+  ) : null;
+
   return (
     <div data-testid="model-root" style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--surface-page)" }}>
       <AppHeader
@@ -821,6 +855,7 @@ export default function ModelApp({
         onSelectProject={(id) => onNavigate?.({ projectId: id, cross: false })}
         onNewProject={onNewProject}
         onSelectOrg={onSelectOrg}
+        planSlot={conceptCrumb}
         authControl={authControl}
         accountActive={accountActive}
         saveState={openProject ? modelSaveState(status, accountActive, cloudConfirmed) : null}

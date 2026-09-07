@@ -128,6 +128,37 @@ function buildingFootprintSf(el, els) {
   return (Number(el.w) || 0) * (Number(el.h) || 0) + bumpArea;
 }
 
+/** Resolve which PLAN (concept/scheme) within a project's group is the one currently OPEN — the
+ *  exact resolution `siteEntries` below feeds `Site.*`/`Plan.*`, and the same one `SitePlannerApp`
+ *  itself uses to decide what the Site tab shows. `pickResumeTarget` (bootResume.js) picks the
+ *  group's plan matching the last-opened-plan pointer (`getCurrentSiteId()`), falling back to the
+ *  newest plan in the group — see `siteEntries`'s own note on `projectId` being the SITE-GROUP id,
+ *  not a plan id. Returns `null` for no project / no plan resolved / no site record at all, never a
+ *  fallback name — a caller showing "which scheme" must be able to tell "none" from "resolved". */
+function loadOpenSite(projectId) {
+  if (!projectId) return null;
+  try {
+    const openPlanId = pickResumeTarget({
+      routeProjectId: projectId,
+      currentId: getCurrentSiteId(),
+      plansOfGroup: loadPlansOfGroup,
+      hasSite: (id) => !!loadSite(id),
+    }) || projectId; // no plan resolved (e.g. the group's plans aren't loaded locally yet) — fall back to the group id itself, the pre-existing behavior
+    return loadSite(openPlanId);
+  } catch (_) { return null; }
+}
+
+/** The open concept/scheme's own NAME (e.g. "Concept A (copy)") — never the project's name, which
+ *  is a separate field (`site.site`, see storage.js's `siteNameOf`). Exposed so a caller outside
+ *  this module (ModelApp.jsx's header — spreadsheet-concept-crumb, NEW-1) can show which scheme is
+ *  feeding `Site.*`/`Plan.*` without a second "which plan is open" resolution to drift from this
+ *  one. `null` when there is no project, no plan resolved, or the resolved plan has no site record
+ *  at all — a project that has never touched the Site Planner (lazy `sites` row creation). */
+export function openConceptName(projectId) {
+  const site = loadOpenSite(projectId);
+  return site ? (site.name || "Untitled plan") : null;
+}
+
 /** `Site.*` and `Plan.<building>.*` — everything derivable synchronously from the project's own
  *  site model (see the file header for what's deliberately NOT here — Site.Jurisdiction). `null`/
  *  missing `projectId` reads exactly like a project with no site plan yet: `Site.*` reads
@@ -141,26 +172,13 @@ function buildingFootprintSf(el, els) {
  *  Reading that row directly used to make `Site.Acres`/`Plan.*` silently quote the ORIGINAL concept's
  *  geometry no matter which scheme the user actually has open — including after a reload, since the
  *  reference never consulted which plan was active in the first place. Resolve the OPEN concept the
- *  same way `SitePlannerApp` itself does: `pickResumeTarget` (bootResume.js) picks the group's plan
- *  matching the last-opened-plan pointer (`getCurrentSiteId()`), falling back to the newest plan in
- *  the group — the identical resolution the Site Planner tab is already showing for this project, so
- *  there is no second "which scheme is open" answer to drift from it. */
+ *  same way `SitePlannerApp` itself does — see `loadOpenSite` above, the one resolution this and
+ *  `openConceptName` both use, so there is no second "which scheme is open" answer to drift from it. */
 function siteEntries(projectId) {
   const out = {};
   const put = (name, value, sourceLabel) => { out[name.toLowerCase()] = { name, computed: true, value, sourceLabel }; };
 
-  let site = null;
-  if (projectId) {
-    try {
-      const openPlanId = pickResumeTarget({
-        routeProjectId: projectId,
-        currentId: getCurrentSiteId(),
-        plansOfGroup: loadPlansOfGroup,
-        hasSite: (id) => !!loadSite(id),
-      }) || projectId; // no plan resolved (e.g. the group's plans aren't loaded locally yet) — fall back to the group id itself, the pre-existing behavior
-      site = loadSite(openPlanId);
-    } catch (_) { site = null; }
-  }
+  const site = loadOpenSite(projectId);
 
   // A site record with NO parcels drawn yet — or none currently ACTIVE (deactivated by a split,
   // a delete-and-undo, …) — is functionally "no site plan" for acreage purposes: `siteAcres`

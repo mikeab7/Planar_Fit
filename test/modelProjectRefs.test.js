@@ -7,7 +7,7 @@
 // disappear — reading the REAL site model is what keeps this from becoming exactly that fixture).
 import { describe, it, expect, beforeEach } from "vitest";
 import { saveSite, setCurrentSiteId } from "../src/workspaces/site-planner/lib/storage.js";
-import { buildProjectNames, RESERVED_NAME_PREFIXES } from "../src/workspaces/model/lib/projectRefs.js";
+import { buildProjectNames, openConceptName, RESERVED_NAME_PREFIXES } from "../src/workspaces/model/lib/projectRefs.js";
 import { validateNameText } from "../src/workspaces/model/lib/namedRanges.js";
 import { createSheet } from "../src/workspaces/model/lib/sheetModel.js";
 import { isErrVal, FORMULA_ERRORS, isDate } from "../src/shared/formula/formula.js";
@@ -136,6 +136,65 @@ describe("buildProjectNames — Site.* / Plan.<building>.*", () => {
     const names = buildProjectNames(GROUP);
     expect(isErrVal(names["site.acres"].value)).toBe(true);
     expect(names["site.acres"].value.code).toBe(FORMULA_ERRORS.REF);
+  });
+});
+
+// spreadsheet-concept-crumb (NEW-1) — the SECOND half of the fixed-concept bug above: #1516 fixed
+// which concept's GEOMETRY Site.*/Plan.* read; it shipped with no way to SEE which concept that
+// was from the Spreadsheet tab. `openConceptName` shares `siteEntries`'s own `loadOpenSite`
+// resolution, so these tests mirror the "follows the open concept" cases above but assert the
+// PLAN's own name (`site.name`, the Site tab's `planLabel` — never `site.site`, the project name,
+// which is shared by every concept in the group and would defeat the whole point of the crumb).
+describe("openConceptName — the header crumb naming which scheme is open", () => {
+  beforeEach(() => { globalThis.localStorage = fakeLocalStorage(); });
+
+  it("no project open → null (no trailing crumb at all)", () => {
+    expect(openConceptName(null)).toBeNull();
+  });
+
+  it("a project that has never touched the Site Planner (no site record at all) → null", () => {
+    expect(openConceptName("never-opened")).toBeNull();
+  });
+
+  it("a single-plan project → that plan's own name", () => {
+    saveSite({ id: "p7", groupId: "p7", site: "Untitled site", name: "Concept A", county: "harris" });
+    setCurrentSiteId("p7");
+    expect(openConceptName("p7")).toBe("Concept A");
+  });
+
+  it("follows the OPEN concept's own name, not the project's shared name — and switches live, matching Site.Acres", () => {
+    const GROUP = "g3";
+    saveSite({ id: GROUP, groupId: GROUP, site: "Untitled site", name: "Concept A", county: "harris" });
+    saveSite({ id: "g3copy", groupId: GROUP, site: "Untitled site", name: "Concept A (copy)", county: "harris" });
+
+    setCurrentSiteId(GROUP);
+    expect(openConceptName(GROUP)).toBe("Concept A");
+
+    setCurrentSiteId("g3copy");
+    expect(openConceptName(GROUP)).toBe("Concept A (copy)");
+
+    setCurrentSiteId(GROUP);
+    expect(openConceptName(GROUP)).toBe("Concept A");
+  });
+
+  it("with no last-opened-plan pointer at all, falls back to the group's newest plan (matching buildProjectNames' own fallback)", () => {
+    const GROUP = "g4";
+    saveSite({ id: GROUP, groupId: GROUP, site: "Untitled site", name: "Concept A", county: "harris" });
+    saveSite({ id: "g4copy", groupId: GROUP, site: "Untitled site", name: "Concept A (copy)", county: "harris" }); // saved after → newest
+
+    setCurrentSiteId(null);
+    expect(openConceptName(GROUP)).toBe("Concept A (copy)");
+  });
+
+  // `createSiteModel` itself defaults a plan's `.name` to "Concept A" the moment one is saved
+  // with none — so `openConceptName`'s own `|| "Untitled plan"` fallback (for a resolved record
+  // that somehow still carries no name) is never reachable through `saveSite`; it exists purely
+  // as LOUD-FAILURE defense against a hand-built or corrupted record, matching the same
+  // fallback the Site tab's own plan switcher list already uses (SitePlanner.jsx).
+  it("a freshly-saved plan with no name given defaults through createSiteModel, never a blank crumb", () => {
+    saveSite({ id: "p8", groupId: "p8", site: "Untitled site", county: "harris" });
+    setCurrentSiteId("p8");
+    expect(openConceptName("p8")).toBe("Concept A");
   });
 });
 
