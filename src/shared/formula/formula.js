@@ -794,17 +794,75 @@ const FUNCTIONS = {
   ISOWEEKNUM: { fn: a => { need(a, 1, 1, "ISOWEEKNUM"); const s = toDateSerial(a[0]); if (s === null) return BLANK; return isoWeekNum(s); } },
   YEARFRAC: { fn: a => { need(a, 2, 3, "YEARFRAC"); const s = toDateSerial(a[0]), e = toDateSerial(a[1]); if (s === null || e === null) return BLANK; const basis = a.length > 2 ? Math.trunc(num1(a[2])) : 0; return yearFrac(s, e, basis); } },
 
-  // ── Financial ── (ordinary eager functions — explicit scalar arguments, exactly like
-  //    the 95 above; NONE of these are range-aware. A cost model feeds them per-period
-  //    columns/cells directly, e.g. NPV([Rate],[Y1],[Y2],[Y3]).) See the block of pure
-  //    helper functions right after this registry for the shared math (pmtOf/fvOf/pvOf/
-  //    nperOf/ipmtOf/ppmtOf/solveRoot) — every formula here is derived from the ONE
-  //    annuity identity documented there, never a remembered constant.
-  NPV:  { fn: a => { need(a, 2, null, "NPV"); const r = num1(a[0]); return a.slice(1).reduce((s, v, i) => s + num1(v) / Math.pow(1 + r, i + 1), 0); } },
-  XNPV: { fn: a => { need(a, 3, null, "XNPV"); const r = num1(a[0]); const pairs = xnpvPairs(a.slice(1), "XNPV"); const d0 = pairs[0].d; return pairs.reduce((s, { v, d }) => s + v / Math.pow(1 + r, (d - d0) / 365), 0); } },
-  IRR:  { fn: a => { need(a, 2, null, "IRR"); const cfs = a.map(num1); return irrOf(cfs); } },
-  XIRR: { fn: a => { need(a, 4, null, "XIRR"); const pairs = xnpvPairs(a, "XIRR"); return xirrOf(pairs); } },
-  MIRR: { fn: a => { need(a, 4, null, "MIRR"); const financeRate = num1(a[0]), reinvestRate = num1(a[1]); const cfs = a.slice(2).map(num1); return mirrOf(cfs, financeRate, reinvestRate); } },
+  // ── Financial ── (range-aware, NEW-1: a cash-flow/date argument may be a literal, a
+  //    cell reference, OR a whole range/[Column]/named range — matching how a real model
+  //    lays out cash flows (one row per period) rather than typing every flow as its own
+  //    literal, which is how these five previously had to be called. `flattenArgs` (beside
+  //    collectNums, further down) is the shared building block: it expands any range-typed
+  //    argument in place, in order, and passes everything else through `ev()` unchanged, so
+  //    every call shape that worked before (pure scalars/refs) is untouched byte-for-byte.
+  //    IRR/XIRR additionally accept Excel's own two-argument shape — IRR(values,[guess]),
+  //    XIRR(values,dates,[guess]) — whenever the values (IRR) or values-or-dates (XIRR) slot
+  //    holds an actual range; a `guess` there seeds the solver only (solveRoot's bisection
+  //    fallback finds the same root regardless), never a cash flow. MIRR's argument order is
+  //    now Excel's own trailing-rates shape, MIRR(cf1, cf2, …, financeRate, reinvestRate) —
+  //    generalized so the leading cash-flow group may be any mix of scalars and ranges,
+  //    collapsing to plain MIRR(values, financeRate, reinvestRate) when values is one range —
+  //    replacing this engine's previous rates-first ordering, which no spreadsheet uses and
+  //    which the range fix would otherwise have frozen in place. See the block of pure helper
+  //    functions right after this registry for the shared math (pmtOf/fvOf/pvOf/nperOf/
+  //    ipmtOf/ppmtOf/solveRoot) — every formula here is derived from the ONE annuity identity
+  //    documented there, never a remembered constant.
+  NPV:  { rng: (an, ctx, ev) => { need(an, 2, null, "NPV"); const r = num1(ev(an[0], ctx)); const cfs = flattenArgs(an.slice(1), ctx, ev).map(num1); return cfs.reduce((s, v, i) => s + v / Math.pow(1 + r, i + 1), 0); } },
+  XNPV: { rng: (an, ctx, ev) => {
+    need(an, 3, null, "XNPV");
+    const r = num1(ev(an[0], ctx));
+    let pairs;
+    if (an.length === 3 && (isRangeArg(an[1]) || isRangeArg(an[2]))) {
+      // Excel's own shape: XNPV(rate, values, dates) — two PARALLEL arrays, zipped by
+      // position, never flattened-then-chunked (that would mispair the moment either
+      // side has more than one cell — see XIRR's identical branch below).
+      const values = flattenArgs([an[1]], ctx, ev).map(num1);
+      const dates = flattenArgs([an[2]], ctx, ev).map(v => { const d = toDateSerial(v); if (d === null) throw ferr(FORMULA_ERRORS.VALUE, "XNPV: blank date"); return d; });
+      if (values.length !== dates.length) throw ferr(FORMULA_ERRORS.VALUE, "XNPV: values and dates must be the same size");
+      pairs = values.map((v, i) => ({ v, d: dates[i] }));
+    } else {
+      pairs = xnpvPairs(flattenArgs(an.slice(1), ctx, ev), "XNPV");
+    }
+    const d0 = pairs[0].d;
+    return pairs.reduce((s, { v, d }) => s + v / Math.pow(1 + r, (d - d0) / 365), 0);
+  } },
+  IRR:  { rng: (an, ctx, ev) => {
+    need(an, 1, null, "IRR");
+    if (an.length <= 2 && isRangeArg(an[0])) {
+      const cfs = colArray(an[0], ctx).map(v => num1(raiseIfErr(v)));
+      if (cfs.length < 2) throw ferr(FORMULA_ERRORS.VALUE, "IRR needs at least 2 cash flows");
+      const guess = an.length > 1 ? num1(ev(an[1], ctx)) : 0.1;
+      return irrOf(cfs, guess);
+    }
+    if (an.length < 2) throw ferr(FORMULA_ERRORS.VALUE, "IRR needs at least 2 cash flows");
+    return irrOf(flattenArgs(an, ctx, ev).map(num1));
+  } },
+  XIRR: { rng: (an, ctx, ev) => {
+    need(an, 2, null, "XIRR");
+    if (an.length <= 3 && (isRangeArg(an[0]) || isRangeArg(an[1]))) {
+      const values = flattenArgs([an[0]], ctx, ev).map(num1);
+      const dates = flattenArgs([an[1]], ctx, ev).map(v => { const d = toDateSerial(v); if (d === null) throw ferr(FORMULA_ERRORS.VALUE, "XIRR: blank date"); return d; });
+      if (values.length !== dates.length) throw ferr(FORMULA_ERRORS.VALUE, "XIRR: values and dates must be the same size");
+      if (values.length < 2) throw ferr(FORMULA_ERRORS.VALUE, "XIRR needs at least 2 cash flows");
+      const guess = an.length > 2 ? num1(ev(an[2], ctx)) : 0.1;
+      return xirrOf(values.map((v, i) => ({ v, d: dates[i] })), guess);
+    }
+    need(an, 4, null, "XIRR");
+    return xirrOf(xnpvPairs(flattenArgs(an, ctx, ev), "XIRR"));
+  } },
+  MIRR: { rng: (an, ctx, ev) => {
+    need(an, 3, null, "MIRR");
+    const reinvestRate = num1(ev(an[an.length - 1], ctx));
+    const financeRate = num1(ev(an[an.length - 2], ctx));
+    const cfs = flattenArgs(an.slice(0, -2), ctx, ev).map(num1);
+    return mirrOf(cfs, financeRate, reinvestRate);
+  } },
   PMT:  { fn: a => { need(a, 3, 5, "PMT"); const rate = num1(a[0]), nper = num1(a[1]), pv = num1(a[2]); const fv = a.length > 3 ? num1(a[3]) : 0; const type = a.length > 4 && toNumber(a[4]) ? 1 : 0; return pmtOf(rate, nper, pv, fv, type); } },
   IPMT: { fn: a => { need(a, 4, 6, "IPMT"); const rate = num1(a[0]), per = num1(a[1]), nper = num1(a[2]), pv = num1(a[3]); const fv = a.length > 4 ? num1(a[4]) : 0; const type = a.length > 5 && toNumber(a[5]) ? 1 : 0; if (per < 1 || per > nper) throw ferr(FORMULA_ERRORS.NUM, "IPMT: per out of range"); return ipmtOf(rate, per, nper, pv, fv, type); } },
   PPMT: { fn: a => { need(a, 4, 6, "PPMT"); const rate = num1(a[0]), per = num1(a[1]), nper = num1(a[2]), pv = num1(a[3]); const fv = a.length > 4 ? num1(a[4]) : 0; const type = a.length > 5 && toNumber(a[5]) ? 1 : 0; if (per < 1 || per > nper) throw ferr(FORMULA_ERRORS.NUM, "PPMT: per out of range"); return pmtOf(rate, nper, pv, fv, type) - ipmtOf(rate, per, nper, pv, fv, type); } },
@@ -920,14 +978,17 @@ function findSignChange(f, lo, hi) {
   }
   return null;
 }
-function irrOf(cfs) {
+// `guess` only seeds solveRoot's Newton step — its bisection fallback always finds the
+// same root over the fixed (-0.999999, 100) bracket regardless of starting point, so a
+// caller-supplied guess (Excel's IRR(values,[guess])) never changes a well-posed answer.
+function irrOf(cfs, guess = 0.1) {
   const f = r => cfs.reduce((s, cf, i) => s + cf / Math.pow(1 + r, i), 0);
-  return solveRoot(f, 0.1, -0.999999, 100);
+  return solveRoot(f, guess, -0.999999, 100);
 }
-function xirrOf(pairs) {
+function xirrOf(pairs, guess = 0.1) {
   const d0 = pairs[0].d;
   const f = r => pairs.reduce((s, { v, d }) => s + v / Math.pow(1 + r, (d - d0) / 365), 0);
-  return solveRoot(f, 0.1, -0.999999, 100);
+  return solveRoot(f, guess, -0.999999, 100);
 }
 function rateOf(nper, pmt, pv, fv, type, guess) {
   const f = r => (r === 0) ? (pv + pmt * nper + fv) : (pv * Math.pow(1 + r, nper) + pmt * (1 + r * type) * (Math.pow(1 + r, nper) - 1) / r + fv);
@@ -1112,6 +1173,22 @@ function rangeGrid(node, ctx) {
 // anything else (a scalar, [@Column], an expression) is a per-row/per-cell scalar,
 // handled by each collector's own `else` branch via `ev`.
 const isRangeArg = n => (n.type === "col" && !n.atRow) || n.type === "range" || n.type === "name";
+// Flattens a mixed scalar/range argument list into ONE ordered array of raw values, in
+// argument order: a range/[Column]/named-range argument expands in place to every value
+// it holds; anything else contributes its own single evaluated value. Shared by the
+// range-aware financial functions (NPV/XNPV/IRR/XIRR/MIRR) so a cash-flow or date
+// argument may be a literal, a cell reference, or a whole range — unlike collectNums,
+// this keeps every raw value (including text/blank/bool) rather than filtering to
+// numbers, since callers coerce with num1/toDateSerial themselves and a non-numeric
+// entry should surface its own #VALUE!, not be silently dropped from a cash-flow list.
+function flattenArgs(argNodes, ctx, ev) {
+  const out = [];
+  argNodes.forEach(n => {
+    if (isRangeArg(n)) colArray(n, ctx).forEach(v => out.push(raiseIfErr(v)));
+    else out.push(ev(n, ctx));
+  });
+  return out;
+}
 // Numbers for SUM/AVERAGE/MIN/MAX/PRODUCT: a bare [Column] arg contributes its numeric
 // (and date→serial) cells, skipping blank/text/bool (Excel range behavior); a scalar or
 // [@Column] arg is coerced via toNumber.
@@ -2246,11 +2323,11 @@ const FUNCTION_HELP = {
   AVERAGEA: "AVERAGEA([Column] or n1, …) — mean",
   NOW: "NOW() — today's date", DATEVALUE: "DATEVALUE(text)", WEEKNUM: "WEEKNUM(date, [type])",
   ISOWEEKNUM: "ISOWEEKNUM(date)", YEARFRAC: "YEARFRAC(start, end, [basis])",
-  NPV: "NPV(rate, cf1, cf2, …) — net present value of future cash flows (period 1, 2, …)",
-  XNPV: "XNPV(rate, cf1, date1, cf2, date2, …) — NPV with actual dates",
-  IRR: "IRR(cf0, cf1, …) — internal rate of return (cf0 is time 0)",
-  XIRR: "XIRR(cf1, date1, cf2, date2, …) — IRR with actual dates",
-  MIRR: "MIRR(financeRate, reinvestRate, cf0, cf1, …) — modified IRR",
+  NPV: "NPV(rate, cf1, cf2, …) — net present value of future cash flows (period 1, 2, …); any cf may be a range",
+  XNPV: "XNPV(rate, values, dates) — NPV with actual dates; values/dates may each be a range, or interleave cf1,date1,cf2,date2,…",
+  IRR: "IRR(values, [guess]) — internal rate of return; values may be a range (cf0 is time 0) or a list cf0, cf1, …",
+  XIRR: "XIRR(values, dates, [guess]) — IRR with actual dates; values/dates may each be a range, or interleave cf1,date1,cf2,date2,…",
+  MIRR: "MIRR(cf0, cf1, …, financeRate, reinvestRate) — modified IRR; the cash flows may be a single range",
   PMT: "PMT(rate, nper, pv, [fv], [type]) — payment per period",
   IPMT: "IPMT(rate, per, nper, pv, [fv], [type]) — interest portion of payment `per`",
   PPMT: "PPMT(rate, per, nper, pv, [fv], [type]) — principal portion of payment `per`",
