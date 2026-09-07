@@ -433,6 +433,31 @@ test.describe("Model workspace — Stage 1 (grid capacity, structural editing, f
     await expect(nameBox).toBeFocused();
   });
 
+  // ⛔ B1290496 — owner report, relayed verbatim: click the Name Box, type "B15", Enter — the
+  // selection moves to B15 (the box reads it back correctly, the cell highlights), but typing
+  // "987654" + Enter right after does NOTHING: `document.activeElement` was `<body>`, not the
+  // grid and not an input, so every keystroke was silently discarded and B15 stayed empty. The
+  // contrast that localised it: clicking B15 directly with the mouse then typing the same value
+  // commits it every time — a mouse click focuses the grid as a side effect (SheetView's own
+  // `cellClick`), a Name Box jump did not. Same fault family as B1287888 (#1514): a keystroke
+  // arriving with nothing actually focused to receive it.
+  test("Name Box: typing right after a jump lands in the target cell, no intervening click needed", async ({ page }) => {
+    const id = "e2e-stage1-namebox-focus";
+    await seedProject(page, id);
+    await page.goto(`/#/project/${id}/model`);
+    await expect(sheetEl(page)).toBeVisible();
+
+    const nameBox = page.getByTestId("model-name-box");
+    await nameBox.click();
+    await page.keyboard.type("B15");
+    await page.keyboard.press("Enter");
+    // The jump itself must hand DOM focus to the grid, not just move the selection.
+    await expect(sheetEl(page)).toBeFocused();
+    await page.keyboard.type("987654");
+    await page.keyboard.press("Enter");
+    await expect(cell(page, 14, 1)).toHaveText("987654");
+  });
+
   // B1007280 — owner report, relayed verbatim: "I typed C50 into the name box and pressed
   // Enter. It selected column C and put me at C1. The row part was parsed and discarded."
   // Extensive live testing (direct type, Ctrl+G entry, slow/paused typing, double-click and
