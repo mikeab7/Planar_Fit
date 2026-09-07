@@ -14,6 +14,13 @@
 // real syntax error, not just that it exists and happens to pass. That proof lived only in a
 // chat transcript before this test; nothing stopped a future edit turning this file into an
 // unconditional pass while CI stayed green forever.
+//
+// B1167200 — each block result now also carries the transformed `code` itself (esbuild's JSX-
+// to-`React.createElement` output), not just its length. This is the SAME walk and the SAME
+// transform this file already did for validation; the production build step
+// (scripts/build-sequence-compiled.mjs) reuses it to get real compiled JS rather than adding a
+// second walker that finds the <script type="text/babel"> blocks. Nothing here changes for an
+// existing caller — `code` is a new, additive field.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { transformSync } from "esbuild";
@@ -21,27 +28,37 @@ import { transformSync } from "esbuild";
 const MARKER = '<script type="text/babel">';
 
 /** Walk every <script type="text/babel"> block in `html` and esbuild-JSX-transform each one.
- *  Returns one result per block found: { blockNum, chars, lines, ok, error, outLength }.
- *  `error` is esbuild's own error list (or [{text: message}]) when `ok` is false, else null. */
+ *  Returns one result per block found: { blockNum, chars, lines, ok, error, outLength, code,
+ *  tagStart, contentStart, contentEnd, tagEnd }.
+ *  `error` is esbuild's own error list (or [{text: message}]) when `ok` is false, else null.
+ *  The four position fields are byte offsets into `html` (tagStart = the "<script..." marker
+ *  itself, contentStart/contentEnd = the JSX source between the tags, tagEnd = just past the
+ *  matching "</script>") — enough for a caller to splice a replacement in without re-finding
+ *  the block boundaries (used by scripts/build-sequence-compiled.mjs, B1167200). */
 export function checkBabelBlocks(html) {
   const blocks = [];
   let searchFrom = 0, blockNum = 0;
   while (true) {
-    const start = html.indexOf(MARKER, searchFrom);
-    if (start === -1) break;
+    const tagStart = html.indexOf(MARKER, searchFrom);
+    if (tagStart === -1) break;
     blockNum++;
-    const open = html.indexOf(">", start) + 1;
+    const open = html.indexOf(">", tagStart) + 1;
     const end = html.indexOf("</script>", open);
+    const tagEnd = end + "</script>".length;
     const code = html.slice(open, end);
-    let ok = true, error = null, outLength = null;
+    let ok = true, error = null, outLength = null, outCode = null;
     try {
       const out = transformSync(code, { loader: "jsx", jsx: "transform" });
       outLength = out.code.length;
+      outCode = out.code;
     } catch (e) {
       ok = false;
       error = e.errors ? e.errors.slice(0, 5) : [{ text: e.message }];
     }
-    blocks.push({ blockNum, chars: code.length, lines: code.split("\n").length, ok, error, outLength });
+    blocks.push({
+      blockNum, chars: code.length, lines: code.split("\n").length, ok, error, outLength, code: outCode,
+      tagStart, contentStart: open, contentEnd: end, tagEnd,
+    });
     searchFrom = end + 1;
   }
   return blocks;
