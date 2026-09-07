@@ -580,6 +580,15 @@ export function CompForm({ draft, setDraft, teams, projects, trackedSites, party
  *  - onOpenBrochure(overlay) — open that overlay's source document in Review, at its page (B848848)
  *  - onFocusAnchor(anchor) — pan/zoom the map to a {lat,lon} the paste-grid isn't done with yet
  *    (B849232/NEW-1: clicking an entry-grid row highlights its location before it's even saved)
+ *  - onDetailCompChange({id,projectId}|null) — B1167712-B1167714 (NEW-1/2/3): which comp's own
+ *    site plan (if any) should surface right now. Fired whenever a saved comp's detail/edit form
+ *    opens or closes; SitePlansSection (a MapFinder sibling, not a child of this component) is
+ *    what actually renders the plan — there is no more standalone Site Plans list to scroll past.
+ *  - repinCompAnchorRef — MapFinder assigns nothing here; THIS component assigns the ref's
+ *    `.current` to its own repin handler, so MapFinder can hand back a finished "Pin this on the
+ *    plan" map click as a real comp UPDATE (never the pendingAnchor/new-comp flow above).
+ *  - startUploadRef — ref MapFinder reads to trigger SitePlansSection's upload flow from this
+ *    panel's own "+ Site plan" button (order (a): a plan uploaded before any comp exists for it).
  *
  * currentUserId and the team list are fetched INTERNALLY (mirrors this module's own
  * self-contained-data-owner shape) rather than threaded through the host, since neither is
@@ -589,6 +598,13 @@ export default function CompsPanel({
   open, active = true, pendingAnchor, onAnchorConsumed, focusCompId, onFocusHandled,
   projects, onCompsChange, overlaysById, onOpenBrochure, reloadToken, onFocusAnchor,
   onArmMapPin, onDisarmMapPin,
+  // B1167712-B1167714 (NEW-1/2/3) — `onDetailCompChange({id,projectId}|null)` tells MapFinder
+  // which comp's site plan (if any) should show right now, so the standalone Site Plans list
+  // could come out entirely and the plan still surfaces right where the comp is (see
+  // SitePlansSection's own header). `repinCompAnchorRef` is how MapFinder hands back a finished
+  // "Pin this on the plan" click — see doRepin below. `startUploadRef` triggers the upload flow
+  // for the "+ Site plan" button (no comp open yet).
+  onDetailCompChange, repinCompAnchorRef, startUploadRef,
 }) {
   const [comps, setComps] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -664,6 +680,39 @@ export default function CompsPanel({
   };
 
   useEffect(() => { if (open) reload(); }, [open]);
+
+  // B1167713 (NEW-2) — MapFinder hands back a finished "Pin this on the plan" click here (a real
+  // comp UPDATE, never the pendingAnchor/new-comp flow above — that flow always mints a fresh
+  // comp). Registered via a ref (the commitPlacementRef/dropIntakeRef shape SitePlansSection
+  // already uses) rather than a returned value, because the click that finishes it happens on
+  // the MAP, well after this component last rendered.
+  const compsRef = useRef(comps);
+  compsRef.current = comps;
+  useEffect(() => {
+    if (!repinCompAnchorRef) return undefined;
+    repinCompAnchorRef.current = async (compId, anchor) => {
+      const existing = compsRef.current.find((c) => c.id === compId);
+      if (!existing) return;
+      const { data, error } = await updateComp(compId, { ...existing, anchor });
+      if (error) { console.error("[comps] re-pin failed:", error); return; }
+      setComps((list) => sortCompsByRecency(list.map((c) => (c.id === compId ? data : c))));
+      setActiveComp((c) => (c && c.id === compId ? data : c));
+    };
+    return () => { if (repinCompAnchorRef) repinCompAnchorRef.current = null; };
+  }, [repinCompAnchorRef]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // B1167712-B1167714 (NEW-1/2/3) — tell MapFinder which comp's SITE plan should surface right
+  // now (SitePlansSection renders it, not this component — see that module's own header). Only
+  // an ALREADY-SAVED comp (a real `id`) has a resolved site to show anything for — a brand-new
+  // draft with no id yet gets nothing (resolveOrCreateTrackedSiteForComp hasn't run for it).
+  const activeCompId = activeComp?.id, activeCompProjectId = activeComp?.projectId;
+  const draftId = draft?.id, draftProjectId = draft?.projectId;
+  useEffect(() => {
+    if (!onDetailCompChange) return;
+    if (view === "detail" && activeCompId) onDetailCompChange({ id: activeCompId, projectId: activeCompProjectId ?? null });
+    else if (view === "form" && draftId) onDetailCompChange({ id: draftId, projectId: draftProjectId ?? null });
+    else onDetailCompChange(null);
+  }, [onDetailCompChange, view, activeCompId, activeCompProjectId, draftId, draftProjectId]);
 
   // B849233/NEW-2 — pending import drafts, fetched the same way (RLS already scopes to owner).
   const reloadDrafts = async () => {
@@ -1020,6 +1069,15 @@ export default function CompsPanel({
                   <input type="file" accept=".kml" style={{ display: "none" }} disabled={kmlImporting}
                     onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) handleKmlFile(f); }} />
                 </label>
+                {/* B1167712 (NEW-1) — order (a): upload a plan before any comp exists for it.
+                    Reaches SitePlansSection's own upload flow (rendered right below, wherever
+                    this rail currently is) via the same ref shape commitPlacementRef/dropIntakeRef
+                    already use; the plan then resolves to a site on its own once it has a
+                    location (see that module's header) — nothing else to do here. */}
+                <button onClick={() => startUploadRef?.current?.()} title="Upload a broker flyer or park plan"
+                  style={{ border: "1px solid var(--border-default)", background: "var(--surface-raised)", color: "var(--text-primary)", fontSize: 10.5, fontWeight: 700, borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontFamily: "inherit" }}>
+                  ＋ Site plan
+                </button>
               </span>
             </div>
             {drafts.length > 0 && (
