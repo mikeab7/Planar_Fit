@@ -143,3 +143,29 @@ export const COMPS_TOGGLE_CLEARANCE_PX = 38;
 export const MAP_OVERLAY_TOP_PX = 10;
 export const MAP_OVERLAY_CHIP_H_PX = 30; // == CONTROL_H.lg (src/shared/ui/designTokens.js)
 export const MAP_OVERLAY_BAR_H_PX = 42;
+
+/* ⛔ B1310209 (NEW-2, owner decision 2026-09-07) — THE SITE-PLAN "ADJUST" PANEL'S CORNER, and the
+ * clearance that follows from it.
+ *
+ * The owner chose the fourth floating-map-panel instance (a small docked panel of editing
+ * controls, opened by the plan card's "Adjust" button) on the explicit condition that it DOCKS
+ * to a map corner rather than hovering loose — the same discipline this file already enforces
+ * for the Comps rail (topleft), the Layers panel (topright) and the Leaflet zoom stack
+ * (bottomleft, see B427408 above). Of the four corners, topleft and topright are already
+ * claimed; bottomleft is the zoom/locate stack. **bottomright is the only corner left**, and it
+ * already holds one thing: Leaflet's own graphic scale control (`L.control.scale(...)`,
+ * MapFinder.jsx).
+ *
+ * MEASURED, not assumed (a fresh build + a real Chromium render of the map, 1191×465 viewport —
+ * the owner's own reported window size): the scale control's row sits 39.98px above the true
+ * viewport/map bottom edge (top edge at y=425.02 against a 465px-tall map). Rounded up for
+ * safety margin (font/DPI variance across browsers) to **40**, plus the same ~4px breathing gap
+ * this file already leaves other neighbours (COMPS_TOGGLE_CLEARANCE_PX's own margin above the
+ * Layers panel) → **44**.
+ *
+ * The panel is anchored from the BOTTOM (`bottom: SCALE_BAR_CLEARANCE_PX, right: 10`), not the
+ * top — it grows UPWARD as its content grows (opacity/rotation/lock/share/action rows), the same
+ * "anchor the edge that's fixed, let the free edge float" idiom the bottom-left banner slot uses
+ * (NEW-MAPCTRL-3, `ZOOM_CONTROL_CLEARANCE_PX`'s own call site). This is what keeps it clear of the
+ * scale bar at every content height without a second measurement. */
+export const SCALE_BAR_CLEARANCE_PX = 44;
