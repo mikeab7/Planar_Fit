@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-06 @ `316f50ace` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-07 @ `b433861` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -84,7 +84,7 @@ _711 source files mapped._
 - **`src/workspaces/dashboard/lib/dashboardElementRecencyFetch.js`** — Paged site_elements read for real per-plan edit recency (the Pursuits card's Quiet-for column).
   - _exports_: `fetchAllElementRecency`
 - **`src/workspaces/dashboard/lib/dashboardLayout.js`** — pure model for the arrangeable card grid: catalog, default layout, add/remove/reorder/resize.
-  - _exports_: `addCard`, `availableToAdd`, `CARD_DEFS`, `CARD_KEYS`, `DEFAULT_LAYOUT`, `moveCard`, `normalizeLayout`, `removeCard`, `SIZES`, `toggleCardSize`
+  - _exports_: `addCard`, `applyGridChange`, `availableToAdd`, `CARD_DEFS`, `CARD_KEYS`, `DEFAULT_LAYOUT`, `GRID_COLS`, `narrowOrder`, `normalizeLayout`, `removeCard`, `resetLayout`, `toRglItem`
 - **`src/workspaces/dashboard/lib/dashboardPipeline.js`** — pure grouping/derivation over `sites` rows for the Pipeline, Pursuits-by-activity, Going-quiet, and Jump-back-in cards.
   - _exports_: `goingQuiet`, `groupProjectsByGroupId`, `mostRecentProject`, `pipelineCounts`
 - **`src/workspaces/dashboard/lib/dashboardPrefs.js`** — per-user persisted Dashboard card layout (`profiles.prefs.dashboardLayout`, independent of `site-planner/lib/userPrefs.js`).
