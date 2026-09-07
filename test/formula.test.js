@@ -1064,11 +1064,11 @@ describe("financial functions", () => {
     expect(approx(num(`XNPV(${r},${args})`), 0, 1e-4)).toBe(true);
   });
 
-  it("MIRR reduces to IRR for exactly two cash flows, for ANY finance/reinvest rate (sign-convention check)", () => {
+  it("MIRR reduces to IRR for exactly two cash flows, for ANY finance/reinvest rate (sign-convention check) — Excel's own cash-flows-first, rates-last argument order", () => {
     const cf0 = -1000, cf1 = 1300;
     const irr = num(`IRR(${cf0},${cf1})`);
     for (const [fr, rr] of [[0.05, 0.05], [0.1, 0.02], [0.2, 0.2]]) {
-      expect(approx(num(`MIRR(${fr},${rr},${cf0},${cf1})`), irr, 1e-9)).toBe(true);
+      expect(approx(num(`MIRR(${cf0},${cf1},${fr},${rr})`), irr, 1e-9)).toBe(true);
     }
   });
 
@@ -1082,7 +1082,7 @@ describe("financial functions", () => {
     let pvNeg = 0, fvPos = 0;
     cfs.forEach((cf, i) => { if (cf < 0) pvNeg += cf / Math.pow(1 + financeRate, i); else fvPos += cf * Math.pow(1 + reinvestRate, n - i); });
     const expected = Math.pow(fvPos / -pvNeg, 1 / n) - 1;
-    expect(approx(num(`MIRR(${financeRate},${reinvestRate},${cfs.join(",")})`), expected, 1e-9)).toBe(true);
+    expect(approx(num(`MIRR(${cfs.join(",")},${financeRate},${reinvestRate})`), expected, 1e-9)).toBe(true);
   });
 
   it("PV/FV/PMT round-trip the fundamental annuity identity", () => {
@@ -1118,6 +1118,76 @@ describe("financial functions", () => {
   it("XNPV/XIRR reject an unpaired values/dates argument list", () => {
     expect(err("XNPV(0.1,100,DATE(2026,1,1),200)")).toBe(FORMULA_ERRORS.VALUE);
     expect(err("XIRR(100,DATE(2026,1,1),200)")).toBe(FORMULA_ERRORS.VALUE);
+  });
+});
+
+// ── NEW-1 — IRR/XIRR/NPV/XNPV/MIRR reject range arguments [model] (bug) ──────────────
+// Measured live on production build b433861: cash flows in I1:I5, dates in H1:H5, every
+// one of these formulas returned #VALUE! because the eager (`fn`-style) argument
+// evaluator threw on a "range" AST node before the function body ever ran — the
+// functions themselves already computed correctly (NPV(0.1,I2) and NPV(0.1,I2,I3) were
+// fine; only NPV(0.1,I2:I3), the SAME two cells as a range, failed). Fixed by making
+// these five range-aware (`rng`-style), so a cash-flow/date argument may now be a
+// literal, a cell reference, or a whole range/[Column]/named range.
+describe("NEW-1 — IRR/XIRR/NPV/XNPV/MIRR accept range arguments", () => {
+  const row = (h, i) => { const r = new Array(9); r[7] = h; r[8] = i; return r; };
+  // H1:H5 = dates, I1:I5 = cash flows — the exact shape from the bug report.
+  const finGrid = [
+    row(D("2026-01-01"), -1000000),
+    row(D("2026-12-31"), 250000),
+    row(D("2027-12-31"), 300000),
+    row(D("2028-12-31"), 350000),
+    row(D("2029-12-31"), 400000),
+  ];
+
+  it("the exact formulas from the bug report no longer return #VALUE!", () => {
+    const formulas = [
+      "IRR(I1:I5)", "IRR(I1:I5,0.1)", "NPV(0.1,I2:I5)",
+      "XIRR(I1:I5,H1:H5)", "XNPV(0.1,I1:I5,H1:H5)", "MIRR(I1:I5,0.08,0.08)",
+    ];
+    for (const f of formulas) {
+      const r = gridRun(f, finGrid);
+      expect(r.ok, `${f} should not error (got ${r.ok ? "" : r.error})`).toBe(true);
+      expect(typeof r.value).toBe("number");
+    }
+  });
+
+  it("NPV/IRR/MIRR over a plain range match the equivalent scalar-argument call, cell for cell", () => {
+    expect(gridVal("NPV(0.1,I2:I5)", finGrid)).toBeCloseTo(gridVal("NPV(0.1,I2,I3,I4,I5)", finGrid), 4);
+    expect(gridVal("IRR(I1:I5)", finGrid)).toBeCloseTo(gridVal("IRR(I1,I2,I3,I4,I5)", finGrid), 9);
+    expect(gridVal("MIRR(I1:I5,0.08,0.08)", finGrid)).toBeCloseTo(gridVal("MIRR(I1,I2,I3,I4,I5,0.08,0.08)", finGrid), 9);
+  });
+
+  it("the discriminator from the bug report: NPV(rate,ref) == NPV(rate,ref,ref) == NPV(rate,range) over the SAME cells", () => {
+    expect(gridVal("NPV(0.1,I2)", finGrid)).toBeCloseTo(250000 / 1.1, 6);
+    expect(gridVal("NPV(0.1,I2,I3)", finGrid)).toBeCloseTo(gridVal("NPV(0.1,I2:I3)", finGrid), 6);
+  });
+
+  it("IRR(range, guess) treats the second argument as a solver seed, never a 6th cash flow", () => {
+    const noGuess = gridVal("IRR(I1:I5)", finGrid);
+    expect(gridVal("IRR(I1:I5,0.1)", finGrid)).toBeCloseTo(noGuess, 9);
+    expect(gridVal("IRR(I1:I5,0.5)", finGrid)).toBeCloseTo(noGuess, 9);
+  });
+
+  it("XIRR/XNPV accept two parallel ranges — values, dates — Excel's own signature", () => {
+    const r = gridVal("XIRR(I1:I5,H1:H5)", finGrid);
+    expect(Math.abs(gridVal(`XNPV(${r},I1:I5,H1:H5)`, finGrid))).toBeLessThan(1e-3); // XNPV at XIRR's own rate ~ 0
+    // Cross-check against the interleaved-scalar form this engine already supported.
+    const interleaved = "XIRR(-1000000,DATE(2026,1,1),250000,DATE(2026,12,31),300000,DATE(2027,12,31),350000,DATE(2028,12,31),400000,DATE(2029,12,31))";
+    expect(gridVal(interleaved, finGrid)).toBeCloseTo(r, 6);
+  });
+
+  it("mismatched values/dates range sizes still error cleanly rather than silently mispairing", () => {
+    expect(gridErr("XIRR(I1:I5,H1:H3)", finGrid)).toBe(FORMULA_ERRORS.VALUE); // 5 values, 3 dates
+    expect(gridErr("XNPV(0.1,I1:I5,H1:H3)", finGrid)).toBe(FORMULA_ERRORS.VALUE);
+  });
+
+  it("MIRR's cash-flow group may itself mix a range with extra scalars", () => {
+    // MIRR(cf.., financeRate, reinvestRate) — the leading group is flattened as a whole,
+    // so a range followed (or preceded) by a literal cash flow still works.
+    const withExtra = gridVal("MIRR(I1:I5,50000,0.08,0.08)", finGrid);
+    const allScalar = gridVal("MIRR(I1,I2,I3,I4,I5,50000,0.08,0.08)", finGrid);
+    expect(withExtra).toBeCloseTo(allScalar, 9);
   });
 });
 
