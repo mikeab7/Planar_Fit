@@ -756,6 +756,14 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     () => (zoom != null && zoom < SITE_PLAN_MIN_ZOOM ? [] : sitePlanOverlays),
     [sitePlanOverlays, zoom]
   );
+  // B1167712-B1167714 (NEW-1/2/3) — the site plan panel no longer renders as a standalone list;
+  // it shows the ONE plan the currently-open comp's site owns, right where that comp is (see
+  // SitePlansSection's own header). `focusedComp` is bubbled up from CompsPanel whenever it's
+  // showing a saved comp's detail or edit form — {id, projectId} | null. `startOverlayUploadRef`
+  // lets the Comps list's own "+ Site plan" button (no comp open yet — order (a), upload-first)
+  // reach SitePlansSection's upload flow the same way `commitPlacementRef`/`dropIntakeRef` do.
+  const [focusedComp, setFocusedComp] = useState(null);
+  const startOverlayUploadRef = useRef(null);
 
   // Bumped whenever a placement commit recomputes pinned comps' positions (B972512-HARDENING
   // item 1), so the open comps panel/map markers refetch immediately instead of waiting for its
@@ -792,11 +800,22 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   };
 
   const [clickableOverlayId, setClickableOverlayId] = useState(null); // "pin a comp" mode, armed on one overlay
+  // B1167713 (NEW-2) — "pinning is optional and offered from the comp." Re-pinning an ALREADY
+  // OPEN comp routes the very next overlay click into `repinCompAnchorRef` (CompsPanel's own
+  // comp-update logic) instead of `onPlaceComp` (which always creates a NEW comp — see
+  // placeCompOnOverlay below). Cleared the moment a click resolves OR pin mode is cancelled, so a
+  // later "Place comp → on a site plan" pin (unrelated, still creates new comps) can never be
+  // mistaken for a leftover repin target.
+  const repinCompIdRef = useRef(null);
+  const repinCompAnchorRef = useRef(null); // set by CompsPanel; called once per finished repin click
   // B848304 — every entry point that arms a site-plan pin (the "Place comp" caret's "On a site
   // plan" item, AND the Site plans panel's own per-overlay "Pin a comp here" button) routes
   // through here, so stickiness records the real choice regardless of which door was used.
   const startPinOnOverlay = (id) => { setActiveOverlayId(null); setClickableOverlayId(id); setLastCompAnchorKind("site_plan"); };
-  const stopPinOnOverlay = () => setClickableOverlayId(null);
+  const stopPinOnOverlay = () => { setClickableOverlayId(null); repinCompIdRef.current = null; };
+  // B1167713 (NEW-2) — CompDetail's own "Pin this on the plan" arms THIS comp as the repin
+  // target, then arms the overlay for pinning exactly as the old "Pin comp here" flow always did.
+  const pinExistingCompOnOverlay = (compId, overlayId) => { repinCompIdRef.current = compId; startPinOnOverlay(overlayId); };
   // B986096-HARDENING-7 — a comp pinned onto a georeferenced site-plan overlay is still a real
   // ground position (`latLonToImagePoint` needs one to place it), so it gets the same best-effort
   // county derivation as a bare map pin (`resolveCompCounty`, defined below) — this anchor kind
@@ -806,10 +825,14 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     setClickableOverlayId(null);
     const sitePlanPoint = latLonToImagePoint(overlay, overlay.imgW, overlay.imgH, latlng.lat, latlng.lng);
     const county = await resolveCompCounty(latlng.lat, latlng.lng, "site-plan pin");
-    onPlaceComp && onPlaceComp({
+    const anchor = {
       kind: "site_plan", lat: latlng.lat, lon: latlng.lng, county,
       sitePlanOverlayId: overlay.id, sitePlanPoint,
-    });
+    };
+    const repinId = repinCompIdRef.current;
+    repinCompIdRef.current = null;
+    if (repinId) { repinCompAnchorRef.current && repinCompAnchorRef.current(repinId, anchor); return; }
+    onPlaceComp && onPlaceComp(anchor);
   };
   const selectOverlay = (id) => { setClickableOverlayId(null); setActiveOverlayId(id); };
   // B972512-HARDENING item 4: a raster that fails to load (permission, network, a deleted
@@ -3600,15 +3623,14 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               })()}
             </div>
             </>)}
-            {/* B1263072 (NEW-1) — COMPS RENDERS FIRST in this tab, and Site Plans is a secondary,
-                collapsed-by-default section below it (SitePlansSection.jsx owns that collapse).
-                Owner: "I can't even see comps anymore... I don't give a shit about site plans." A
-                single expanded site-plan row used to push every comp below the panel's own bottom
-                edge because Site Plans rendered ABOVE Comps in this same scrolling region — the
-                fix is the render order, not a taller panel or a second scroller. Mounted whenever
-                the map route is visible (`open={visible}`) so a comp anchored while browsing
-                Sites still loads and renders as a map pin (NEW-3) — only DISPLAY is gated on the
-                tab (`active`). */}
+            {/* B1263072 (NEW-1), superseded by B1167712-B1167714 (NEW-1/2/3, 2026-09-07) — Site
+                Plans is no longer a section at all, collapsed or otherwise ("we really shouldn't
+                even show site plans... they should just be attached to comps" — owner). Comps
+                renders alone here; SitePlansSection (below) renders nothing on its own and only
+                shows the plan belonging to whichever comp CompsPanel currently has open (see its
+                own header). Mounted whenever the map route is visible (`open={visible}`) so a comp
+                anchored while browsing Sites still loads and renders as a map pin — only DISPLAY
+                is gated on the tab (`active`). */}
             <PanelErrorBoundary name="Comps">
               <Suspense fallback={sitesPanelOpen && panelTab === "comp" ? <div style={{ padding: 14, fontSize: 12, color: PAL.muted }}>Loading…</div> : null}>
                 <CompsPanel
@@ -3639,6 +3661,14 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                   // a third, undocumented step. Clicking Location now engages this directly.
                   onArmMapPin={() => setPlacingCompPin(true)}
                   onDisarmMapPin={() => setPlacingCompPin(false)}
+                  // B1167712-B1167714 (NEW-1/2/3) — which comp's site plan (if any) SitePlansSection
+                  // should show right now (bubbled up whenever a saved comp's detail/edit form is
+                  // open); the repin-completion hook "Pin this on the plan" (rendered by
+                  // SitePlansSection's OverlayRow, not here) writes back into; the ref-triggered
+                  // upload for the list's own "+ Site plan" button (no comp open yet).
+                  onDetailCompChange={setFocusedComp}
+                  repinCompAnchorRef={repinCompAnchorRef}
+                  startUploadRef={startOverlayUploadRef}
                 />
               </Suspense>
             </PanelErrorBoundary>
@@ -3653,7 +3683,6 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                     suggestPlacement={suggestPlacement}
                     activeOverlayId={activeOverlayId}
                     onActivateOverlay={selectOverlay}
-                    onStartPinOnOverlay={startPinOnOverlay}
                     onStopPinOnOverlay={stopPinOnOverlay}
                     pinningOverlayId={clickableOverlayId}
                     commitPlacementRef={commitPlacementRef}
@@ -3663,6 +3692,10 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                     rasterFailedIds={rasterFailedIds}
                     zoomBelowGate={zoom != null && zoom < SITE_PLAN_MIN_ZOOM}
                     onZoomToOverlay={zoomToOverlay}
+                    focusedProjectId={focusedComp?.projectId ?? null}
+                    focusedCompId={focusedComp?.id ?? null}
+                    onStartPinExistingComp={pinExistingCompOnOverlay}
+                    startUploadRef={startOverlayUploadRef}
                   />
                 </Suspense>
               </PanelErrorBoundary>

@@ -29,6 +29,10 @@ export function rowToOverlay(r) {
     userId: r.user_id,
     teamId: r.team_id || null,
     projectId: r.project_id || null,
+    // B1167712 (NEW-1) — see site_plan_overlays_site_link.sql: true once the owner has
+    // explicitly detached this plan from a site, so the automatic matcher never re-attaches one
+    // behind his back.
+    siteLinkDeclined: !!r.site_link_declined,
     reviewId: r.review_id,
     page: r.page,
     docTitle: r.doc_title || "",
@@ -61,6 +65,7 @@ export function overlayToRow(o) {
   return {
     team_id: o.teamId || null,
     project_id: o.projectId || null,
+    site_link_declined: !!o.siteLinkDeclined,
     review_id: o.reviewId,
     page: o.page,
     doc_title: o.docTitle || null,

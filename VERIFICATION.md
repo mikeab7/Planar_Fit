@@ -164,6 +164,60 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V656208 — B1167712: a site plan attaches to a site by footprint/name match, in any upload order, and detach/reattach are real and reversible `Blocker: auth` `Blocker: real-data`
+
+**Why this needs its own real pass, and why it can't run today.** The match rule (does an existing site's own point fall inside the plan's drawn, placed rectangle) and the mint-a-tracked-site fallback both need a real signed-in account's real site portfolio to run against — this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can sign in and exercise the live `resolveOrCreateTrackedSiteForOverlay` path end to end. The RULE itself is proven against the real production coordinates of the owner's own Airtex plan and Core 5 - West Hardy site (not synthetic ones) in `test/overlaySiteMatch.test.js`, including the exact false-positive class (a neighbour within the old comp radius but outside the plan's own footprint) the owner's correction was about.
+
+**What was verified here (this session, sandbox + a scoped, direct production read/write via the Supabase MCP connector, not the app).**
+1. `test/overlaySiteMatch.test.js` (8 tests, new): footprint containment against the real Airtex/Core 5 coordinates and footprint size; the fixed 300 ft buffer's boundary in both directions; the case that would have matched under the old comp-calibrated 0.5mi radius but correctly does not under the footprint rule; the exact-title fallback; the "nothing matches" null case (mint path); an unplaced overlay refuses rather than false-matching.
+2. `test/compSiteMatch.test.js` (9 tests, pre-existing) and `test/comps.test.js` (126 tests) re-run green — confirms the comp-side matcher and comp model are untouched by this item.
+3. **The backfill itself was verified directly against production**, not simulated: queried `public.site_plan_overlays` (aa2d8163) and `public.comps` (ddb5a9e5) — same `user_id`, comp's `project_id` already `trk8eef7db4d0` ("Core 5 - West Hardy"). Queried every one of that account's 101 `sites` rows for haversine distance from the plan's own center — `trk8eef7db4d0` is nearest at 0.107 mi, comfortably inside the plan's own drawn footprint (half-height 1,941 ft) — confirming the chosen target is what the shipped rule would itself compute. Ran the scoped `UPDATE ... WHERE id = 'aa2d8163...' AND user_id = '...' AND project_id IS NULL RETURNING`, then a separate `SELECT` to confirm: **before `project_id: null` → after `project_id: "trk8eef7db4d0"`**. The `site_link_declined` column (migration applied to production, confirmed via `apply_migration`) defaults `false`, so the app's own "Site" control on that plan will read it as attached-but-freely-reversible, not locked.
+4. `npx eslint` clean on every touched file; `npm ci` + the targeted vitest runs above all green.
+
+**Steps, each with a named expected result — on a real signed-in account with more than one site and comp:**
+1. Upload a new site plan with no comp yet, near an EXISTING site. **Expect:** once placed, reload the Comps tab (or wait for the next open) — the plan's own "Site" dropdown (on the comp/site card) shows that existing site's name, not a freshly-minted one.
+2. Upload a new site plan far from any existing site/comp. **Expect:** it mints a brand-new "tracked" (market-record) site, visible as the "Site" dropdown's selected value.
+3. Open the owner's real Airtex plan (or the comp `Core 5 - West Hardy`). **Expect:** the plan's "Site" dropdown reads "Core 5 - West Hardy."
+4. On that same plan, pick "No site (detached)" in the dropdown. **Expect:** it detaches immediately; reload the app and confirm it did NOT silently re-attach itself.
+5. From a DIFFERENT comp's "no plan yet" empty state, look for the now-detached plan under "N unattached site plans" and click "Attach here." **Expect:** it attaches to that comp's site instead, and its own "Site" dropdown now reflects the new attachment.
+
+**Result:** ⏳ pending — needs a real signed-in account exercising all three orders with the owner's real Airtex plan and at least one fresh upload. `Cadence: once`.
+
+### V656209 — B1167713: "Pin this on the plan" from an already-open comp updates THAT comp, and the map marker moves `Blocker: auth` `Blocker: real-data`
+
+**Why this needs its own real pass, and why it can't run today.** The re-pin path calls a real `comps` table UPDATE and a real map-marker reposition, both gated behind Supabase auth this sandbox cannot reach. The mechanism (which ref fires, which callback runs) was traced by hand and by lint/build, but a click-through against a real saved comp is the only thing that proves the UPDATE actually lands and the marker actually moves.
+
+**What was verified here (this session, sandbox).**
+1. Read through `MapFinder.jsx`'s `pinExistingCompOnOverlay`/`placeCompOnOverlay`/`stopPinOnOverlay` and `CompsPanel.jsx`'s `repinCompAnchorRef` registration by hand — confirmed the repin path never touches `onPlaceComp` (the new-comp path) and that `repinCompIdRef` is cleared on both a successful click and a cancel, so a later ordinary "Place comp → on a site plan" pin can't be mistaken for a leftover repin target.
+2. `npm run lint` clean on both files; `npm run build` clean (see session summary).
+3. `test/comps.test.js` (126 tests) re-run green — confirms `updateComp`'s own contract (used unchanged by the new `doRepin` handler) is untouched.
+
+**Steps, each with a named expected result — on a real signed-in account with a comp whose site already has a placed plan:**
+1. Open that comp's detail view. **Expect:** the plan card below it (via SitePlansSection) shows a "Pin comp here" button.
+2. Click it, then click a point on the rendered plan. **Expect:** the SAME comp (not a new one) now shows `anchor_kind: site_plan` with the clicked point, and its map marker moves onto the plan at that point.
+3. Confirm no second comp was created. **Expect:** the comp count is unchanged.
+4. Click "Pin comp here" again and press Cancel/Escape instead of clicking the plan. **Expect:** nothing changes on the comp.
+
+**Result:** ⏳ pending — needs a real signed-in account with an existing comp + plan. `Cadence: once`.
+
+### V656210 — B1167714: the Site Plans list is gone from the Comps rail, and the right plan surfaces on the right comp `Blocker: real-data`
+
+**Why this needs its own real pass, and why it can't run today.** The map's own zoom-gated rendering is unchanged, already-shipped code (nothing new to verify there); what's new is PANEL behavior — which comp is "focused" and which plan card that resolves to — across a real multi-comp, multi-plan portfolio. This sandbox has no such account to click through.
+
+**What was verified here (this session, sandbox).**
+1. Read through `SitePlansSection.jsx`'s new `focusedOverlay`/`showEmbeddedCard` derivation and `CompsPanel.jsx`'s `onDetailCompChange` bubbling effect by hand — confirmed the card renders nothing with no comp open, the correct one-overlay card when a comp with a plan is open, and the upload/attach-orphan prompt when its site has none.
+2. `npm run build` clean; `npm run lint` clean; `node scripts/build-map.mjs --check` clean (new file registered).
+3. Confirmed (source read) the map's own `SITE_PLAN_MIN_ZOOM`/`visibleSitePlanOverlays` gate is byte-for-byte unchanged — this item never touched map rendering, only the panel.
+
+**Steps, each with a named expected result — on a real signed-in account with at least two comps on DIFFERENT sites, one of which has a plan:**
+1. Open the Comps tab, browsing the list (nothing open). **Expect:** no "Site plans" section anywhere — the rail shows only Comps.
+2. Open the comp on the site WITH a plan. **Expect:** a plan card (thumbnail + controls) appears right below/with that comp, reusing the same Move/resize, Crop, Pin, rotation, opacity, share, lock, delete controls the old list always had.
+3. Go back to the list, then open the comp on the site WITHOUT a plan. **Expect:** a compact "No plan uploaded for this site yet" + "+ Upload site plan" prompt, no leftover plan from step 2.
+4. Zoom the map out below the existing gate over the plan from step 2. **Expect:** unchanged prior behavior — the plan disappears from the MAP (this was already true before this item).
+5. From the Comps list toolbar (nothing open), click "+ Site plan." **Expect:** the same upload flow opens, and completing it resolves the new plan to a site per B1167712.
+
+**Result:** ⏳ pending — needs a real signed-in account with the two-comp/two-site setup described above. `Cadence: once`.
+
 ### V922048 — B1268016: the "Needs attention" dashboard card reads in real descending-day order ACROSS every project, and a row's click-through lands on the exact task `Blocker: auth` `Blocker: real-data`
 
 **Why this needs its own real pass, and why it can't run today.** The sort key (`needsAttentionSince`) only exists once real tasks in a real, signed-in account have actually sat in the "Needs Attn." state — this sandbox's proxy CORS-blocks the Supabase auth handshake (no sign-in reachable) and has no account with real cross-project schedule data to seed even if it could sign in. The sort RULE itself (descending by days, never grouped, `waiting` = successor count) is proven against synthetic fixtures in `test/needsAttentionList.test.js`, including the exact "across every project, not within one" shape — what remains is confirming it against real numbers on a real account.

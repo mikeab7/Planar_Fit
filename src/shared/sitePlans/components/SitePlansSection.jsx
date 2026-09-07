@@ -44,6 +44,7 @@ import {
 } from "../lib/overlayRasterSize.js";
 import { fileNewReview, loadReview, downloadFromDrive, stripFileExt } from "../../../workspaces/doc-review/lib/reviewStore.js";
 import { listMyTeams, currentIdentity } from "../../../workspaces/site-planner/lib/teams.js";
+import { loadSiteSummaries } from "../../../workspaces/site-planner/lib/siteListLight.js";
 import { PALETTES } from "../../theme/palette.js";
 import { createWriteSerializer } from "../../cloud/writeSerializer.js";
 
@@ -512,9 +513,20 @@ function OverlayRow({
 export default function SitePlansSection({
   open, active = true, projects, onOverlaysChange,
   suggestPlacement, activeOverlayId, onActivateOverlay,
-  onStartPinOnOverlay, onStopPinOnOverlay, pinningOverlayId,
+  onStopPinOnOverlay, pinningOverlayId,
   commitPlacementRef, dropIntakeRef, onRejectFile, onCompPositionsChanged, rasterFailedIds,
   zoomBelowGate, onZoomToOverlay,
+  // B1167712-B1167714 (NEW-1/2/3, owner decision 2026-09-07 — "we really shouldn't even show
+  // site plans... they should just be attached to comps") — this no longer renders a standalone
+  // list. `focusedProjectId`/`focusedCompId` name the comp currently open in the Comps rail (see
+  // MapFinder's `focusedComp`, bubbled up from CompsPanel); with nothing focused this component
+  // renders nothing (except an in-flight upload/crop flow, which is never site-scoped).
+  // `onStartPinExistingComp(compId, overlayId)` replaces `onStartPinOnOverlay` here — pinning is
+  // always re-pinning the ALREADY-OPEN comp now, never creating a new one (that flow still exists,
+  // unchanged, via the map's own "Place comp → on a site plan" menu). `startUploadRef` lets the
+  // Comps list's own "+ Site plan" button (no comp open yet — order (a), upload-first) trigger the
+  // same upload flow this component owns.
+  focusedProjectId = null, focusedCompId = null, onStartPinExistingComp, startUploadRef,
 }) {
   const [overlays, setOverlays] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -522,12 +534,6 @@ export default function SitePlansSection({
   const [panelError, setPanelError] = useState(null);
   const [flow, setFlow] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
-  // B1263072 (NEW-1) — this whole section defaults COLLAPSED: it's secondary to the Comps list
-  // this tab exists to show ("I can't even see comps anymore... I don't give a shit about site
-  // plans"). `sectionOpen` is the section-level disclosure (distinct from `expandedId`, which
-  // still governs one ROW's own detail). `open` below also opens whenever the upload flow is
-  // running, so starting an upload is never gated behind a second click to reveal it.
-  const [sectionOpen, setSectionOpen] = useState(false);
   // B972512-HARDENING item 6 — "Recently deleted": deleting a site plan is now RECOVERABLE
   // (soft delete) rather than permanent, matching sites/doc_reviews' own trash pattern. Fetched
   // lazily, only once the disclosure is opened — empty in the common case, costs nothing until
@@ -547,7 +553,7 @@ export default function SitePlansSection({
   // (MapFinder's onSelect → selectOverlay → activeOverlayId) armed the SAME map handles but
   // never touched this component's local expand state, so the row stayed collapsed and looked
   // like the click had done nothing.
-  useEffect(() => { if (activeOverlayId) { setExpandedId(activeOverlayId); setSectionOpen(true); } }, [activeOverlayId]);
+  useEffect(() => { if (activeOverlayId) setExpandedId(activeOverlayId); }, [activeOverlayId]);
   const notifiedRef = useRef(onOverlaysChange);
   notifiedRef.current = onOverlaysChange;
   const overlaysRef = useRef(overlays);
@@ -585,6 +591,25 @@ export default function SitePlansSection({
     currentIdentity().then(({ uid }) => setCurrentUserId(uid)).catch(() => setCurrentUserId(null));
   }, [open]);
 
+  // B1167712 (NEW-1, owner correction 2026-09-07) — "a site plan attaches to a site the same way
+  // a comp does" STARTS from the comp path but does not reuse it verbatim: a comp is matched by
+  // location against a fixed 0.5mi radius calibrated for a POINT, and a plan is a DRAWING THAT
+  // COVERS AREA — shared/sitePlans/lib/overlaySiteMatch.js's own header has the full reasoning
+  // and the owner's own Airtex numbers. `resolveOrCreateTrackedSiteForOverlay` (storage.js, right
+  // beside the comp version) runs that plan-specific rule and mints a tracked site exactly the
+  // same way when nothing matches. Dynamic import — same reason CompsPanel's own call site uses
+  // one: keeps the site-planner's full model/geometry/cloud-sync graph off this chunk until a
+  // resolve is actually attempted. ⛔ NEVER STICKS SILENTLY: `siteLinkDeclined` (set only by the
+  // owner's own "Site" control below, never by this function) permanently opts an overlay OUT —
+  // "once he has separated them, they stay separated."
+  const resolveAttemptedRef = useRef(new Set());
+  const resolveOverlaySite = async (o) => {
+    if (o.projectId || o.siteLinkDeclined || !overlayPlaced(o)) return null;
+    const { resolveOrCreateTrackedSiteForOverlay } = await import("../../../workspaces/site-planner/lib/storage.js");
+    const resolved = await resolveOrCreateTrackedSiteForOverlay(o);
+    return (resolved && resolved.groupId) || null;
+  };
+
   const reload = async () => {
     setLoading(true);
     const { data, error } = await fetchAllOverlays();
@@ -593,6 +618,17 @@ export default function SitePlansSection({
       setOverlays(data);
       for (const o of data) noteVersion(o.id, o.version);
       notifiedRef.current?.(data);
+      // "Both already exist independently. They join by location on the next resolve; the owner
+      // never does anything" — a placed overlay with no site yet gets ONE resolve attempt per
+      // overlay per session here, on every load/refresh, so a comp/site that shows up later still
+      // closes the loop with no action from Michael. Fire-and-forget: `patchAndReload` (below)
+      // does its own version-guarded write + reload once a match (or a freshly-minted tracked
+      // site) comes back.
+      for (const o of data) {
+        if (o.projectId || o.siteLinkDeclined || !overlayPlaced(o) || resolveAttemptedRef.current.has(o.id)) continue;
+        resolveAttemptedRef.current.add(o.id);
+        resolveOverlaySite(o).then((groupId) => { if (groupId) patchAndReload(o, { projectId: groupId }); });
+      }
     }
     return error ? null : data; // callers that need the FRESH rows (not a re-render's timing) read this
   };
@@ -708,8 +744,21 @@ export default function SitePlansSection({
     return { blob, w: imageData.width, h: imageData.height, thumbDataUrl, url: URL.createObjectURL(blob) };
   };
 
-  const startNewUpload = () => { setPanelError(null); setFlow(emptyFlow()); };
+  // `presetProjectId` (B1167712/NEW-1) — set when the upload starts FROM a comp's own detail
+  // view (the site is already known, so there's nothing to resolve later) or from the embedded
+  // per-site card below; the top-of-the-Comps-list "+ Site plan" button (order (a), no comp open
+  // yet) calls this with nothing, and the reload sweep above attaches it once a site exists.
+  const startNewUpload = (presetProjectId) => { setPanelError(null); setFlow({ ...emptyFlow(), projectId: presetProjectId || null }); };
   const cancelFlow = () => setFlow(null);
+
+  // B1167712 — the Comps list's own "+ Site plan" button lives outside this component (it's part
+  // of the toolbar CompsPanel renders), so it reaches this the same way SitePlansSection already
+  // hands MapFinder `commitPlacementRef`/`dropIntakeRef`: a ref this effect assigns, that button calls.
+  useEffect(() => {
+    if (!startUploadRef) return undefined;
+    startUploadRef.current = (presetProjectId) => { setExpandedId(null); startNewUpload(presetProjectId); };
+    return () => { if (startUploadRef) startUploadRef.current = null; };
+  }, [startUploadRef]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // `extra` carries what a DROP already knows that a file-picker pick doesn't: where on the
   // map it landed (dropPlacement) and any sibling files still waiting their turn (queue) —
@@ -965,6 +1014,12 @@ export default function SitePlansSection({
   };
   const toggleVisible = (o) => patchAndReload(o, { visible: !o.visible });
   const shareOverlay = (o, teamId) => patchAndReload(o, { teamId });
+  // B1167712 (NEW-1, owner correction) — the ONE control that changes OR detaches a plan's site,
+  // always visible on the plan itself. Picking a site is a deliberate, explicit choice, so it
+  // always clears `siteLinkDeclined` (a fresh choice supersedes any earlier auto-suggestion);
+  // picking "No site" is the detach action and sets it, so the reload-sweep resolver above never
+  // re-attaches this same plan behind the owner's back.
+  const setOverlaySite = (o, newProjectId) => patchAndReload(o, { projectId: newProjectId || null, siteLinkDeclined: !newProjectId });
   // B972512-HARDENING item 17 — `locked` exists on the schema (mirrors the Site Planner's own
   // reference-image "locked" flag) but had NO control anywhere in this feature's UI, so the
   // owner-only UPDATE policy this column relies on was never actually exercised — confirmed
@@ -1019,123 +1074,174 @@ export default function SitePlansSection({
     await loadTrash();
   };
 
-  // B1263072 (NEW-1) — secondary section under Comps: collapsed unless the user opened it, or
-  // the upload flow is running (a drag-dropped/picked file must always be reachable, never hidden
-  // behind a second click to expand the section it's already inside).
-  const sectionContentOpen = sectionOpen || !!flow;
+  // B1167712-B1167714 (NEW-1/2/3, owner decision 2026-09-07) — "we really shouldn't even show
+  // site plans... they should just be attached to comps." There is no more standalone list.
+  // `focusedOverlay` is the ONE plan the currently-open comp's SITE owns (never a per-comp copy —
+  // the site is the join, see the shared shared/comps/lib/compSiteMatch.js header); with a comp
+  // open and no plan yet, a compact upload prompt takes its place. With nothing open (browsing
+  // the comp list) and no upload/crop flow running, this renders nothing at all.
+  const focusedOverlay = focusedProjectId ? overlays.find((o) => o.projectId === focusedProjectId) || null : null;
+  const showEmbeddedCard = !!focusedProjectId && !flow;
+  // Scoped "Recently deleted" — this site's own binned plans, plus any never-resolved orphan
+  // (deleted before it ever got a location, so it has no site to be scoped to) — never a global
+  // trash list. `o.project_id` here is the raw select row (fetchDeletedOverlays doesn't run
+  // rowToOverlay), matching `o.doc_title`/`o.source_file_name` below.
+  const scopedTrash = trash.filter((o) => o.project_id === focusedProjectId || !o.project_id);
+  // A plan the owner has explicitly detached (or one that was never resolved and the reload
+  // sweep hasn't reached yet) has no site of its own — the ONLY way back to it once the old
+  // standalone list is gone, so the empty state below offers it directly rather than stranding
+  // it (mirrors the "Recently deleted" scoping above: reachable from wherever it's missed, never
+  // a persistent global list). Fresh every render, same precedent as CompsPanel's own
+  // `trackedSites` derivation — a handful of rows at most.
+  const orphanOverlays = overlays.filter((o) => !o.projectId && o.id !== focusedOverlay?.id);
+  const siteOptions = (() => {
+    const byGroup = new Map();
+    for (const s of loadSiteSummaries()) {
+      const g = s.groupId || s.id;
+      if (!byGroup.has(g)) byGroup.set(g, s);
+    }
+    return [...byGroup.values()];
+  })();
+
+  const errorBanner = panelError && (
+    <div style={{
+      display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8, padding: "6px 8px",
+      border: "1px solid var(--danger-text)", borderRadius: RADIUS.sm, background: "var(--surface-raised)",
+    }}>
+      <div style={{ flex: 1, minWidth: 0, fontSize: FONT_SIZE.control, color: "var(--danger-text)" }}>{panelError}</div>
+      <IconButton size={22} aria-label="Dismiss" title="Dismiss" onClick={() => setPanelError(null)}>✕</IconButton>
+    </div>
+  );
+
+  const trashBlock = (
+    <div style={{ marginTop: focusedOverlay ? 8 : 4 }}>
+      <button onClick={toggleTrash} style={{
+        border: "none", background: "none", padding: "4px 0", cursor: "pointer", fontFamily: "inherit",
+        fontSize: FONT_SIZE.label, color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", gap: 4,
+      }}>
+        <span style={{ display: "inline-block", transform: trashOpen ? "none" : "rotate(-90deg)" }}>▾</span>
+        Recently deleted{trashOpen && scopedTrash.length ? ` (${scopedTrash.length})` : ""}
+      </button>
+      {trashOpen && (
+        trashLoading ? (
+          <div style={{ ...metaText, padding: "4px 0" }}>Loading…</div>
+        ) : scopedTrash.length === 0 ? (
+          <div style={{ ...metaText, padding: "4px 0" }}>Nothing here.</div>
+        ) : (
+          scopedTrash.map((o) => (
+            <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderTop: "1px solid var(--border-default)" }}>
+              <div style={{ flex: 1, minWidth: 0, fontSize: FONT_SIZE.control, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={o.source_file_name || undefined}>
+                {o.doc_title || "Untitled site plan"} <span style={metaText}>· p.{o.page}</span>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => restore(o)}>Restore</Button>
+              <Button size="sm" variant="ghost" style={{ color: "var(--danger-text)" }} onClick={() => purgeForever(o)}>Delete forever</Button>
+            </div>
+          ))
+        )
+      )}
+    </div>
+  );
 
   return (
     <>
-    <div style={{ borderBottom: "1px solid var(--border-default)", padding: "10px 14px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: sectionContentOpen ? 8 : 0 }}>
-        <button onClick={() => setSectionOpen((v) => !v)} aria-expanded={sectionContentOpen} style={{
-          display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", padding: 0, cursor: "pointer", fontFamily: "inherit",
-        }}>
-          <span style={{ fontSize: 8, lineHeight: 1, color: "var(--text-secondary)", display: "inline-block", transform: sectionContentOpen ? "none" : "rotate(-90deg)" }}>▼</span>
-          <span style={{ fontSize: FONT_SIZE.label, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--text-secondary)" }}>
-            Site plans{overlays.length ? ` (${overlays.length})` : ""}
-          </span>
-        </button>
-        {!flow && <Button size="sm" variant="ghost" onClick={() => { setSectionOpen(true); startNewUpload(); }}>+ Upload site plan</Button>}
-      </div>
-
-      {sectionContentOpen && (<>
-      {panelError && (
-        <div style={{
-          display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8, padding: "6px 8px",
-          border: "1px solid var(--danger-text)", borderRadius: RADIUS.sm, background: "var(--surface-raised)",
-        }}>
-          <div style={{ flex: 1, minWidth: 0, fontSize: FONT_SIZE.control, color: "var(--danger-text)" }}>{panelError}</div>
-          <IconButton size={22} aria-label="Dismiss" title="Dismiss" onClick={() => setPanelError(null)}>✕</IconButton>
-        </div>
-      )}
-
-      {!flow && overlays.length === 0 && !loading && (
-        <div style={{ fontSize: FONT_SIZE.control, color: "var(--text-secondary)" }}>
-          Upload a broker flyer or park plan — drag it into position on the map and pin comps to specific buildings on it.
-        </div>
-      )}
-
-      {!flow && overlays.map((o) => {
-        const pageDupeCount = overlays.filter((x) => x.reviewId === o.reviewId && x.page === o.page).length;
-        return (
-        <OverlayRow key={o.id} o={o}
-          duplicateCount={pageDupeCount}
-          expanded={expandedId === o.id}
-          onToggleExpand={() => setExpandedId((id) => (id === o.id ? null : o.id))}
-          // NEW-17 — "Editing on map" must never render for a row with nothing on the map to
-          // edit (overlayPlaced requires a real center + scale) — belt-and-suspenders against
-          // the panel showing "Not placed yet" and "Editing on map" at the same time, whatever
-          // path got `activeOverlayId` here. The map's own handles controller already refuses to
-          // arm on an unplaced overlay (useSitePlanOverlayLayers/syncHandles); this keeps the
-          // row's own label from disagreeing with that.
-          isActive={activeOverlayId === o.id && overlayPlaced(o)}
-          onActivate={async () => {
-            setExpandedId(o.id);
-            if (!overlayPlaced(o)) {
-              const placement = suggestPlacement ? suggestPlacement(o.imgW, o.imgH) : null;
-              if (!placement) { setPanelError("Couldn't place this site plan — the map isn't ready yet. Try again in a moment."); return; }
-              await patchAndReload(o, placement);
-            }
-            onActivateOverlay && onActivateOverlay(o.id);
-          }}
-          // NEW-9(b) (owner report, build 9c35724) — the only way out of "Editing on map" used
-          // to be an Escape press or a click on empty map (MapFinder.jsx), neither reachable
-          // from the panel itself. This is the in-panel exit, wired into the kebab menu item.
-          onDeactivate={() => onActivateOverlay && onActivateOverlay(null)}
-          pinning={pinningOverlayId === o.id}
-          onStartPin={() => onStartPinOnOverlay?.(o.id)}
-          onStopPin={() => onStopPinOnOverlay?.()}
-          onSetOpacity={(v) => setOpacityLive(o, v)}
-          onOpacityCommit={() => flushOpacityWrite(o)}
-          onSetRotation={(deg) => setRotation(o, deg)}
-          onStartCrop={() => startCrop(o)}
-          onToggleVisible={() => toggleVisible(o)}
-          onRename={(name) => rename(o, name)}
-          onConfirmChangePage={() => startChangePage(o)}
-          onDelete={() => remove(o)}
-          rasterFailed={!!rasterFailedIds?.has(o.id)}
-          teams={teams}
-          onShareTeam={(teamId) => shareOverlay(o, teamId)}
-          isOwner={o.userId === currentUserId}
-          onToggleLocked={() => toggleLocked(o)}
-          zoomBelowGate={zoomBelowGate}
-          onZoomToOverlay={onZoomToOverlay}
-        />
-        );
-      })}
-
-      {!flow && (
-        <div style={{ marginTop: overlays.length ? 4 : 8 }}>
-          <button onClick={toggleTrash} style={{
-            border: "none", background: "none", padding: "4px 0", cursor: "pointer", fontFamily: "inherit",
-            fontSize: FONT_SIZE.label, color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", gap: 4,
-          }}>
-            <span style={{ display: "inline-block", transform: trashOpen ? "none" : "rotate(-90deg)" }}>▾</span>
-            Recently deleted{trashOpen && trash.length ? ` (${trash.length})` : ""}
-          </button>
-          {trashOpen && (
-            trashLoading ? (
-              <div style={{ ...metaText, padding: "4px 0" }}>Loading…</div>
-            ) : trash.length === 0 ? (
-              <div style={{ ...metaText, padding: "4px 0" }}>Nothing here.</div>
-            ) : (
-              trash.map((o) => (
-                <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderTop: "1px solid var(--border-default)" }}>
-                  <div style={{ flex: 1, minWidth: 0, fontSize: FONT_SIZE.control, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={o.source_file_name || undefined}>
-                    {o.doc_title || "Untitled site plan"} <span style={metaText}>· p.{o.page}</span>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => restore(o)}>Restore</Button>
-                  <Button size="sm" variant="ghost" style={{ color: "var(--danger-text)" }} onClick={() => purgeForever(o)}>Delete forever</Button>
+    {showEmbeddedCard && (
+      <div style={{ borderBottom: "1px solid var(--border-default)", padding: "10px 14px" }}>
+        {errorBanner}
+        {loading ? (
+          <div style={{ fontSize: FONT_SIZE.control, color: "var(--text-secondary)" }}>Loading…</div>
+        ) : focusedOverlay ? (
+          <>
+          {/* B1167712 (NEW-1, owner correction) — ALWAYS visible on the plan itself: which site
+              it's attached to, one dropdown to change it, and picking "No site" detaches it —
+              never a fact the owner can't see or undo. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={metaText}>Site</span>
+            <select value={focusedOverlay.projectId || ""} onChange={(e) => setOverlaySite(focusedOverlay, e.target.value || null)} style={{ ...inputStyle, flex: 1 }}>
+              <option value="">No site (detached)</option>
+              {siteOptions.map((s) => <option key={s.id} value={s.id}>{s.site || s.name}</option>)}
+            </select>
+          </div>
+          <OverlayRow o={focusedOverlay}
+            duplicateCount={1}
+            expanded={expandedId === focusedOverlay.id}
+            onToggleExpand={() => setExpandedId((id) => (id === focusedOverlay.id ? null : focusedOverlay.id))}
+            // NEW-17 — "Editing on map" must never render for a row with nothing on the map to
+            // edit (overlayPlaced requires a real center + scale) — belt-and-suspenders against
+            // the panel showing "Not placed yet" and "Editing on map" at the same time, whatever
+            // path got `activeOverlayId` here. The map's own handles controller already refuses to
+            // arm on an unplaced overlay (useSitePlanOverlayLayers/syncHandles); this keeps the
+            // row's own label from disagreeing with that.
+            isActive={activeOverlayId === focusedOverlay.id && overlayPlaced(focusedOverlay)}
+            onActivate={async () => {
+              setExpandedId(focusedOverlay.id);
+              if (!overlayPlaced(focusedOverlay)) {
+                const placement = suggestPlacement ? suggestPlacement(focusedOverlay.imgW, focusedOverlay.imgH) : null;
+                if (!placement) { setPanelError("Couldn't place this site plan — the map isn't ready yet. Try again in a moment."); return; }
+                await patchAndReload(focusedOverlay, placement);
+              }
+              onActivateOverlay && onActivateOverlay(focusedOverlay.id);
+            }}
+            // NEW-9(b) (owner report, build 9c35724) — the only way out of "Editing on map" used
+            // to be an Escape press or a click on empty map (MapFinder.jsx), neither reachable
+            // from the panel itself. This is the in-panel exit, wired into the kebab menu item.
+            onDeactivate={() => onActivateOverlay && onActivateOverlay(null)}
+            pinning={pinningOverlayId === focusedOverlay.id}
+            // B1167713 (NEW-2) — the ONLY thing that changed about pinning: the target is always
+            // the comp already open here, never a brand-new one (the map's own "Place comp → on a
+            // site plan" menu still creates new comps, unchanged, via onPlaceComp elsewhere).
+            onStartPin={() => onStartPinExistingComp?.(focusedCompId, focusedOverlay.id)}
+            onStopPin={() => onStopPinOnOverlay?.()}
+            onSetOpacity={(v) => setOpacityLive(focusedOverlay, v)}
+            onOpacityCommit={() => flushOpacityWrite(focusedOverlay)}
+            onSetRotation={(deg) => setRotation(focusedOverlay, deg)}
+            onStartCrop={() => startCrop(focusedOverlay)}
+            onToggleVisible={() => toggleVisible(focusedOverlay)}
+            onRename={(name) => rename(focusedOverlay, name)}
+            onConfirmChangePage={() => startChangePage(focusedOverlay)}
+            onDelete={() => remove(focusedOverlay)}
+            rasterFailed={!!rasterFailedIds?.has(focusedOverlay.id)}
+            teams={teams}
+            onShareTeam={(teamId) => shareOverlay(focusedOverlay, teamId)}
+            isOwner={focusedOverlay.userId === currentUserId}
+            onToggleLocked={() => toggleLocked(focusedOverlay)}
+            zoomBelowGate={zoomBelowGate}
+            onZoomToOverlay={onZoomToOverlay}
+          />
+          </>
+        ) : (
+          <div>
+            <div style={{ fontSize: FONT_SIZE.label, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--text-secondary)", marginBottom: 6 }}>Site plan</div>
+            <div style={{ fontSize: FONT_SIZE.control, color: "var(--text-secondary)", marginBottom: 8 }}>
+              No plan uploaded for this site yet — drop a broker flyer or park plan on it, then drag it into position on the map.
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => startNewUpload(focusedProjectId)}>+ Upload site plan</Button>
+            {/* B1167712 (NEW-1, owner correction) — the way back for a plan the owner (or the
+                matcher) hasn't attached anywhere yet, now that the standalone list is gone. */}
+            {orphanOverlays.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ ...metaText, marginBottom: 4 }}>
+                  {orphanOverlays.length} unattached site plan{orphanOverlays.length === 1 ? "" : "s"}:
                 </div>
-              ))
-            )
-          )}
-        </div>
-      )}
+                {orphanOverlays.map((o) => (
+                  <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: FONT_SIZE.control, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {o.docTitle || "Untitled site plan"}
+                    </span>
+                    <Button size="sm" variant="ghost" onClick={() => setOverlaySite(o, focusedProjectId)}>Attach here</Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {trashBlock}
+      </div>
+    )}
 
-      {flow && (
-        <div style={{ marginTop: 8, padding: 10, border: "1px solid var(--border-default)", borderRadius: 8, background: "var(--surface-raised)" }}>
+    {flow && (
+      <div style={{ borderBottom: "1px solid var(--border-default)", padding: "10px 14px" }}>
+        {errorBanner}
+        <div style={{ padding: 10, border: "1px solid var(--border-default)", borderRadius: 8, background: "var(--surface-raised)" }}>
           {flow.step === "file" && (
             <>
               <div style={{ fontSize: FONT_SIZE.control, marginBottom: 8 }}>Choose a PDF or image, or drag it onto the map. A multi-page brochure keeps every page — you'll pick which one to place next.</div>
@@ -1228,9 +1334,8 @@ export default function SitePlansSection({
             </>
           )}
         </div>
-      )}
-      </>)}
-    </div>
+      </div>
+    )}
 
     {/* B1134754 NEW-21 — cropping an ALREADY-PLACED overlay. A simple centered overlay (this
         panel has no existing modal primitive) rather than a second bespoke crop surface. */}
