@@ -1,11 +1,16 @@
-// The Sequence/Schedule app (public/sequence/index.html) is a standalone page that pulls React,
-// ReactDOM, Babel-standalone and supabase-js from public CDNs at runtime. In this sandbox the BROWSER
-// has no egress — every one of those four requests dies with ERR_CONNECTION_RESET — so the page renders
+// The Sequence/Schedule app (public/sequence/index.html) is a standalone page that pulls
+// Babel-standalone and supabase-js from public CDNs at runtime. In this sandbox the BROWSER
+// has no egress — every one of those requests dies with ERR_CONNECTION_RESET — so the page renders
 // a completely EMPTY body. That failure is silent in the worst way: `document.body.textContent` still
 // returns the text of the inline <script> blocks, so a naive probe reads app copy off a page that never
 // rendered a single row and reports a confident pass. Node CAN reach the CDNs (it honours HTTPS_PROXY),
 // so we fetch each asset ONCE into a gitignored cache and rewrite the page to load them from the local
 // test server.
+//
+// React/ReactDOM used to be on this list too — they were removed from this SOURCE page's runtime CDN
+// pulls entirely (B1167200): the page now loads them from a locally vendored, checked-in copy
+// (public/sequence/vendor/react*.production.min.js), served like any other public/ asset by every
+// harness's fallback static handler. Nothing to fetch-and-rewrite for them any more.
 //
 // Nothing here changes what the app is: same bytes, same versions, same execution order — only the
 // origin they arrive from. Harnesses that skip this are not testing the Schedule module, they are
@@ -19,8 +24,6 @@ const DIR = new URL("../.vendor/", import.meta.url).pathname;
 // url → local basename. Matched against the page source as a literal substring.
 export const CDN_ASSETS = {
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2": "supabase.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js": "react.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js": "react-dom.js",
   "https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js": "babel.js",
 };
 // The icon webfont stylesheet is decorative — dropped rather than vendored, so a font CDN outage can

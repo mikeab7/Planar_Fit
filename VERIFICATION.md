@@ -187,6 +187,45 @@ was never clicked" quietly ships broken.
 7. Clean up: delete (soft-delete) the throwaway comp and plan created for this check.
 
 **Result:** ⏳ pending — needs a real signed-in account. `Cadence: once`.
+### V655696 — B1167200: the Schedule tab boots on the owner's own machine with no boot task attributed to `babel.min.js` `Blocker: real-device`
+
+**Why this needs its own real pass, and why it can't run today.** The bug this closes was found from `public.client_errors` boot-capture telemetry on the OWNER'S OWN signed-in machine (`bootTaskMs 2379.7`, attributed to `babel.min.js` at `DOMContentLoaded`) — a real-hardware, real-network timing measurement. This sandbox's headless Chromium runs behind a proxy with its own network characteristics (confirmed this session: the SAME comparison run here read ~15.1s vs ~8.8s median boot, dominated by this sandbox's own slow `supabase-js` CDN round-trip, not representative of his machine's absolute numbers) — so the only thing that actually closes this item is a fresh boot capture landing from his own browser, showing the babel task gone.
+
+**What was verified here (this session, sandbox).**
+1. `npm run build` produces `dist/sequence/index.html` with **zero** occurrences of `@babel/standalone`, `babel.min.js`, or `type="text/babel"` — confirmed by direct grep of the built output, not inferred.
+2. Booted the actual built `dist/sequence/index.html` in a real headless Chromium (this sandbox's own CDN-vendoring harness pattern, pointed at `dist/` instead of `public/`): it renders the real 49-row Goose Creek seed schedule, `window.Babel === undefined`, `React.version === "18.3.1"` (the locally vendored copy loading and executing correctly) — a genuine, content-verified render, not a byte-absence check alone.
+3. Head-to-head boot comparison, same sandbox, same network conditions, 3 runs each: raw source (pre-fix, still has the CDN babel transpile) median 15,128 ms vs. the compiled build median 8,816 ms, measured DOMContentLoaded→first rendered task row via `performance.now()` inside the page (not wall-clock around Playwright calls). Consistent across all 3 runs each way.
+4. `test/sequenceCompiledBuild.test.js` (7 tests, new) proves the compile transform itself is correct and mutation-proven (see B1167200's own writeup for detail) — this is the SOURCE-side proof; this V# is specifically about the boot-capture telemetry confirming the real-world effect.
+
+**Steps, each with a named expected result — on the owner's own machine, on `planyr.io`, after this PR deploys:**
+1. Open the Schedule tab (any project) on a normal, not-recently-visited tab (a cold or recently-navigated load, the same shape the original capture caught — a warm same-tab reload may serve from the browser's HTTP cache and under-represent the old cost too, though the fix removes the cost either way).
+2. **Expect:** the tab visibly renders the grid/Gantt at least as fast as before — no perceptible new stall.
+3. Check the next boot-capture row that lands in `public.client_errors` for this session (module `scheduler`, `source: event:perfcap`). **Expect:** `ltNames` no longer contains `"DOMWindow.onDOMContentLoaded:babel.min.js"` anywhere, and the single largest boot task (whatever it now is) reads meaningfully below the pre-fix `2317.2 ms` — the whole point being that the ~2.3s blocking task this item was filed against is simply gone from the trace, not just smaller.
+4. Confirm the Schedule tab is otherwise fully functional — grid/Gantt render, a task edit saves, switching Grid/Split/Gantt works — since this is a build-pipeline change touching the page's entire delivery mechanism, not a UI change, and a boot-capture win that came with a broken app would not be a fix.
+
+**Result:** ⏳ pending — needs a real boot-capture landing from the owner's own machine after this PR deploys to `planyr.io`. `Cadence: once`.
+
+### V942464 — B1303824: deleting a project through the product UI actually issues the soft-delete write, on the owner's own two real stuck projects `Blocker: auth` `Blocker: real-data`
+
+**Why this needs its own real pass.** The bug only manifests against a real, signed-in, RLS-scoped Supabase account whose local browser cache is missing the project being deleted — this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can reproduce or confirm the actual network write landing. The FIX ITSELF — `storage.js`'s `deleteSiteGroup` falling back to a new `cloudSync.cloudDeleteGroup` whenever the local plan list is empty — is proven end to end against a real mocked Supabase client (`test/deleteSiteGroupCloudFallback.test.js`), including a red-proof (reverting the fix reproduces the exact `removed:0`-with-no-write shape the owner measured live).
+
+**What was verified here (this session, sandbox + code reading, never the live app).**
+1. Reproduced the reported network shape exactly in a unit test: `deleteSiteGroup(groupId)` against a group with a live cloud row but zero locally-cached plans returned `{ok:true, removed:0}` with the pre-fix code, and `{ok:true, removed:1}` with a confirmed write (`deleted_at` stamped) after the fix.
+2. Ruled out PR #1519 (`cloudCheckDeleted`/`purgeProjectFoldersFor`, merged 20 minutes before the first reproduction) as the cause — traced every call site of both functions and confirmed neither is in `deleteSiteGroup`'s call graph.
+3. Found and fixed the same silent-no-op class a second time in `SitePlannerApp.jsx`'s map-list "Delete project…" path (`if (!rec) return;`, with no error/toast/network call at all).
+4. `npx vitest run` — full suite green (773 files / 15,641 tests). `npm run lint` / `npm run build` clean.
+
+**DO NOT repair `smtqp3fp3e06`/`smtqml10v4l1`'s data — deleting them through the fixed UI is this verification's whole proof, and is also the disposal the owner explicitly asked for** ("those two projects are the live reproduction — they were created by the assistant last night, contain nothing of the owner's, and he has asked for them to be gone").
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner, network tab open:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Open the project switcher (breadcrumb dropdown) → the kebab beside "Untitled site" (group `smtqp3fp3e06`) → Delete → confirm. **Expect:** a real `PATCH`/`OPTIONS` preflight hits `rest/v1/sites`, the confirm dialog names the project (never a blank "Delete ?"), and the project leaves the switcher list immediately.
+3. Query (or have a Cowork session query) `sites.deleted_at` for group `smtqp3fp3e06` immediately after. **Expect:** it is no longer `null`.
+4. Hard reload. **Expect:** the project stays gone from the switcher (it now appears under Recently deleted, restorable for 30 days).
+5. Repeat steps 2–4 for the second project, group `smtqml10v4l1`.
+6. Confirm both are gone — this closes the owner's original blocking request as well as the verification.
+
+**Result:** ⏳ pending — needs a real signed-in browser session on production; not reachable from this sandbox. `Cadence: once`.
 ### V946304 — B1307664: the Library folder tree's decorative folder emoji is actually gone on a real signed-in project's populated tree `Blocker: auth`
 
 **Why this needs its own real pass.** `FolderTree.jsx` only renders real, populated rows against a signed-in project's actual folder data (`listFolders`) — this sandbox's proxy CORS-blocks the Supabase auth handshake, so the populated-row branch this fix touches can never execute here. What's proven without a browser: the empty-project template-preview branch (the other place the emoji lived) renders correctly with no emoji, with a precondition proving the render actually reached that branch before trusting the negative assertion; a source sweep confirms neither glyph (📁/📂) appears anywhere else in the module; and the full test suite, lint, build, and `ci-parity`'s visual-regression gate (which captures the `library` surface signed-out, so it can't see this change either way) are all green.

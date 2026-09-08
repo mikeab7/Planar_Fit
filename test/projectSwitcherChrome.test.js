@@ -118,6 +118,12 @@ describe("NEW-3 — real SVG icons, inheriting their row's colour", () => {
   });
 });
 
+describe("B1303825 — the delete confirmation always names its target, never a blank 'Delete ?'", () => {
+  it("the confirm text falls back to a real word if the project's name is ever falsy", () => {
+    expect(crumb).toMatch(/\{menuFor\.name \|\| "this project"\}/);
+  });
+});
+
 describe("NEW-3 (sweep) — the 📍 emoji is gone from every Site Planner control that used it", () => {
   // ParcelRecordPanel dropped OFF this list (B1239329): its one PinIcon consumer was
   // PlacementControls' "Move to a different spot…" button, removed with the whole Placement

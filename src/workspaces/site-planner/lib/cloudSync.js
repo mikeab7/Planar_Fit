@@ -248,6 +248,49 @@ export function interpretDelete(rows, error) {
  *
  * Pre-migration DBs (db/sites_soft_delete.sql not run) degrade to the old immediate hard delete,
  * so deleting never regresses before the migration lands. */
+/* B1303824 — the GROUP-level counterpart to cloudDelete above, used ONLY when this device's local
+ * cache holds NO plan at all for a project it is being asked to delete (storage.js's
+ * deleteSiteGroup falls back to this the moment `loadPlansOfGroup` comes back empty).
+ *
+ * A project can be VISIBLE in the switcher — the light summary reader, or the `withCurrentProject`
+ * synthesized "the project you're standing in" row — while this browser's local cache has never
+ * actually cached a single plan for it: created on another device/session, or a cloud pull that
+ * hasn't landed here yet. The old deleteSiteGroup took an empty local plan list as proof there was
+ * nothing to delete and returned a clean `{ok:true, removed:0}` with ZERO network traffic — a real,
+ * live cloud project read as "deleted" in the UI and never actually moved (owner report: two
+ * projects, `deleted_at` never touched, only GET traffic on the wire across three attempts).
+ *
+ * Mirrors cloudCheckDeleted's two-query shape — `id = groupId` catches the anchor plan (or a
+ * legacy pre-groupId row), `group_id = groupId` catches every sibling — rather than a single
+ * `.or()` filter expression built from opaque id values. */
+export async function cloudDeleteGroup(uid, groupId) {
+  if (!supabase || !uid || !groupId) return { ok: true, removed: 0, skipped: true };
+  const stamp = new Date().toISOString();
+  try {
+    const [byId, byGroup] = await Promise.all([
+      supabase.from("sites").update({ deleted_at: stamp }).eq("id", groupId).select("id"),
+      supabase.from("sites").update({ deleted_at: stamp }).eq("group_id", groupId).select("id"),
+    ]);
+    const error = byId.error || byGroup.error;
+    if (error) {
+      if (isMissingColumn(error, "deleted_at")) return { ok: true, exists: true, deleted: false, removed: 0 }; // pre-migration DB — nothing this fallback can safely do
+      reportClientEvent("cloud-write-failed", "group soft delete failed (sites)", { groupId, error: error.message || "" });
+      return { ok: false, error: error.message || "delete failed" };
+    }
+    const ids = new Set();
+    for (const r of [...(byId.data || []), ...(byGroup.data || [])]) if (r && r.id) ids.add(r.id);
+    if (!ids.size) {
+      reportClientEvent("delete-zero-rows", "group soft delete matched no rows (sites)", { groupId });
+      return { ok: true, removed: 0 };
+    }
+    for (const id of ids) { delete siteVersions[id]; delete lastHeaderSig[id]; }
+    return { ok: true, removed: ids.size };
+  } catch (e) {
+    reportClientEvent("cloud-write-failed", "group delete threw (sites)", { groupId, error: (e && e.message) || "" });
+    return { ok: false, error: (e && e.message) || "delete threw" };
+  }
+}
+
 export async function cloudDelete(uid, id) {
   // Nothing to remove server-side (logged out / unconfigured) is success, not a failure to alarm on.
   if (!supabase || !uid || !id) return { ok: true, removed: 0, skipped: true };
