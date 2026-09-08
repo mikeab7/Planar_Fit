@@ -291,7 +291,8 @@ describe("B265541 — a capture of a BAD moment keeps its episode", () => {
     const row = JSON.parse(enc.text);
     expect(row.framesKept).toBe(row.ft.length);
     expect(row.framesDropped).toBe(120 - row.ft.length);
-    expect(row.note).toBe("trimmed");
+    // Both series lost rows at this squeeze — NEW-1 (B1317824) names which, never a bare "trimmed".
+    expect(row.note).toBe("trimmed-both");
   });
 
   it("the bare last-resort row is still reachable when even the smallest floor will not fit", () => {
