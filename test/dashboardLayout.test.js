@@ -42,21 +42,21 @@ describe("resetLayout", () => {
 
 describe("normalizeLayout — new (grid) shape", () => {
   it("passes through a valid grid layout unchanged", () => {
-    const raw = [{ key: "jumpBackIn", x: 0, y: 0, w: 8, h: 4 }, { key: "compsSummary", x: 8, y: 0, w: 4, h: 4 }];
+    const raw = [{ key: "jumpBackIn", x: 0, y: 0, w: 8, h: 4 }, { key: "compsSummary", x: 8, y: 0, w: 4, h: 8 }];
     expect(normalizeLayout(raw)).toEqual(raw);
   });
 
   it("drops unknown keys", () => {
-    const out = normalizeLayout([{ key: "notARealCard", x: 0, y: 0, w: 4, h: 4 }, { key: "compsSummary", x: 0, y: 0, w: 4, h: 4 }]);
-    expect(out).toEqual([{ key: "compsSummary", x: 0, y: 0, w: 4, h: 4 }]);
+    const out = normalizeLayout([{ key: "notARealCard", x: 0, y: 0, w: 4, h: 4 }, { key: "compsSummary", x: 0, y: 0, w: 4, h: 8 }]);
+    expect(out).toEqual([{ key: "compsSummary", x: 0, y: 0, w: 4, h: 8 }]);
   });
 
   it("dedupes, keeping the first occurrence", () => {
     const out = normalizeLayout([
-      { key: "compsSummary", x: 0, y: 0, w: 4, h: 4 },
-      { key: "compsSummary", x: 4, y: 4, w: 8, h: 8 },
+      { key: "compsSummary", x: 0, y: 0, w: 4, h: 8 },
+      { key: "compsSummary", x: 4, y: 4, w: 8, h: 9 },
     ]);
-    expect(out).toEqual([{ key: "compsSummary", x: 0, y: 0, w: 4, h: 4 }]);
+    expect(out).toEqual([{ key: "compsSummary", x: 0, y: 0, w: 4, h: 8 }]);
   });
 
   it("clamps w/h up to the card's own minimums, and x so the card never spills past GRID_COLS", () => {
@@ -68,8 +68,8 @@ describe("normalizeLayout — new (grid) shape", () => {
   });
 
   it("drops a malformed grid-shaped entry missing x/y/w/h, silently, rather than throwing", () => {
-    const out = normalizeLayout([{ key: "compsSummary", x: 0, y: 0, w: 4, h: 4 }, { key: "goingQuiet", x: 0 }]);
-    expect(out).toEqual([{ key: "compsSummary", x: 0, y: 0, w: 4, h: 4 }]);
+    const out = normalizeLayout([{ key: "compsSummary", x: 0, y: 0, w: 4, h: 8 }, { key: "goingQuiet", x: 0 }]);
+    expect(out).toEqual([{ key: "compsSummary", x: 0, y: 0, w: 4, h: 8 }]);
   });
 
   it("null/undefined/non-array/empty/all-invalid all fall back to DEFAULT_LAYOUT — never a blank grid", () => {

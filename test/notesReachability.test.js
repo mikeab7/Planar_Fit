@@ -24,7 +24,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  addPage, adoptUnreachable, allPageIds, deleteNode, descendantPageIds, emptyTree, findPage,
+  addPage, adoptDeletedOrphans, adoptUnreachable, allPageIds, deleteNode, descendantPageIds, emptyTree, findPage,
   commitTitle, displayTitle, migrate, movePage, recoveredTitle, renameNode, restoreNode, setPageProject, subpagesPhrase,
   subtreePageIds, trashPageIds,
 } from "../src/workspaces/notes/lib/notesModel.js";
@@ -309,6 +309,63 @@ describe("adoptUnreachable", () => {
     const second = adoptUnreachable(renamed, [orphan("b")]);
     expect(allPageIds(second.tree).sort()).toEqual(["a", "b"]);
     expect(second.tree.pages.every((p) => p.parentId === undefined)).toBe(true);
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════════════════════════
+ * 4b. `adoptUnreachable`'s twin for a body the SERVER already marks BINNED (NEW-1, the
+ * notes-reconciler-stale-index fix) — a body with no node is not always a LOST note. An
+ * interrupted 30-day purge leaves exactly this shape: `deleted_at` set, no bin entry anywhere.
+ * Recovering that to the LIVE page list un-deletes a page somebody already asked to remove —
+ * see `unreachableNotes`'s header in notesScan.js for the false "these are the same note"
+ * finding it produced. `days` is a constructor param purely so the fixture does not have to
+ * wait 30 real days to exercise the "already overdue" branch.
+ * ═══════════════════════════════════════════════════════════════════════════════════════ */
+describe("adoptDeletedOrphans", () => {
+  const deletedOrphan = (pageId, deletedAt, firstLine = "Channel improvements were needed") =>
+    ({ pageId, firstLine, createdAt: 1786000000000, deletedAt });
+
+  it("still within its 30-day window: goes back into the BIN, never onto the live page list", () => {
+    const fiveDaysAgo = Date.now() - 5 * 86400000;
+    const r = adoptDeletedOrphans(emptyTree(), [deletedOrphan("pg_lost", fiveDaysAgo)]);
+    expect(r.purge).toEqual([]);
+    expect(r.binned.map((b) => b.pageId)).toEqual(["pg_lost"]);
+    expect(allPageIds(r.tree)).toEqual([]);                      // ⛔ never live
+    const entry = r.tree.trash.find((e) => (e.pageIds || []).includes("pg_lost"));
+    expect(entry).toBeTruthy();
+    expect(entry.deletedAt).toBe(fiveDaysAgo);                   // the ORIGINAL clock, not a fresh one
+    expect(entry.node.title).toContain("Recovered — ");
+    expect(trashPageIds(r.tree)).toEqual(["pg_lost"]);
+  });
+
+  it("already past its window: reports it for an outright purge instead of showing anything", () => {
+    const fortyDaysAgo = Date.now() - 40 * 86400000;
+    const r = adoptDeletedOrphans(emptyTree(), [deletedOrphan("pg_lost", fortyDaysAgo)]);
+    expect(r.binned).toEqual([]);
+    expect(r.purge).toEqual(["pg_lost"]);
+    expect(allPageIds(r.tree)).toEqual([]);
+    expect(r.tree.trash || []).toEqual([]);
+    // Tombstoned, so a stale copy elsewhere cannot bring it back as a union (rule 0).
+    expect(r.tree.tombs.some((t) => t.id === "pg_lost")).toBe(true);
+  });
+
+  it("never guesses a project, same discipline as adoptUnreachable", () => {
+    const t = addPage(emptyTree(), { id: "r", title: "r", projectId: "P" }).tree;
+    const r = adoptDeletedOrphans(t, [deletedOrphan("pg_lost", Date.now() - 5 * 86400000)]);
+    const entry = r.tree.trash.find((e) => (e.pageIds || []).includes("pg_lost"));
+    expect(entry.projectId).toBeNull();
+  });
+
+  it("is idempotent — a page already live, already binned, or already tombstoned is skipped", () => {
+    const once = adoptDeletedOrphans(emptyTree(), [deletedOrphan("pg_lost", Date.now() - 5 * 86400000)]);
+    expect(adoptDeletedOrphans(once.tree, [deletedOrphan("pg_lost", Date.now() - 5 * 86400000)]).binned).toEqual([]);
+    const purged = adoptDeletedOrphans(emptyTree(), [deletedOrphan("pg_gone", Date.now() - 40 * 86400000)]).tree;
+    expect(adoptDeletedOrphans(purged, [deletedOrphan("pg_gone", Date.now() - 40 * 86400000)]).purge).toEqual([]);
+  });
+
+  it("an orphan with no known deletedAt is not this function's problem — nothing to adopt", () => {
+    const r = adoptDeletedOrphans(emptyTree(), [{ pageId: "pg_x", firstLine: "x" }]);
+    expect(r).toEqual({ tree: emptyTree(), binned: [], purge: [] });
   });
 });
 

@@ -75,7 +75,7 @@
  *                                                            required `build` check (see
  *                                                            --budget-only) — kept for the scheduled
  *                                                            regen workflow and local use.
- *   node ui-audit/ui-inventory.mjs --budget-only          → CI gate (NEW-1, B<PENDING>, 2026-09-08):
+ *   node ui-audit/ui-inventory.mjs --budget-only          → CI gate (NEW-1, B1358128, 2026-09-08):
  *                                                            runs the same live crawl and fails if
  *                                                            any surface's signature count exceeds
  *                                                            its BUDGET (signature-budget.json,
@@ -1736,7 +1736,7 @@ async function run() {
 
   const budgetOnly = process.argv.includes("--budget-only");
   if (process.argv.includes("--check") || budgetOnly) {
-    // --budget-only (NEW-1, B<PENDING>) skips the docs/UI-INVENTORY.md freshness comparison
+    // --budget-only (NEW-1, B1358128) skips the docs/UI-INVENTORY.md freshness comparison
     // entirely — see the USAGE block above for why: that comparison is what forced every PR
     // touching UI to also regenerate and commit this file.
     const docStale = !budgetOnly && (() => {

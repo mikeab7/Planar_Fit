@@ -739,13 +739,25 @@ export async function pushTree(client, tree, baseRev) {
 /* ---- transport: page bodies ----------------------------------------------------------- */
 
 /** The cheap index — ids, revisions and delete state, never documents. This is what makes a
- *  seed or a poll affordable on a notebook with hundreds of pages. */
+ *  seed or a poll affordable on a notebook with hundreds of pages.
+ *
+ *  `deletedAt` (ms epoch) rides along for every BINNED row, same reasoning as `updatedAt` on
+ *  `fetchPages`: it is what lets a reconciler tell a page that was JUST binned (its tree entry
+ *  simply has not arrived yet) from one whose bin entry has been missing for a long time — the
+ *  difference between a normal race and a genuinely stuck delete. Absent/unparseable reads as
+ *  `null`, never as "just now". */
 export async function fetchPageIndex(client) {
   const { data, error } = await client.from(PAGE_TABLE).select("id,rev,deleted_at,purged_at");
   if (error) return { ok: false, error: error.message, index: [] };
   return {
     ok: true,
-    index: (data || []).map((r) => ({ id: r.id, rev: Number(r.rev), binned: !!r.deleted_at, purged: !!r.purged_at })),
+    index: (data || []).map((r) => {
+      const deletedAt = r.deleted_at ? Date.parse(r.deleted_at) : NaN;
+      return {
+        id: r.id, rev: Number(r.rev), binned: !!r.deleted_at, purged: !!r.purged_at,
+        deletedAt: r.deleted_at && Number.isFinite(deletedAt) ? deletedAt : null,
+      };
+    }),
   };
 }
 

@@ -1,22 +1,24 @@
-/* dashboardCompsFetch — the one `comps` read the Comps summary card needs (B1213313, NEW-2).
- * Deliberately lighter than `shared/comps/lib/compsStore.js`'s `fetchAllComps()` (every column) —
- * a summary card only needs the type breakdown.
+/* dashboardCompsFetch — the Comps card's one read (NEW-COMPS-CARD, replacing the old bare-count
+ * card — B1213313, NEW-2). The card shows the most recently added comp against its real peers, not
+ * a count, so it needs every comp's full row (county, size, rate, dates) rather than just
+ * `comp_type` — reuses `shared/comps/lib/compsStore.js`'s `fetchAllComps()` (the same canonical
+ * read every other comp consumer in the app uses) rather than a second, narrower select that could
+ * drift from it. The derivation itself (which comp is featured, who its peers are, the sentence)
+ * is pure and lives in `lib/compsCardModel.js` — this file only fetches.
  */
+import { fetchAllComps } from "../../../shared/comps/lib/compsStore.js";
 import { supabase } from "../../site-planner/lib/supabase.js";
 
-const COMP_TYPES = ["land", "building_sale", "lease"];
-
-/** { total, land, building_sale, lease } or null if the read failed. */
-export async function fetchCompsCounts() {
-  if (!supabase) return null;
+/** Every live comp the signed-in user can see, or `[]` on any failure — LOUD-FAILURE is for
+ * writes; a dashboard summary card that can't reach this one source still renders the other cards
+ * (Dashboard.jsx's own standing rule), so this degrades to an empty list rather than throwing. */
+export async function fetchAllCompsForCard() {
   try {
-    const { data, error } = await supabase.from("comps").select("comp_type").is("deleted_at", null);
-    if (error || !Array.isArray(data)) return null;
-    const counts = { total: data.length, land: 0, building_sale: 0, lease: 0 };
-    for (const row of data) { if (COMP_TYPES.includes(row.comp_type)) counts[row.comp_type]++; }
-    return counts;
+    const { data, error } = await fetchAllComps();
+    if (error) return [];
+    return data || [];
   } catch (_) {
-    return null;
+    return [];
   }
 }
 

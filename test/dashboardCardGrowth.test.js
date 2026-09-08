@@ -53,7 +53,7 @@ describe("Dashboard — dataReady source shape", () => {
   it("gates on ALL FOUR sources via Promise.allSettled, never on any one source alone", () => {
     expect(src).toMatch(/Promise\.allSettled\(\s*\[/);
     expect(src).toMatch(/fetchSiteSummaries\(\)/);
-    expect(src).toMatch(/fetchCompsCounts\(\)/);
+    expect(src).toMatch(/fetchAllCompsForCard\(\)/);
     expect(src).toMatch(/fetchLastTouchedDoc\(\)/);
     expect(src).toMatch(/fetchScheduleProjects\(\)/);
     expect(src).toMatch(/setDataReady\(true\)/);

@@ -138,13 +138,18 @@ describe("the derivation changes nothing about enumeration or the statewide pseu
     // composites alongside the original two; a same-day follow-up pass (B1332016, measured live
     // from the owner's own browser — this sandbox can't reach any of these hosts) added HI/MD/NE/NH,
     // raising 21 to 25 — still every one dialed in by a probed URL, never a per-county DERIVATION
-    // the way the 254 Texas counties above are. The invariant this test guards is "still small and
-    // literal", not "still exactly two" (or twenty-one).
+    // the way the 254 Texas counties above are. NEW-1 (2026-09-08) then added CALIFORNIA and RHODE
+    // ISLAND, raising 27 to 29: both had been recorded as `no-free-source` / `Candidate: none
+    // found`, and both were found by the ArcGIS-Online-organization pass this repo had only ever
+    // run for New York (see counties.js's `ca_statewide` comment, and NEW-2 which makes that pass
+    // systematic). The invariant this test guards is "still small and literal", not "still exactly
+    // two" (or twenty-one, or twenty-seven).
     expect(STATEWIDE_KEYS).toEqual([
       "txgio_statewide", "co_statewide",
-      "ak_statewide", "ar_statewide", "ct_statewide", "de_statewide", "fl_statewide",
+      "ak_statewide", "ar_statewide", "ca_statewide", "ct_statewide", "de_statewide", "fl_statewide",
       "hi_statewide", "in_statewide", "ma_statewide", "md_statewide", "mn_statewide", "mt_statewide", "nc_statewide",
-      "nd_statewide", "ne_statewide", "nh_statewide", "nj_statewide", "ny_statewide", "oh_statewide", "tn_statewide",
+      "nd_statewide", "ne_statewide", "nh_statewide", "nj_statewide", "ny_statewide", "oh_statewide",
+      "ri_statewide", "tn_statewide",
       "ut_statewide", "va_statewide", "vt_statewide", "wi_statewide", "wv_statewide", "wy_statewide",
     ]);
   });
