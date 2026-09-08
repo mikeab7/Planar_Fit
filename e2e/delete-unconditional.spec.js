@@ -40,8 +40,7 @@ const canvas = (p) => p.getByTestId("planner-canvas");
 async function boot(page) {
   await page.goto("/");
   await openModule(page, "site-planner");
-  await page.getByTestId("map-start-blank-menu-btn").first().click();
-  await page.getByTestId("map-start-blank-menu-item").first().click();
+  await page.getByTestId("map-toolbar-draw").first().click();
   await expect(canvas(page)).toBeVisible({ timeout: 15_000 });
 }
 

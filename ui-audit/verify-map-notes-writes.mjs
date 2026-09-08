@@ -201,9 +201,11 @@ const markerCount = () => page.evaluate(() => document.querySelectorAll(".map-no
 // ── F · PLACE A NEW NOTE BY PIN, AND SAVE IT ─────────────────────────────────────────────────
 {
   const mapBox = await page.evaluate(() => { const r = document.querySelector(".leaflet-container").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
-  await page.mouse.click(mapBox.x + mapBox.w * 0.35, mapBox.y + mapBox.h * 0.6, { button: "right" });
-  await pacedWait(page, 400);
-  await page.click('[data-testid="map-add-note-here"]');
+  await page.click('[data-testid="map-toolbar-drop-pin"]');
+  await pacedWait(page, 300);
+  await page.mouse.click(mapBox.x + mapBox.w * 0.35, mapBox.y + mapBox.h * 0.6);
+  await pacedWait(page, 600);
+  await page.click('[data-testid="map-decide-verb-note"]');
   await pacedWait(page, 600);
   await page.click('[data-testid="map-note-body"]');
   await page.keyboard.type("Throwaway C — placed by pin.");
@@ -224,9 +226,10 @@ const markerCount = () => page.evaluate(() => document.querySelectorAll(".map-no
   ok("F · the new note appears on the map immediately", after === 2, `${after} markers · ${JSON.stringify(dump)}`);
   // ⛔ REGRESSION ARM, and it is the reason this harness exists rather than a note in a PR. The
   // marker above must be on the map ALREADY — before any further interaction. It was not: a press
-  // that ended outside the map container latched MapFinder's "don't rebuild mid-press" flag, so
-  // every deferred layer rebuild (sites and comps too, not just notes) waited for the next map
-  // click. A subsequent click must therefore change NOTHING here; if it does, the latch is back.
+  // that ended outside the map container (a menu or a card mounting under the cursor) latched
+  // MapFinder's "don't rebuild mid-press" flag, so every deferred layer rebuild — sites and comps
+  // too, not just notes — waited for the next map click. A subsequent click must therefore change
+  // NOTHING here; if it does, the latch is back.
   const mb = await page.evaluate(() => { const r = document.querySelector(".leaflet-container").getBoundingClientRect(); return { x: r.left + r.width * 0.7, y: r.top + r.height * 0.3 }; });
   await page.mouse.click(mb.x, mb.y);
   await pacedWait(page, 700);

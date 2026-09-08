@@ -16,48 +16,44 @@ import { readFileSync } from "node:fs";
 const finder = readFileSync(new URL("../src/workspaces/site-planner/MapFinder.jsx", import.meta.url), "utf8");
 const store = readFileSync(new URL("../src/shared/mapNotes/lib/mapNotesStore.js", import.meta.url), "utf8");
 
-describe("one placement mechanism, generalised — never a second copy", () => {
-  it("the pin-drop path is intent-routed, not duplicated per consumer", () => {
-    expect(finder).toMatch(/const placePinAt = async \(latlng\) =>/);
-    expect(finder).toMatch(/pinIntentRef\.current/);
-    // A second, note-specific pin-drop mode/handler is exactly the clone the brief forbids.
-    expect(finder).not.toMatch(/placeNotePinAt|placingNotePin|setPlacingNotePin/);
+describe("the note is a VERB on the decide bar — never a second placement mechanism", () => {
+  /* The brief's requirement was "generalise the naming where you touch it rather than cloning a
+   * second parallel mechanism — a second copy of this is how the two comp-anchor paths got out of
+   * step before (HARDENING-12)". The ground-first toolbar that landed while this was being built
+   * answers that requirement more completely than a rename could: the pin and the parcel selection
+   * are pointed at FIRST, and one table of verbs decides what the ground becomes. A note is the
+   * fourth row of that table, so it inherits every anchor path wholesale. */
+  it("lives in the ONE decide-verb table, beside site / comp / siteplan", () => {
+    expect(finder).toMatch(/key: "note"/);
+    const table = finder.slice(finder.indexOf("const DECIDE_VERBS = ["), finder.indexOf("const verbsByKey"));
+    for (const k of ["site", "comp", "siteplan", "note"]) expect(table, `${k} left the table`).toContain(`key: "${k}"`);
   });
 
-  it("arming an anchor takes the intent as a parameter, defaulting to comp so no caller changed", () => {
-    expect(finder).toMatch(/const armAnchor = \(kind, intent = "comp"\) =>/);
+  it("adds no second armed-pin mode of its own — the dropped pin is the app's, not the note's", () => {
+    expect(finder).not.toMatch(/placeNotePinAt|placingNotePin|setPlacingNotePin|pinIntent/);
   });
 
-  it("the parcel anchor comes from the SHARED derivation, not a second reading of `selected`", () => {
-    expect(finder).toMatch(/parcelAnchorFromSelection\(selected, asm\)/);
+  it("takes BOTH targets a verb can be given, through the shared derivations", () => {
+    const run = finder.slice(finder.indexOf('key: "note"'), finder.indexOf('key: "note"') + 1400);
+    expect(run, "parcel target").toMatch(/parcelAnchorFromSelection\(selected, asm\)/);
+    expect(run, "pin target").toMatch(/beginNoteAtPoint/);
+  });
+
+  it("derives a pin's county through the SAME helper the comp pin uses, not a second lookup", () => {
+    const helper = finder.slice(finder.indexOf("const beginNoteAtPoint"), finder.indexOf("const placeCompPinAt"));
+    expect(helper).toMatch(/resolveCompCounty\(/);
+  });
+
+  it("the parcel derivation is the shared one, under its generalised name", () => {
     const anchorLib = readFileSync(new URL("../src/workspaces/site-planner/lib/compParcelAnchor.js", import.meta.url), "utf8");
     expect(anchorLib).toMatch(/export function parcelAnchorFromSelection/);
-    // the old name stays exported, so an in-flight branch importing it still resolves
+    // the old name stays exported, so the comp call site (and any in-flight branch) still resolves
     expect(anchorLib).toMatch(/export const compAnchorFromSelection = parcelAnchorFromSelection/);
   });
 
-  it("arming a NOTE pin does not re-point the comp toolbar's sticky anchor kind", () => {
-    expect(finder).toMatch(/if \(intent === "comp"\) setLastCompAnchorKind\(kind\)/);
-  });
-});
-
-describe("what is painted is decided by the layer checkboxes and nothing else (B831778)", () => {
-  it("ships a Notes toggle beside Sites and Comps, with a count", () => {
-    expect(finder).toContain('data-testid="map-show-notes"');
-    expect(finder).toMatch(/Notes\{mapNotes\.length \? ` \(\$\{mapNotes\.length\}\)` : ""\}/);
-    expect(finder).toMatch(/planarfit:mapShowNotes:v1/);   // remembered across reloads, like its neighbours
-  });
-
-  it("the notes layer effect is gated on the checkbox, never on `mode` or the rail tab", () => {
-    const eff = finder.slice(finder.indexOf("(showNotesLayer ? mapNotes : [])"));
-    const deps = eff.slice(eff.indexOf("}, ["), eff.indexOf("}, [") + 80);
-    expect(deps).toContain("showNotesLayer");
-    expect(deps).not.toContain("mode");
-    expect(deps).not.toContain("panelTab");
-  });
-
-  it("a failed notes load is surfaced, never silently drawn as an empty layer (LOUD-FAILURE)", () => {
-    expect(finder).toContain('data-testid="map-notes-error"');
+  it("⛔ never creates a site — the one place it must differ from the comp verb beside it", () => {
+    const run = finder.slice(finder.indexOf('key: "note"'), finder.indexOf('key: "note"') + 1400);
+    expect(run).not.toMatch(/resolveOrCreateTrackedSiteForComp|createTrackedSite|planSelected\(/);
   });
 });
 

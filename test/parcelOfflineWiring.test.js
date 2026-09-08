@@ -249,29 +249,52 @@ describe("NEW-1 — one entry point for starting a plan, not two of equal weight
     expect(app).toMatch(/toolbarContent=\{null\}/);
   });
 
-  /* Mutation: make "Select parcels" and "Start blank" two same-weight buttons again → red.
-     "Select parcels" is the primary action (filled with the accent, like any other primary
-     button); "Start blank" is reachable only behind the caret, as a secondary option.
-     NEW-1 (map-view locked-geometry conversion) — "Select parcels" now renders through the
-     shared `Button` primitive (controls.jsx) rather than an inline `background`/`color` literal;
-     `variant="primary"` is what carries the "filled with the accent" contract now (Button's own
-     skin logic fills `accent`/`onAccent`, which default to `var(--accent)`/`var(--on-accent)` —
-     unchanged from what this test asserted before). */
-  it("'Select parcels' is the PRIMARY action, and 'Start blank' is secondary behind a caret", () => {
-    const block = finder.slice(finder.indexOf('mode === "site" && !selectMode && !placingPin && selected.length === 0'), finder.indexOf('mode === "comp" && !selectMode'));
-    // one primary button, filled with the accent
-    expect(block).toMatch(/<Button\s+variant="primary"/);
+  /* ⛔ SUPERSEDED 2026-09-08 (NEW-1, the ground-first map toolbar) — AND THE REVERSAL IS
+     DELIBERATE, not a loosening. B831780's rule was "one entry point for starting a plan, not two
+     of equal weight", and it was RIGHT for what it was about: "Select parcels" and "Start blank"
+     are two ways to make the SAME thing (a plan), so hiding the rarer one behind a caret stopped
+     them competing for the same press.
+     The toolbar now offers three ways to POINT AT GROUND — Select parcels · Draw · Drop a pin —
+     which make DIFFERENT things, and burying two of them behind a caret is what forced the
+     toolbar to guess with a Site/Comp mode in the first place. So "Start blank" came out of the
+     caret as the first-class "Draw" button, the caret and its menu are gone, and the property
+     worth guarding changed shape with them: Select parcels stays the PRIMARY (the only
+     accent-filled one — almost every plan starts from a real lot), the other two are secondary
+     buttons beside it, and Draw still reaches the very same `startBlankHere`. */
+  it("'Select parcels' is still the one PRIMARY action, with Draw and Drop a pin secondary beside it", () => {
+    // The at-rest row, bounded by the armed-pin block that follows it. The end marker is searched
+    // FROM the start index on purpose: `{placingCompPin && (` also opens the map-wide armed ring
+    // a couple of hundred lines EARLIER, and slicing to that one yields an empty string that
+    // silently passes every `not.toContain` below.
+    const rowStart = finder.indexOf("{!selectMode && !placingCompPin && !decideTarget && (");
+    expect(rowStart, "the at-rest row was not found").toBeGreaterThan(-1);
+    const block = finder.slice(rowStart, finder.indexOf("{placingCompPin && (", rowStart));
+    expect(block.length, "the at-rest row sliced empty — the end marker moved").toBeGreaterThan(500);
+    expect(block).toContain('data-testid="map-toolbar-select-parcels"');
+    // exactly one primary in this row, and it is Select parcels
+    expect(block.match(/variant="primary"/g) || []).toHaveLength(1);
     expect(block).toContain(">Select parcels</span>");
-    // …and "Start blank" is NOT a second button in this block — it is the caret's menu.
-    expect(block).not.toContain(">Start blank</span>");
-    expect(block).toContain('data-testid="map-start-blank-menu-btn"');
+    expect(block).toMatch(/variant="primary"[\s\S]{0,200}data-testid="map-toolbar-select-parcels"/);
+    // the other two are real, visible, co-equal-to-each-other secondaries — never a caret menu
+    expect(block).toContain('data-testid="map-toolbar-draw"');
+    expect(block).toContain('data-testid="map-toolbar-drop-pin"');
+    expect(block.match(/variant="ghost"/g) || []).toHaveLength(2);
   });
 
-  /* Mutation: unwire the caret's menu item, or point it at anything other than `startBlankHere` →
-     red. This is the one remaining door to a blank plan from the map's resting toolbar. */
-  it("the caret's menu item starts a blank plan the same way the old button did", () => {
-    expect(finder).toContain('data-testid="map-start-blank-menu-item"');
-    const item = finder.slice(finder.indexOf('data-testid="map-start-blank-menu-item"'), finder.indexOf('data-testid="map-start-blank-menu-item"') + 400);
-    expect(item).toMatch(/onClick=\{\(\) => \{ setStartBlankMenuOpen\(false\); startBlankHere\(\); \}\}/);
+  /* Mutation: point Draw at anything other than `startBlankHere` → red. It is still the one door
+     to a blank plan from the map's resting toolbar; only its packaging changed. */
+  it("Draw starts a blank plan the same way the caret's menu item did", () => {
+    const i = finder.indexOf('data-testid="map-toolbar-draw"');
+    expect(i, "the Draw button is missing").toBeGreaterThan(-1);
+    const btn = finder.slice(Math.max(0, i - 400), i + 400);
+    expect(btn).toMatch(/onClick=\{\(\) => startBlankHere\(\)\}/);
+  });
+
+  /* And the caret machinery is gone, not merely unused — a leftover menu is how a second entry
+     point creeps back in. */
+  it("the split-button caret and its menu no longer exist", () => {
+    for (const gone of ["startBlankMenuOpen", "startBlankMenuBtnRef", "map-start-blank-menu-item"]) {
+      expect(finder, `${gone} came back`).not.toContain(gone);
+    }
   });
 });
