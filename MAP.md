@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-08 @ `54a9026f` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-08 @ `64c37d8` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -1082,7 +1082,7 @@ _714 source files mapped._
 - **`src/workspaces/site-planner/lib/numEditBox.js`** — where the inline numeric editor paints and at what size: in-place chip box, floating fallback, the not-bigger-than-its-spawn invariant, keyboard nudge
   - _exports_: `nudgeNumEditValue`, `NUMEDIT_FLOAT`, `numEditBox`, `numEditFitsSpawn`, `SETBACK_CHIP`, `setbackChipPlateW`, `setbackChipSpawn`
 - **`src/workspaces/site-planner/lib/operationEnvelope.js`** — WHO did a write and WHAT operation it was part of. Mints one `op_id` per user-visible action (not per row or per batch) and stamps it with `op_kind` from a CLOSED vocabulary, the per-tab `actor_session_id` and the account id. The session id is the load-bearing field — both of the owner's live sessions authenticate as the same account, so `updated_by` can never answer "was that my other tab?". Also reads rows back as grouped operations for a plain-English activity list, so a merge reads "merged 2 parcels into 1" and never as net row arithmetic, and decides undo ownership: your own operation undoes silently, another session's needs confirmation naming them, an un-enveloped legacy frame warns without blocking.
-  - _exports_: `createOperationTracker`, `describeOperation`, `envelopeAnswersWhoAndWhat`, `groupRowsIntoOperations`, `halfLandedComposites`, `isCompositeOpKind`, `isOpKind`, `makeEnvelope`, `mintOpId`, `OP_KIND_LIST`, `OP_KINDS`, `undoOwnership`
+  - _exports_: `createOperationTracker`, `describeOperation`, `envelopeAnswersWhoAndWhat`, `groupRowsIntoOperations`, `halfLandedComposites`, `isCompositeOpKind`, `isOpKind`, `makeEnvelope`, `mintOpId`, `OP_KIND_LIST`, `OP_KINDS`, `undoOwnership`, `undoRiskEnvelope`
 - **`src/workspaces/site-planner/lib/outletStructure.js`** — Pond OUTLET STRUCTURE model + stage→discharge rating curve (NEW-A2): orifice / weir / restrictor / multistage discharge (with tailwater submergence), inverse orifice sizing, default-outlet proposal, validation. Pure hydraulics.
   - _exports_: `DEFAULT_ORIFICE_C`, `DEFAULT_WEIR_C`, `defaultOutletForPond`, `orificeAreaSf`, `OUTLET_KINDS`, `outletDischarge`, `outletLowestElev`, `outletProblems`, `sizeOrificeForRelease`, `sizeWeirForRelease`, `stageDischarge`
 - **`src/workspaces/site-planner/lib/overlayAlign.js`** — Pure overlay alignment math: image-point-to-world, scale-about-a-point, 2-point and least-squares Procrustes similarity transforms (scale+rotate+translate) with RMS residual
@@ -1192,7 +1192,7 @@ _714 source files mapped._
 - **`src/workspaces/site-planner/lib/powerScreen.js`** — PHASE 5 power screening (pure): turns HIFLD transmission lines + substations near the parcel into findings — a line crossing the footprint flags a likely transmission easement (present), the nearest substation is a service/interconnect proxy (info); cleans the dataset's withheld voltages and anonymized ("UNKNOWN…") substation names
   - _exports_: `ownerLabel`, `subName`, `summarizeSubstations`, `summarizeTransmission`, `voltLabel`
 - **`src/workspaces/site-planner/lib/presencePill.js`** — pure "N here" presence summary (B674): distinct people from the channel roster, quiet when alone, You-first hover names
-  - _exports_: `PRESENCE_INITIALS_CAP`, `presenceChipContent`, `presenceDisplayName`, `presenceInitials`, `presenceParties`
+  - _exports_: `PRESENCE_INITIALS_CAP`, `presenceChipContent`, `presenceDisplayName`, `presenceInitials`, `presenceLastOpLabel`, `presenceParties`, `relativeAgo`
 - **`src/workspaces/site-planner/lib/printScale.js`** — the explicit engineering-scale math (B765985): the standard scale list, a scale's implied frame footprint, and the "does the picked area fit" check
   - _exports_: `checkScaleFits`, `frameFootprintForScale`, `scaleLabel`, `STANDARD_SCALES`
 - **`src/workspaces/site-planner/lib/printSheet.js`** — Pure single-SVG print sheet composer: page geometry, buildings table, metrics band, title block, export filename builder

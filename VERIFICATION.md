@@ -3492,18 +3492,34 @@ engine. Both single-column mutation checks are in the suite. Full suite 11,169 g
 
 ### V266992 — B472048: the operation envelope, end to end `Blocker: auth` `Blocker: real-data`
 
-**⛔ NOT YET VERIFIABLE — the foundation shipped, the wiring did not.** Recorded now so the pending
-steps are in the one canonical place rather than only on the item.
+**⛔ READY TO VERIFY — the foundation, the wire, presence naming, the activity view and the undo
+guard are all shipped and merged (across four sessions, the last on 2026-09-08). Every step below now
+has real code behind it; nothing is speculative. Only a real signed-in two-tab pass is missing.**
 
-**Steps, once the migration and wiring land:**
-1. Two tabs, same account, one plan. In tab A merge two parcels.
-2. In tab B without reloading: the activity view names it as ONE merge by that session, with both
-   source parcels and the result — never as net row arithmetic.
-3. Presence names both sessions and marks which is me.
-4. Undo in tab B either refuses or warns BY NAME before touching tab A's merge.
-5. Reproduce the 8 South case: `e56` + `e1454594huuiov` consumed, `e1454919qhgshe` created — and
-   confirm it reads as one merge, not as 77 − 2 + 1.
-6. A split emits `op_kind:"split"` with one parent modified, one child created, one `op_id`, atomic.
+**Steps, each with a named expected result:**
+1. Sign in on two tabs of the same account, same plan. In tab A, merge two parcels.
+   *Expected:* the header presence chip on both tabs shows "2 here"-equivalent (own-tabs glyph, since
+   both are this account); the merge completes normally in tab A.
+2. In tab B, without reloading, open the Plans ▾ menu → **Version history** → the **Activity** tab.
+   *Expected:* the top row reads *"You merged 2 parcels into 1 — just now"* (from tab B's perspective,
+   tab A is "You" only if B recognizes it as the same account's own write — verify the wording is
+   sensible either way) with a second line naming the actual ids (`−<parcelA>, −<parcelB>,
+   +<merged>`) — never a bare row-count delta.
+3. Hover the presence chip in tab A (or B, whichever shows the other as a live session).
+   *Expected:* the breakdown names the other session and, once tab B has done something, shows its
+   last operation and a relative time ("moved · just now" etc.) — this is per-PERSON, so two tabs of
+   the SAME account collapse into one entry by design; this step is best re-run with a genuine second
+   account/teammate if one is available, since the load-bearing per-SESSION check is step 4, not this.
+4. In tab A, immediately after tab B performs an edit (a move, say), press Undo in tab A.
+   *Expected:* a non-blocking toast appears — *"The next undo would reverse [name]'s change, not
+   yours. Undo it anyway?"* — and the undo does NOT apply until "Undo anyway" is clicked. Undoing
+   tab A's OWN prior edits (with no intervening foreign write) must stay silent, as always.
+5. Reproduce the real 8 South shape as closely as the test account allows: two parcels consumed by a
+   merge, one created, at effectively the same instant. *Expected:* the Activity tab reads it as ONE
+   merge operation, never as "77 − 2 + 1" arithmetic.
+6. Split a parcel into two or more pieces. *Expected:* the Activity tab shows ONE `split` operation
+   naming the parent tombstoned and the pieces created — one `op_id`, not two operations with a gap
+   between them.
 
 ### V258864 — B463920 + B463921: the status menu behaves on his own board `Blocker: auth` `Blocker: real-data`
 

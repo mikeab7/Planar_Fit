@@ -274,3 +274,39 @@ export function undoOwnership(frameEnvelope, selfSessionId, { nameOf = () => "so
     message: `The next undo would reverse ${who}'s change, not yours. Undo it anyway?`,
   };
 }
+
+/* ⛔ WHY `undoOwnership` NEEDS A CALLER-SIDE RESOLVER, AND WHY IT IS A SEPARATE PURE FUNCTION.
+ *
+ * The LOCAL undo stack (lib/history.js) only ever holds frames THIS session pushed — a remote
+ * session's edits mutate the canvas directly (applyRemoteRow) and push no frame of their own. So
+ * "whose frame is on top" is always "mine", and `undoOwnership` would report `own` on every press —
+ * which is exactly the six-Undo-presses-on-Bain case, where the geometry survived but nothing could
+ * PROVE the other session's edits weren't clobbered.
+ *
+ * The real risk isn't the frame's OWNER, it's whether a FOREIGN write landed in the window an undo
+ * is about to erase: `hist.push()` snapshots the canvas immediately before this session's own next
+ * mutation, so undoing that frame restores the canvas to that earlier instant — silently discarding
+ * anything a remote session wrote in between, because undo restores the WHOLE snapshot, not a diff.
+ *
+ * `undoRiskEnvelope` turns "was there a foreign write after this frame was captured" into the
+ * envelope-shaped object `undoOwnership` already knows how to judge: if the most recent foreign
+ * operation (from realtime rows, tracked by the caller) landed AFTER the frame's own push timestamp,
+ * that foreign operation is the thing genuinely at risk and is reported as `foreign`; otherwise this
+ * session's own identity is reported, and `undoOwnership` returns `own`.
+ *
+ * A single most-recent-foreign-op is sufficient for ANY undo depth, not just one step: `undoN`
+ * reverts back PAST the most recent push, so if even that one push already postdates a foreign write,
+ * every deeper step reverts past it too — the caller does not need a per-frame timestamp history. */
+export function undoRiskEnvelope(framePushedAt, lastForeignOp, selfSessionId) {
+  if (
+    lastForeignOp && Number.isFinite(lastForeignOp.at) &&
+    Number.isFinite(framePushedAt) && lastForeignOp.at > framePushedAt
+  ) {
+    return {
+      actor_session_id: lastForeignOp.sessionId || null,
+      actor_user_id: lastForeignOp.userId || null,
+      op_kind: lastForeignOp.opKind || null,
+    };
+  }
+  return { actor_session_id: selfSessionId || null };
+}
