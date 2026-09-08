@@ -454,6 +454,10 @@ export function compFieldRows(comp) {
     push("psf", "$/SF", psf != null ? fmtPsf(psf) : null);
     push("price", "Price", comp?.bldgPrice != null ? fmtMoney(comp.bldgPrice) : null);
     if (comp?.bldgSizeSf != null) push("size", "Building size", `${Number(comp.bldgSizeSf).toLocaleString()} SF`);
+    // NEW-COMPS-CARD — building-spec facts, property attributes rather than deal economics, so
+    // they sit right beside Building size.
+    if (comp?.clearHeightFt != null) push("clearHeight", "Clear height", `${Number(comp.clearHeightFt).toLocaleString()} ft`);
+    if (comp?.yearBuilt != null) push("yearBuilt", "Year built", String(comp.yearBuilt));
     // B986096-HARDENING-7 — Price/NOI/Cap are a triangle (any two determine the third; see
     // resolveCapTriangle), so by the time a comp is saved all three are populated whenever at
     // least two were ever known. Shown together, in the same order Michael specified them.
@@ -466,6 +470,9 @@ export function compFieldRows(comp) {
       push("rate", "Rate", `$${fmtRate(comp.leaseRate)}/SF${period}${basis}`);
     }
     if (comp?.leaseSizeSf != null) push("size", "Leased SF", `${Number(comp.leaseSizeSf).toLocaleString()} SF`);
+    // NEW-COMPS-CARD — building-spec facts, property attributes rather than deal economics.
+    if (comp?.clearHeightFt != null) push("clearHeight", "Clear height", `${Number(comp.clearHeightFt).toLocaleString()} ft`);
+    if (comp?.yearBuilt != null) push("yearBuilt", "Year built", String(comp.yearBuilt));
     // NEW-2 (owner chat, 2026-09-08) — "Total annual rent (face)" removed from this detail list:
     // Rate, Leased SF and Net effective already carry the deal, and a fourth money figure here
     // was redundant with what the create form's own live rate preview already shows. Read
@@ -610,6 +617,10 @@ export function rowToComp(r) {
     landSizeUnit: r.land_size_unit || null,
     bldgPrice: r.bldg_price != null ? Number(r.bldg_price) : null,
     bldgSizeSf: r.bldg_size_sf != null ? Number(r.bldg_size_sf) : null,
+    // Building-spec facts (NEW-COMPS-CARD) — apply to building_sale and lease only (a land comp
+    // has no building yet); nullable, never guessed. `db/comps_building_specs.sql`.
+    clearHeightFt: r.clear_height_ft != null ? Number(r.clear_height_ft) : null,
+    yearBuilt: r.year_built != null ? Number(r.year_built) : null,
     bldgNoi: r.bldg_noi != null ? Number(r.bldg_noi) : null,
     // Decimal fraction (0.0575), never a percentage number — see resolveCapTriangle's header.
     bldgCapRate: r.bldg_cap_rate != null ? Number(r.bldg_cap_rate) : null,
@@ -659,6 +670,7 @@ export function emptyDraft(anchor) {
     partyProvider: "", partyAcquirer: "",
     landPrice: "", landSizeValue, landSizeUnit: "ac",
     bldgPrice: "", bldgSizeSf: "", bldgNoi: "", bldgCapRate: "",
+    clearHeightFt: "", yearBuilt: "",
     // HARDENING-11 (owner correction, 2026-09-02, amending HARDENING-10 NEW-4) — Per and Basis
     // are NOT the same kind of guess and don't get the same treatment. Per (monthly vs annual)
     // stays genuinely blank: both answers are common and a wrong guess is a silent 12x error, so
@@ -748,6 +760,8 @@ export function draftToComp(d) {
     landPrice: num(d.landPrice), landSizeValue: num(d.landSizeValue),
     bldgPrice: tri ? tri.price.value : num(d.bldgPrice),
     bldgSizeSf: num(d.bldgSizeSf),
+    clearHeightFt: num(d.clearHeightFt),
+    yearBuilt: num(d.yearBuilt),
     bldgNoi: tri ? tri.noi.value : num(d.bldgNoi),
     bldgCapRate: tri ? tri.capRate.value : num(d.bldgCapRate),
     leaseRate: num(d.leaseRate), leaseTi: num(d.leaseTi), leaseSizeSf: num(d.leaseSizeSf),
@@ -773,6 +787,7 @@ export function compToDraft(c) {
     partyProvider: c.partyProvider || "", partyAcquirer: c.partyAcquirer || "",
     landPrice: str(c.landPrice), landSizeValue: str(c.landSizeValue), landSizeUnit: c.landSizeUnit || "ac",
     bldgPrice: str(c.bldgPrice), bldgSizeSf: str(c.bldgSizeSf),
+    clearHeightFt: str(c.clearHeightFt), yearBuilt: str(c.yearBuilt),
     bldgNoi: str(c.bldgNoi), bldgCapRate: str(c.bldgCapRate),
     leaseRate: str(c.leaseRate), leaseRatePeriod: c.leaseRatePeriod || "annual",
     leaseRateExpense: c.leaseRateExpense || "nnn", leaseTi: str(c.leaseTi), leaseTerm: c.leaseTerm || "",
@@ -805,6 +820,8 @@ export function compToRow(comp) {
     land_size_unit: comp.landSizeUnit ?? null,
     bldg_price: comp.bldgPrice ?? null,
     bldg_size_sf: comp.bldgSizeSf ?? null,
+    clear_height_ft: comp.clearHeightFt ?? null,
+    year_built: comp.yearBuilt ?? null,
     bldg_noi: comp.bldgNoi ?? null,
     bldg_cap_rate: comp.bldgCapRate ?? null,
     lease_rate: comp.leaseRate ?? null,

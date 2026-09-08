@@ -211,5 +211,8 @@ export async function renameProject(id, name) {
 // (B439). Returns the store's aggregate cloud-delete promise so the caller can surface an
 // honest error if the cloud removal failed or matched zero rows.
 export async function deleteProject(id) {
+  // B1358128 — refuse an absent id here too, so a caller that never reaches the engine still
+  // gets an honest failure instead of an undefined promise result that reads as success.
+  if (!id) return { ok: false, removed: 0, error: "No project was named, so nothing was deleted." };
   return (await storageEngine()).deleteSiteGroup(id);
 }

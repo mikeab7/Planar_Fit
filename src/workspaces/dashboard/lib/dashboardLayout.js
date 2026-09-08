@@ -34,7 +34,10 @@ export const CARD_DEFS = {
   needsAttention: { title: "Needs attention", defaultW: 8, defaultH: 9, minW: 4, minH: 5 },
   pursuitsTable:  { title: "Pursuits",        defaultW: 8, defaultH: 9, minW: 5, minH: 5 },
   scheduleHealth: { title: "Schedule health", defaultW: 8, defaultH: 7, minW: 3, minH: 4 },
-  compsSummary:   { title: "Comps",           defaultW: 4, defaultH: 4, minW: 3, minH: 3 },
+  // NEW-COMPS-CARD — taller/wider than the old bare-count card: a headline address, a rate, chips,
+  // a spec line and a footer scale need real room. The KEY stays `compsSummary` (never renamed) so
+  // every account's already-saved layout keeps placing this card without a migration.
+  compsSummary:   { title: "Comps",           defaultW: 4, defaultH: 9, minW: 3, minH: 7 },
   goingQuiet:     { title: "Going quiet",     defaultW: 4, defaultH: 6, minW: 3, minH: 4 },
   // NEW-1 (Locations map card, owner chat block 2026-09-08) — a real interactive map needs real
   // room to be legible; minW/minH keep it from being crushed into an unreadable strip.
