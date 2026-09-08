@@ -1,16 +1,26 @@
 name: Required build-check sweep
 
 # Detector + repair for a required "build" status check that never reports at all (NEW-3,
-# 2026-09-05). Measured live today on PRs #1455 and #1456: both sat at "Expected — Waiting for
+# 2026-09-05). Measured live on PRs #1455 and #1456: both sat at "Expected — Waiting for
 # status to be reported" — a state that looks alive and is dead, because GitHub withholds ALL
 # merge control while a required context is unreported, even from an administrator — while
 # `actions_list`/`get_check_runs` showed ZERO workflow runs behind either PR, at any point, for
 # any commit. This is NOT the docs-only fast path or a `paths:` filter hiding the job:
 # `ui-audit/required-check-audit.mjs` already proves build.yml's `on:` block carries no path
 # filter at all (the job always runs; only which STEPS inside it do real work varies), and that
-# gate is green right now. It's a `pull_request` webhook that, for whatever reason, never fired
-# for those branches' pushes — a gap in GitHub's own event delivery, not in this repo's config,
-# so no workflow-file change alone can prevent it happening again.
+# gate is green right now.
+#
+# ⛔ CORRECTED 2026-09-08 (NEW-1, B<PENDING>): this header originally attributed the missing
+# `pull_request` runs to "a gap in GitHub's own event delivery, not in this repo's config, so no
+# workflow-file change alone can prevent it happening again." That diagnosis was WRONG. Both PRs
+# were CONFLICTED on the generated indexes (MAP.md/BACKLOG_OPEN.md/docs/UI-INVENTORY.md) at the
+# time — GitHub cannot compute a test-merge ref for a conflicted PR, so the `pull_request` event
+# that would create a workflow run never fires at all, which is indistinguishable from an event-
+# delivery gap unless you check `mergeable_state`. See scripts/generated-doc-touch-guard.mjs and
+# .github/workflows/regen-derived-docs.yml for the actual fix: branches no longer touch those
+# files, so PRs should stop conflicting on them, and this specific trigger for a stuck required
+# check should become rare. A genuine GitHub-side event-delivery gap remains possible on its own,
+# so this sweep stays as a safety net regardless — it just no longer needs to be its only cause.
 #
 # So this is a SAFETY NET rather than a root-cause fix, in the spirit of CLAUDE.md's own
 # "if drafts start silently parking again, the fix is a DETECTOR, not another actuator" —

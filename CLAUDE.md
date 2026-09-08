@@ -164,17 +164,33 @@ the always-loaded core. This merges two tracks of work: the mature **Site Planne
 > `ui-audit/design-drift-audit.mjs` fails CI on new instances of it. Preview every primitive live at
 > the `#/design` gallery route before drawing a new one.
 >
-> **🗺 Two generated, committed indexes save you from cold-searching — regenerate each in the SAME
-> commit that changes its inputs (machine-enforced, like the pointers).**
+> **🗺 Two generated, committed indexes save you from cold-searching — but a BRANCH NEVER TOUCHES
+> THEM (SUPERSEDED 2026-09-08, NEW-1, B<PENDING>).** Reading this section as "regenerate each in
+> the same commit that changes its inputs" is now WRONG and will fail your PR — that used to be
+> the rule, and it meant every PR that touched a source file (nearly all of them) or `BACKLOG.md`
+> also had to regenerate and commit the same generated file, so any two such PRs open at once
+> conflicted on it by construction; GitHub can't compute a test-merge ref for a conflicted PR, so
+> the required `build` check never ran at all ("Expected — waiting for status to be reported"
+> forever — measured live 2026-09-08, PR #1529 re-conflicted on these files three times in one
+> hour). **`scripts/generated-doc-touch-guard.mjs` now fails a PR that modifies either file — leave
+> them exactly as they are in your diff, however stale they look.** They are kept fresh
+> automatically instead, by `.github/workflows/regen-derived-docs.yml` (a nightly scheduled job
+> that opens its own small PR when either has drifted — that PR needs a human or a Claude Code
+> session to merge it, since the workflow's own token can't arm auto-merge). Being briefly stale
+> between refreshes is fine — neither is a runtime source of truth.
 > - **`MAP.md`** (repo root) — every source file → its module owner, one-line responsibility, and
->   exported symbols. **Grep `MAP.md` to find a path or symbol** instead of sweeping `src/`. Regenerate
->   with `node scripts/build-map.mjs` whenever you add/remove/rename a file or change a primary export;
->   `--check` fails CI on drift (`test/mapDrift.test.js`). Descriptions are preserved across regens; a
->   new file arrives as `TODO — describe` and the check stays red until you fill in its one-liner.
+>   exported symbols. **Grep `MAP.md` to find a path or symbol** instead of sweeping `src/`, but
+>   expect it to lag a recent rename/add by up to a day. `node scripts/build-map.mjs --check` still
+>   exists for the scheduled job and for local curiosity — it is no longer a required CI gate.
 > - **`BACKLOG_OPEN.md`** (repo root) — one line per Open / ⏳ Verify item (B#, title, module, `#tags`,
->   Verify status) + a by-tag rollup so a theme's members are visible at a glance. Regenerate with
->   `node scripts/build-backlog-index.mjs` in the same commit as any `BACKLOG.md` edit; `--check` fails
->   CI on drift (`test/backlogIndex.test.js`).
+>   Verify status) + a by-tag rollup so a theme's members are visible at a glance. The **tag-legend
+>   rule stays enforced** on `BACKLOG.md` itself (`node scripts/build-backlog-index.mjs --tags-only`,
+>   `test/backlogIndex.test.js`) — only the requirement that this INDEX be byte-fresh moved to the
+>   scheduled job; `--check` still exists for it and for local use.
+> - The same rule covers **`docs/UI-INVENTORY.md`** (the generated control-signature inventory — see
+>   `docs/DESIGN.md`): never touch it either. Its real design-quality gate (the per-surface
+>   signature BUDGET) stays required via `node ui-audit/ui-inventory.mjs --budget-only`; only the
+>   requirement that the committed file match a fresh crawl moved to the scheduled job.
 
 > **⛔ STANDING RULE #1 — when Michael drops in a problem, FIX IT AND SHIP IT this session. Never log-and-defer.**
 > A bug report or change request = **fix it, verify it, and merge it live this same session.** Parking it in
@@ -1295,11 +1311,13 @@ rules are binding shorthand, not optional style. (Full-text home so briefs stay 
    built in this item contradicts a listed constraint, and say so in the session reply. If a
    contradiction was caught, **CONSTRAINT-CAPTURE** governs — the offending part is not built, and
    the reply names the constraint it collided with.
-5. `BACKLOG.md` updated **and** `BACKLOG_OPEN.md` regenerated (`node scripts/build-backlog-index.mjs`).
-   Touched yield / pond panel copy? **PANEL-BREVITY** applies: run `node ui-audit/panel-copy-budget.mjs`
-   before and after, and put both numbers on the item.
-6. `MAP.md` regenerated (`node scripts/build-map.mjs`) **if** files were added / removed / renamed or a
-   primary export changed.
+5. `BACKLOG.md` updated. **Do NOT regenerate or commit `BACKLOG_OPEN.md` yourself** — the Generated-
+   index touch guard rejects a PR that touches it (NEW-1, B<PENDING>, 2026-09-08); it's refreshed by
+   `.github/workflows/regen-derived-docs.yml` instead. Touched yield / pond panel copy?
+   **PANEL-BREVITY** applies: run `node ui-audit/panel-copy-budget.mjs` before and after, and put
+   both numbers on the item.
+6. **Do NOT regenerate or commit `MAP.md`** even if files were added/removed/renamed or a primary
+   export changed — same guard, same reason, same replacement job.
 7. The `Verify:` field is honoured — a sandbox note appended (→ Done), or the item parked in `## ⏳ Verify`
    with the pending live steps **and** a `V###` logged in `VERIFICATION.md`.
 8. **Committed and merged** ("commit" = shipped live via PR + merge — see Workflow & deploy).
