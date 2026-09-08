@@ -517,7 +517,9 @@ describe("encoding — a capture must FIT the telemetry column, and say what it 
     expect(enc.chars).toBeLessThanOrEqual(CAPTURE_MAX_CHARS);
     expect(enc.trimmedFrames).toBeGreaterThan(0);
     const parsed = JSON.parse(enc.text);
-    expect(parsed.note).toBe("trimmed");
+    // Only the frame track needed trimming here — the 24 small tasks fit untouched — so the note
+    // names frames specifically rather than a bare "trimmed" (NEW-1, B1317824).
+    expect(parsed.note).toBe("trimmed-frames");
     expect(parsed.framesDropped).toBe(enc.trimmedFrames);
     expect(parsed.framesKept + parsed.framesDropped).toBe(4096);
     /* The KEPT frames must be the most recent ones — trimming the tail would make an episode read
@@ -633,6 +635,124 @@ describe("encoding — a capture must FIT the telemetry column, and say what it 
     expect(parsed.ltNames.length).toBeGreaterThan(0);
     // Frames were cut before any task attribution was — the frame track is allowed to hit zero.
     expect(parsed.framesKept ?? 0).toBeLessThan(60);
+  });
+
+  /* ⛔ NEW-1 (B1317824) — B846385's OWN FIX OVERCORRECTED, AND THIS IS THE OWNER'S REAL PRODUCTION
+   * ROW: 2026-09-07 19:45:40.708Z, tab 512151ae, build 0a0457d, `event:perfcap` — `framesKept:0`,
+   * `framesDropped:114`, `ft` the empty string, while ~20 long-task tuples rode the row untouched.
+   * The shipped order (copied verbatim below as `preNew1EncodeCapture`) sheds the frame track ALL
+   * THE WAY TO ZERO before the long-task table ever loses a single row below its own floor of 4 —
+   * which is exactly backwards once the task table itself is large enough to eat the whole budget.
+   * The frame track now gets a RESERVED FLOOR (8, the last FRAME_FLOORS rung) that survives as long
+   * as any task remains; the task table sheds oldest-first into whatever room is left instead. */
+  function preNew1EncodeCapture(cap, { maxChars = CAPTURE_MAX_CHARS } = {}) {
+    const base = { ...cap };
+    const deltas = Array.isArray(base.f) ? base.f.slice() : [];
+    delete base.f;
+    const namesFull = Array.isArray(base.ltNames) ? base.ltNames : [];
+    const build = (frames, tasks, counters) => {
+      const { track, spikes } = encodeFrames(frames);
+      const remap = new Map();
+      const names = [];
+      const lt = tasks.map((t) => {
+        const label = namesFull[t[3] | 0] || "";
+        let idx = remap.get(label);
+        if (idx == null) { idx = names.length; names.push(label); remap.set(label, idx); }
+        return [t[0], t[1], t[2], idx];
+      });
+      const row = { ...base, ft: track, fx: spikes, lt, ltNames: names, c: counters };
+      if (!row.fx.length) delete row.fx;
+      if (!row.lt.length) { delete row.lt; delete row.ltNames; }
+      if (!row.c.length) { delete row.c; delete row.cCols; }
+      return JSON.stringify(row);
+    };
+    let frames = deltas;
+    let tasks = Array.isArray(base.lt) ? base.lt.slice() : [];
+    let counters = Array.isArray(base.c) ? base.c.slice() : [];
+    let s = build(frames, tasks, counters);
+    let trimmedFrames = 0, trimmedTasks = 0, trimmedCounters = 0;
+    while (s.length > maxChars && counters.length > 6) { counters.shift(); trimmedCounters++; s = build(frames, tasks, counters); }
+    const shedFrames = (floor) => {
+      while (s.length > maxChars && frames.length > floor) {
+        const drop = Math.max(1, Math.min(frames.length - floor, Math.ceil((s.length - maxChars) / 1.2)));
+        frames = frames.slice(drop); trimmedFrames += drop; s = build(frames, tasks, counters);
+      }
+    };
+    const shedToFit = (floors) => { for (const floor of floors) { shedFrames(floor); if (s.length <= maxChars) return; } };
+    shedToFit(FRAME_FLOORS_FOR_TEST);
+    const stampFrames = () => { base.framesKept = frames.length; base.framesDropped = trimmedFrames; };
+    const stampTasksCounters = () => {
+      if (trimmedTasks) base.tasksDropped = trimmedTasks;
+      if (trimmedCounters) base.countersDropped = trimmedCounters;
+    };
+    if (trimmedFrames || trimmedTasks || trimmedCounters) {
+      stampFrames(); stampTasksCounters(); base.note = "trimmed"; s = build(frames, tasks, counters);
+      shedToFit(FRAME_FLOORS_FOR_TEST);
+      stampFrames(); stampTasksCounters(); s = build(frames, tasks, counters);
+    }
+    if (s.length > maxChars && frames.length > 0) {
+      trimmedFrames += frames.length; frames = [];
+      stampFrames(); stampTasksCounters(); base.note = "trimmed"; s = build(frames, tasks, counters);
+    }
+    while (s.length > maxChars && tasks.length > 4) {
+      let min = 0; for (let i = 1; i < tasks.length; i++) if (tasks[i][1] < tasks[min][1]) min = i;
+      tasks.splice(min, 1); trimmedTasks++; s = build(frames, tasks, counters);
+    }
+    if (trimmedTasks) { stampFrames(); stampTasksCounters(); base.note = "trimmed"; s = build(frames, tasks, counters); }
+    if (s.length > maxChars && counters.length) {
+      trimmedCounters += counters.length; counters = [];
+      stampFrames(); stampTasksCounters(); base.note = "trimmed"; s = build(frames, tasks, counters);
+    }
+    while (s.length > maxChars && tasks.length > 0) {
+      let min = 0; for (let i = 1; i < tasks.length; i++) if (tasks[i][1] < tasks[min][1]) min = i;
+      tasks.splice(min, 1); trimmedTasks++; s = build(frames, tasks, counters);
+    }
+    if (s.length > maxChars || trimmedTasks) {
+      stampFrames(); stampTasksCounters();
+      base.note = s.length > maxChars ? "trimmed-hard" : "trimmed";
+      s = build(frames, tasks, counters);
+    }
+    if (s.length > maxChars) {
+      const bare = { ...base, note: "trimmed-hard", framesKept: 0, framesDropped: deltas.length };
+      delete bare.lt; delete bare.ltNames; delete bare.c; delete bare.cCols;
+      s = JSON.stringify(bare);
+    }
+    return { text: s, chars: s.length, trimmedFrames, trimmedTasks, trimmedCounters, fits: s.length <= maxChars };
+  }
+  const FRAME_FLOORS_FOR_TEST = [60, 30, 16, 8];
+
+  it("a real-numbers stall (114 frames, 23 long tasks, the owner's 2026-09-07 row) never returns framesKept:0 while long tasks survive — the shipped-before-this-fix order did", () => {
+    const names = Array.from({ length: 23 }, (_, i) => `siteplanner/lib/someReallyLongModuleNameXXXXXXXXXXX${i}.js:8${i}12`);
+    const taskNames = ["(unknown)", "(other)", ...names];
+    const cap = buildCapture({
+      kind: "manual", atMs: 512151, atWall: 1788700000000, activeMs: 500000, route: "site", build: "0a0457d",
+      baselineMs: 16.7, multiplier: 2, sustainMs: 2000, floorMs: 33,
+      // The owner's real row: 114 frames, most well past the 63ms clamp (so nearly every one also
+      // costs an explicit `fx` pair — B265541's mechanism), and 23 long tasks each with a distinct,
+      // realistic attribution name.
+      frameDeltas: Array.from({ length: 114 }, (_, i) => 70 + (i % 90)),
+      tasks: Array.from({ length: 23 }, (_, i) => [i * 1000, 60 + i * 20, 10 + i, 2 + i]),
+      taskNames,
+    });
+
+    // Mutation proof: the pack order this session REPLACES reproduces the exact real-world defect
+    // (framesKept:0, framesDropped:114) on this fixture — it is not a hypothetical.
+    const preFix = preNew1EncodeCapture(cap, { maxChars: CAPTURE_MAX_CHARS });
+    const preFixParsed = JSON.parse(preFix.text);
+    expect(preFixParsed.framesKept ?? 0).toBe(0);
+    expect(preFixParsed.framesDropped).toBe(114);
+
+    const fixed = encodeCapture(cap, { maxChars: CAPTURE_MAX_CHARS });
+    expect(fixed.chars).toBeLessThanOrEqual(CAPTURE_MAX_CHARS);
+    const parsed = JSON.parse(fixed.text);
+    expect(parsed.framesKept).toBeGreaterThan(0);
+    expect(typeof parsed.ft).toBe("string");
+    expect(parsed.ft.length).toBeGreaterThan(0);
+    const decoded = decodeFrames(parsed.ft, parsed.fx || []);
+    expect(decoded.length).toBeGreaterThan(0);
+    // The long-task table isn't sacrificed to buy that floor — it still keeps the bulk of its rows.
+    expect(parsed.lt.length).toBeGreaterThan(0);
+    expect(parsed.tasksDropped ?? 0).toBeLessThan(23);
   });
 
   it("re-indexes ltNames to only the names the KEPT tasks reference, not the whole session table", () => {
