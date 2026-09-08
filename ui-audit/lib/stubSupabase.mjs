@@ -66,7 +66,7 @@ export function applyQuery(rows, url) {
  *   tables — { sites: [...], comps: [...] , ... } mutable row arrays
  *   wire   — an array every request is pushed onto: { method, table, url, body }
  * Returns the wire array. */
-export function installStubSupabase(ctx, { host = "stub.supabase.co", tables = {}, session, wire = [] } = {}) {
+export function installStubSupabase(ctx, { host = "stub.supabase.co", tables = {}, session, wire = [], control = {} } = {}) {
   return ctx.route(`**${host}/**`, async (route) => {
     const req = route.request();
     const url = req.url();
@@ -82,6 +82,12 @@ export function installStubSupabase(ctx, { host = "stub.supabase.co", tables = {
     if (/\/auth\/v1\/token/.test(url)) return json(session);
     if (/\/auth\/v1\//.test(url)) return json({});
     if (!table) return json([]);
+    /* `control.failWrites` lets a harness make the database REJECT writes mid-run, so the
+     * "a rejected delete must leave the project visible" property can be driven in a real browser
+     * rather than only asserted at unit level (B1361683). Reads keep working, exactly as they do
+     * when a write is refused by RLS. */
+    if (control.failWrites && req.method() !== "GET" && req.method() !== "HEAD")
+      return json({ message: "stubbed write failure", code: "XXFAIL" }, 500);
     const rows = tables[table] || (tables[table] = []);
     const matched = applyQuery(rows, url);
     if (req.method() === "GET") return json(matched);
