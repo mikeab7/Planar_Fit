@@ -189,6 +189,22 @@ was never clicked" quietly ships broken.
 
 ### V991408 — B1368144: the ground-first map toolbar on a real parcel selection — three verbs, an acreage chip on the shape, and a search that finds instead of creating `Blocker: live-GIS` `Blocker: auth`
 
+> **⛔ STATE THIS FIRST, EVERY TIME THIS ITEM IS READ OR REPORTED: ONLY THE PIN FLAVOUR OF THE DECIDE
+> BAR HAS BEEN DRIVEN END TO END. THE PARCEL FLAVOUR HAS NOT BEEN DRIVEN AT ALL, AND IT IS THE ONE
+> THE OWNER WILL USE MOST** (a plan almost always starts from a real lot; a raw pin is the fallback).
+> The 54/54 headless run is real and is not evidence about the parcel path: this sandbox's egress
+> proxy refuses the county/statewide ArcGIS hosts at the CONNECT tunnel with a fast 403, so
+> selecting a real lot — and therefore the acreage chip on the shape, the "Plan N parcels" plural,
+> "Plan a site" opening from lots, and "Log a comp" writing a multi-parcel anchor — was never
+> exercised by any check on this branch. **This item may not be closed on the headless run, on the
+> partial pass recorded below, or on a reading of the code.** (STANDING RULE #2: a null or a partial
+> is a FINDING, never a DISPOSITION.)
+>
+> **Partial live pass, 2026-09-08, owner's own browser, deployed build `4194dda`** — the AT-REST row
+> only: no Site/Comp toggle present, and Select parcels · Draw · Drop a pin all render. That closes
+> step 2 below and nothing else. Steps 3–13 remain open, and steps 3, 4, 5, 6 and 7 are the parcel
+> flavour this note is about.
+
 **Why this needs a live pass at all, given 54/54 headless checks passed.** The PIN flavour of the decide bar needs no parcel service, so it is fully driven here (see below) at both of the owner's widths. Two things are NOT reachable from this sandbox and neither is a code-reading claim:
 - **The PARCEL flavour.** Selecting a real lot requires a live county parcel identify. This environment's egress proxy 403s the county/statewide ArcGIS hosts at the CONNECT tunnel — a fast refusal, not a timeout, so no amount of waiting bridges it. Everything downstream of that selection — the acreage chip painting ON the parcels, "Plan a site" opening a plan from them, "Log a comp" writing a multi-parcel anchor — is unexercised by construction.
 - **"Log a comp" LANDING.** A comp needs a signed-in session; Supabase auth is CORS-blocked here.
@@ -202,7 +218,7 @@ was never clicked" quietly ships broken.
 
 **Steps, each with a named expected result — on `planyr.io`, signed in as the owner. Use a THROWAWAY duplicate for anything that writes; never a real plan or comp.**
 1. Read the served chunk hash in the SAME observation as every check below (`document.querySelectorAll('script[src]')`) and confirm it names a build after this PR merged. A reload does not guarantee a fresh bundle.
-2. Open the map with nothing selected. **Expect:** the address field, then Select parcels · Draw · Drop a pin. **Expect NOT:** any Site/Comp toggle, and no "Place comp" button.
+2. ✅ **PASSED 2026-09-08** (owner's own browser, build `4194dda`). Open the map with nothing selected. **Expect:** the address field, then Select parcels · Draw · Drop a pin. **Expect NOT:** any Site/Comp toggle, and no "Place comp" button. — *Observed: no toggle; all three buttons present.*
 3. Click **Select parcels** and click one real lot. **Expect:** the toolbar reads `1 parcel · N.NN AC` with a NEUTRAL dot, three verbs beside it — Plan a site · Log a comp · Place a site plan — and **a small acreage chip painted on the selected lot itself**, reading the same acreage.
 4. Add two more adjoining lots. **Expect:** the count and both acreages track together, and the first verb now reads **"Plan N parcels"** (the plural wording), not "Plan a site".
 5. Press the acreage chip on the map. **Expect:** it does not swallow the press — the lot under it deselects exactly as a click on that lot would (the chip is not a hit target).
@@ -215,7 +231,7 @@ was never clicked" quietly ships broken.
 12. Confirm all three retired comp anchors are still reachable: pin → Log a comp · Select parcels → Log a comp · a site plan card's three-dot menu → "Pin comp here".
 13. Click the left rail's Comps tab and then the Sites tab. **Expect:** nothing on the centre toolbar changes at all (B850016's decoupling, which this item must not have re-coupled).
 
-**Result:** ⏳ pending — needs a signed-in browser with live county parcel service, on production. `Cadence: once`.
+**Result:** ⏳ **pending — PARCEL FLAVOUR NOT DRIVEN.** Step 2 (the at-rest row) passed on the owner's own browser 2026-09-08 on build `4194dda`; every parcel-flavour step is untouched and needs a signed-in browser with a reachable county parcel service. `Cadence: once`.
 
 ### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back `Blocker: real-data`
 
