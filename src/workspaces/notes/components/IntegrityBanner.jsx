@@ -67,8 +67,14 @@ export default function IntegrityBanner({ duplicates, unreachable, recovered, pr
       {/* ⛔ THE RESOLUTION IS HERE, NOT SOMEWHERE ELSE (NEW-4). A finding whose only exit is
           Dismiss is a finding that teaches you to dismiss findings. Every copy can be kept on
           its own — the others go to the BIN, so the choice is undoable — or both can be kept
-          and the pair remembered so it stops asking. */}
-      {first ? (
+          and the pair remembered so it stops asking.
+          ⛔ AND THE ONE-CLICK "Keep only…" BUTTONS ARE PROOF-GATED (NEW-1, the
+          notes-reconciler-stale-index fix). They bin whichever copy is NOT kept — real, if
+          undoable, damage — so they only appear when the two entries are provably the same
+          text (`identical`), never on a near-duplicate a similarity score merely suspects. A
+          near-duplicate still gets "Show me" above and a way to say it is not the same note;
+          it never gets a button that could bin the wrong side of a guess. */}
+      {first && first.identical ? (
         <div data-testid="notes-dupe-actions" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {first.pages.map((p) => (
             <button
@@ -80,6 +86,11 @@ export default function IntegrityBanner({ duplicates, unreachable, recovered, pr
             >Keep only the one in {p.projectId == null ? NO_PROJECT_LABEL : (projectNames.get(p.projectId) || "that project")}</button>
           ))}
           <button type="button" data-testid="notes-dupe-keep-both" onClick={() => onKeepBoth(first)} style={pill()}>Keep both, stop telling me</button>
+        </div>
+      ) : first ? (
+        <div data-testid="notes-dupe-actions-unconfirmed" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ flex: "1 1 auto", minWidth: 0, fontWeight: 500 }}>Not proven to be the same note — nothing is changed automatically.</span>
+          <button type="button" data-testid="notes-dupe-keep-both" onClick={() => onKeepBoth(first)} style={pill()}>Not the same, stop telling me</button>
         </div>
       ) : null}
 

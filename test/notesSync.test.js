@@ -490,7 +490,24 @@ describe("the revision guard on the wire", () => {
     const r = await fetchPageIndex(c);
     expect(c.calls[0].payload).toBe("id,rev,deleted_at,purged_at");
     expect(c.calls[0].payload).not.toContain("doc");
-    expect(r.index).toEqual([{ id: "p1", rev: 3, binned: false, purged: true }]);
+    expect(r.index).toEqual([{ id: "p1", rev: 3, binned: false, purged: true, deletedAt: null }]);
+  });
+
+  /* ⛔ `deletedAt` (NEW-1, the notes-reconciler-stale-index fix) — how long a BINNED row has
+   * sat that way, which is what lets a reconciler tell a fresh delete's ordinary cross-device
+   * race from a genuinely stuck one. Absent/unparseable reads as `null`, never as "just now". */
+  it("carries `deletedAt` (ms) for a binned row, and null for a live or malformed one", async () => {
+    const c = fakeClient({
+      updateRows: [
+        { id: "p1", rev: 1, deleted_at: "2026-08-09T14:24:57.875Z", purged_at: null },
+        { id: "p2", rev: 1, deleted_at: null, purged_at: null },
+        { id: "p3", rev: 1, deleted_at: "not-a-date", purged_at: null },
+      ],
+    });
+    const r = await fetchPageIndex(c);
+    expect(r.index.find((row) => row.id === "p1")).toEqual({ id: "p1", rev: 1, binned: true, purged: false, deletedAt: Date.parse("2026-08-09T14:24:57.875Z") });
+    expect(r.index.find((row) => row.id === "p2").deletedAt).toBeNull();
+    expect(r.index.find((row) => row.id === "p3").deletedAt).toBeNull();
   });
 });
 

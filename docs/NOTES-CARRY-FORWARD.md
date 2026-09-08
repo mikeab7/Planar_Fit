@@ -435,6 +435,57 @@ position**.
     being green. **When a fix touches more than one call site, find EVERY real caller by driving the
     actual UI control, not by grepping for the function name** — a grep would have found both, but
     only the real button surfaced that one of them was wired wrong.
+11. **A SIMILARITY SCORE IS NOT PROOF OF IDENTITY, AND "NO NODE ANYWHERE" IS NOT ALWAYS "LOST"
+    (NEW-1, the notes-reconciler-stale-index fix, owner report 2026-09-08 — "i dont trust
+    them").** He was shown a duplicate banner naming two DIFFERENTLY-TITLED notes as copies of
+    one, with a one-click "Keep only…" button that bins whichever one is not kept. He was right
+    not to trust it: the detector compares TEXT similarity (word-pair Dice, ≥0.9), which is
+    strong evidence two notes are related, never proof they are the same note — and the button
+    fired on that evidence regardless.
+    - **THE ACTUAL PAIR, confirmed against production:** a still-live, heavily-edited
+      "Coordination" page (rev 1860) and a page auto-titled `"Recovered — Civil Plat…"` by
+      `unreachableNotes`'s own naming convention. Their bodies differ by ONE WORD in ~40 (this
+      IS the repo's own canonical near-duplicate test fixture — `COORDINATION`/
+      `COORDINATION_COPY` in `test/notesProjectIntegrity.test.js` — reproduced almost verbatim
+      on his real account). `identical` was correctly `false`.
+    - **WHY THE "RECOVERED" ONE EXISTED AT ALL — the real drift, and it is NOT last-writer-wins.**
+      The owner's hypothesis (a single-row whole-account index is LWW) is REFUTED: `mergeTrees`
+      is a real union with tombstones, not a blind overwrite, and a live production sweep of his
+      account tree found the LIVE tree fully deduplicated (23 refs, 23 distinct) and only ONE
+      genuinely dangling reference (an empty leftover section-turned-page from the old
+      notebook/section migration — harmless, not this bug). His crude "75 refs, 55 missing"
+      count was almost entirely the `tombs` ARRAY doing its job — a deletion ledger is SUPPOSED
+      to reference gone pages; counting it as drift was the instrument error, not the app's.
+    - **THE ONE REAL MECHANISM: `purgePages`'s cloud call is fire-and-forget, with no retry.**
+      The 30-day trash sweep (`Notes.jsx`, on mount) removes the tree's bin entry FIRST
+      (synchronous, durable) and only THEN calls `purgePages()` to stamp the server row's
+      `purged_at` — unawaited from the sweep's own perspective, no retry path anywhere if that
+      call is interrupted (tab closed, a network blip). The result, measured on his account:
+      `deleted_at` set, `purged_at` still NULL, no bin entry anywhere — a page correctly
+      considered deleted with nothing left to say so. `unreachableNotes` then treated the
+      orphaned body as "lost, put it back" and resurrected it to LIVE, which is what produced a
+      real "these are copies" finding against a page that was never meant to still exist.
+      **The fix belongs in the reconciler AFTER ALL, but not the merge**: `unreachableNotes` now
+      takes `binned` (a `pageId → deletedAt` snapshot from `notesStore.knownBinnedPages()`,
+      populated every seed from the real page index) and routes a known-binned orphan through
+      `adoptDeletedOrphans` instead — back into a normal BIN entry (own `deletedAt`, not a fresh
+      clock) if still inside its 30 days, or reported for an outright purge if the window has
+      already passed, completing the cascade the interruption left hanging.
+    - **AND THE BANNER ITSELF IS NOW PROOF-GATED.** `IntegrityBanner.jsx`'s one-click
+      "Keep only…" buttons — the ones that BIN a real note on an unproven claim — render only
+      when `group.identical` (byte-identical normalized text). A near-duplicate still gets the
+      "Show me" link and a way to say "not the same, stop telling me", never a button that could
+      bin the wrong side of a guess. `duplicateNotice`'s wording follows the same split — "appears
+      in N different projects" is reserved for a proven match; a near-duplicate reads "read
+      almost the same — not confirmed as the same note."
+    - **A KNOWN, ACCEPTED RESIDUAL GAP, stated rather than hidden:** the binned-ids snapshot is
+      populated fresh every seed and is not persisted, so a scan that runs BEFORE this device's
+      very first successful seed still falls back to the old "recoverable" behaviour for that one
+      pass — the same window that existed unconditionally before this fix, now narrowed to a
+      cold-start race instead of every qualifying scan. Once a page is live, it is `known` and
+      is never re-examined for binned-ness. Worth closing if it is ever observed live; not closed
+      here because doing so safely needs gating the whole integrity scan on "at least one seed
+      has completed," which is a bigger change than this fix warranted.
 
 ---
 
