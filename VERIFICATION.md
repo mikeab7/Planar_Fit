@@ -199,7 +199,44 @@ Signed in, at 1600×465, on the Site Planner map:
    `select id, deleted_at from public.map_notes where deleted_at is not null;` returns the row with a stamp.
 7. **Clean up** — soft-delete the remaining throwaway notes.
 
+### V1003376 — B1380112: the four Comps-card fixes (one rate period, one ruler per peer set, ties, the sparse-state footer) as the card actually paints on a real signed-in account `Blocker: auth` `Blocker: real-data`
+
+**Why this needs a real pass, and exactly how far the sandbox already got.** All four defects were found ON Michael's real production comp rows, and all four fixes are proven here against those same rows — the four records are embedded verbatim in `test/compsCardModel.test.js` (`PRODUCTION_ROWS`), the way the review's own `probe-comps-production-rows.mjs` embeds them, because the headline case only reproduces on the real values. What a sandbox cannot do is sign in: the proxy CORS-blocks the Supabase auth handshake, so the card as it paints on his account — against his live comps, at whatever counts and mixes they hold on the day — is the one leg left. This is a NARROW residual, not an unverified feature.
+
+**What was verified here (this session — never assumed, and each fix proven to have teeth).**
+1. `test/compsCardModel.test.js` — 61 tests green (38 pre-existing, unchanged and still passing; 23 new, grouped by the defect each pins). Covers: the named card period and its stamp on every lease rate however recorded; a monthly comp and an annual comp meeting on one scale ($0.50/SF/mo and $6.00/SF/yr resolving to the same figure); an unrecorded period refused rather than printed raw; the scale key per comp type; gross peers excluded from an NNN featured comp and counted with the reason "not quoted NNN"; a $/SF land comp excluded from a $/AC featured comp and counted; a mismatched scale in another county staying a plain non-match; both exclusion reasons reported together; a featured comp with no declared scale yielding no peer set at all; and every tie phrasing (all-level, tied-top, tied-bottom, tied-middle, plus the untied cases unchanged).
+2. `test/compsCardFooter.test.js` — 6 new tests rendering the REAL `CompsCard` through `react-dom/server` (the no-DOM idiom `compsPanelLocation.test.js` established), because defect 4 lived in JSX where no model test could see it: no peers / one peer / two peers each produce ONE line and NO scale and NO "Against your last…" heading; at exactly the minimum the heading and the scale appear and the denial does not; a rate-less comp says so once; the excluded note names the real reason.
+3. **Mutation proof for all four** — each fix reverted in place and the new tests confirmed RED, then restored: scale separation removed → 3 red; tie detection removed → 5 red; the pre-fix unconditional footer heading restored → 4 red.
+4. Both committed review probes re-run before and after the change (`npx vite-node ui-audit/review-2026-09-08/probe-comps-peer-set.mjs` and `probe-comps-production-rows.mjs`).
+5. `npm run ci-parity` — full PASS, every required gate in CI's own order; degraded only on the documented dummy Supabase secrets this checkout cannot hold.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner:**
+1. **Read the served chunk hash in the SAME observation as every check below** (Network tab, or `document.querySelectorAll('script[src]')`) and confirm it names a build after this PR merged. A tab can silently keep serving a pre-deploy bundle. **Expect:** a chunk hash newer than the merge.
+2. Open the Dashboard and read the Comps card's footer panel. His account today holds one qualifying Harris County peer for the featured comp, which is below the minimum. **Expect:** exactly ONE sentence there — "Only one other comparable comp in Harris County, TX yet — not enough to place this one on a scale." — with **no** "Against your last 1 in Harris County, TX" heading above it and **no** scale drawn. **Fail if** both an "Against your last…" heading and a stands-alone/not-enough line appear together, which is the defect.
+3. Read the big rate figure and the small unit beside it. **Expect:** the unit reads `/SF/yr`, and the figure is that comp's rate expressed annually. **Fail if** the unit says one period and the number is plainly the other.
+4. Add (or temporarily duplicate onto a throwaway comp — never edit a real one) enough same-county, same-size-band, same-basis lease comps to reach three qualifying peers. **Expect:** the "Against your last 3 in Harris County, TX" heading, the scale, and the comparison sentence all appear together, and the stands-alone line is gone.
+5. With that scale showing, confirm every plotted dot belongs on it: set one peer's basis to GROSS and reload. **Expect:** that comp leaves the scale, the peer count drops by one, and the sentence gains "(1 nearby comp excluded — not quoted NNN.)". **Fail if** it stays on the rule.
+6. Give two qualifying comps the same rate. **Expect:** the sentence says "tied for…" (or "level with all…" if every one matches), never "the highest of the N". 
+7. On a LAND comp with peers, confirm the peers all carry the featured comp's unit. **Expect:** no sentence containing a five- or six-figure "above/below the median" against per-SF neighbours; a comp quoted in the other unit is excluded and named in the note instead.
+8. **Undo anything step 4–6 created.** Per the owner constraint, a live check runs on a throwaway duplicate and the session says exactly what it touched.
+
 ### V991408 — B1368144: the ground-first map toolbar on a real parcel selection — three verbs, an acreage chip on the shape, and a search that finds instead of creating `Blocker: live-GIS` `Blocker: auth`
+
+> **⛔ STATE THIS FIRST, EVERY TIME THIS ITEM IS READ OR REPORTED: ONLY THE PIN FLAVOUR OF THE DECIDE
+> BAR HAS BEEN DRIVEN END TO END. THE PARCEL FLAVOUR HAS NOT BEEN DRIVEN AT ALL, AND IT IS THE ONE
+> THE OWNER WILL USE MOST** (a plan almost always starts from a real lot; a raw pin is the fallback).
+> The 54/54 headless run is real and is not evidence about the parcel path: this sandbox's egress
+> proxy refuses the county/statewide ArcGIS hosts at the CONNECT tunnel with a fast 403, so
+> selecting a real lot — and therefore the acreage chip on the shape, the "Plan N parcels" plural,
+> "Plan a site" opening from lots, and "Log a comp" writing a multi-parcel anchor — was never
+> exercised by any check on this branch. **This item may not be closed on the headless run, on the
+> partial pass recorded below, or on a reading of the code.** (STANDING RULE #2: a null or a partial
+> is a FINDING, never a DISPOSITION.)
+>
+> **Partial live pass, 2026-09-08, owner's own browser, deployed build `4194dda`** — the AT-REST row
+> only: no Site/Comp toggle present, and Select parcels · Draw · Drop a pin all render. That closes
+> step 2 below and nothing else. Steps 3–13 remain open, and steps 3, 4, 5, 6 and 7 are the parcel
+> flavour this note is about.
 
 **Why this needs a live pass at all, given 54/54 headless checks passed.** The PIN flavour of the decide bar needs no parcel service, so it is fully driven here (see below) at both of the owner's widths. Two things are NOT reachable from this sandbox and neither is a code-reading claim:
 - **The PARCEL flavour.** Selecting a real lot requires a live county parcel identify. This environment's egress proxy 403s the county/statewide ArcGIS hosts at the CONNECT tunnel — a fast refusal, not a timeout, so no amount of waiting bridges it. Everything downstream of that selection — the acreage chip painting ON the parcels, "Plan a site" opening a plan from them, "Log a comp" writing a multi-parcel anchor — is unexercised by construction.
@@ -214,7 +251,7 @@ Signed in, at 1600×465, on the Site Planner map:
 
 **Steps, each with a named expected result — on `planyr.io`, signed in as the owner. Use a THROWAWAY duplicate for anything that writes; never a real plan or comp.**
 1. Read the served chunk hash in the SAME observation as every check below (`document.querySelectorAll('script[src]')`) and confirm it names a build after this PR merged. A reload does not guarantee a fresh bundle.
-2. Open the map with nothing selected. **Expect:** the address field, then Select parcels · Draw · Drop a pin. **Expect NOT:** any Site/Comp toggle, and no "Place comp" button.
+2. ✅ **PASSED 2026-09-08** (owner's own browser, build `4194dda`). Open the map with nothing selected. **Expect:** the address field, then Select parcels · Draw · Drop a pin. **Expect NOT:** any Site/Comp toggle, and no "Place comp" button. — *Observed: no toggle; all three buttons present.*
 3. Click **Select parcels** and click one real lot. **Expect:** the toolbar reads `1 parcel · N.NN AC` with a NEUTRAL dot, three verbs beside it — Plan a site · Log a comp · Place a site plan — and **a small acreage chip painted on the selected lot itself**, reading the same acreage.
 4. Add two more adjoining lots. **Expect:** the count and both acreages track together, and the first verb now reads **"Plan N parcels"** (the plural wording), not "Plan a site".
 5. Press the acreage chip on the map. **Expect:** it does not swallow the press — the lot under it deselects exactly as a click on that lot would (the chip is not a hit target).
@@ -227,7 +264,7 @@ Signed in, at 1600×465, on the Site Planner map:
 12. Confirm all three retired comp anchors are still reachable: pin → Log a comp · Select parcels → Log a comp · a site plan card's three-dot menu → "Pin comp here".
 13. Click the left rail's Comps tab and then the Sites tab. **Expect:** nothing on the centre toolbar changes at all (B850016's decoupling, which this item must not have re-coupled).
 
-**Result:** ⏳ pending — needs a signed-in browser with live county parcel service, on production. `Cadence: once`.
+**Result:** ⏳ **pending — PARCEL FLAVOUR NOT DRIVEN.** Step 2 (the at-rest row) passed on the owner's own browser 2026-09-08 on build `4194dda`; every parcel-flavour step is untouched and needs a signed-in browser with a reachable county parcel service. `Cadence: once`.
 
 ### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back `Blocker: real-data`
 

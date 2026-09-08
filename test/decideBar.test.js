@@ -8,6 +8,8 @@
  * No screenshot, pixel diff or e2e path in this repo can tell those apart from correct behaviour.
  */
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { decideTargetOf, orderVerbs, verbLabel } from "../src/workspaces/site-planner/lib/decideBar.js";
 
 const ALL = ["site", "comp", "siteplan", "note"];   // B1372144 added the fourth
@@ -110,5 +112,39 @@ describe("verbLabel — how each verb reads", () => {
 
   it("still returns '' for a verb key that has no feature behind it", () => {
     for (const k of ["", "nonsense", "sketch", "measure", undefined]) expect(verbLabel(k, 1)).toBe("");
+  });
+});
+
+/* NEW-1 follow-up (2026-09-08, owner-caught after #1571 merged). The sticky-answer comment block in
+ * MapFinder.jsx told the reader a fresh tab "starts over on \"Track as site\"" — a label the owner
+ * replaced mid-session, before the first commit, so it names a default the shipped code has never
+ * had. Nothing failed: prose drifted away from the one function that owns the wording, and only a
+ * human reading the file caught it.
+ *
+ * This is the guard, and it is deliberately narrow: the comment that STATES the fresh-tab default
+ * must quote the label `verbLabel` actually returns for it. It survives a future rename for free —
+ * rename the verb and this goes red until the prose follows — without trying to police every string
+ * in the file, which would be a false-positive machine. */
+describe("the fresh-tab default is described in prose exactly as verbLabel says it", () => {
+  const SRC = readFileSync(
+    fileURLToPath(new URL("../src/workspaces/site-planner/MapFinder.jsx", import.meta.url)),
+    "utf8",
+  );
+
+  it("names the real singular label, and does not name a retired one as current", () => {
+    const i = SRC.indexOf("A fresh tab starts over on");
+    expect(i, "the sticky-answer comment no longer states a fresh-tab default").toBeGreaterThan(-1);
+    const sentence = SRC.slice(i, i + 200);
+    expect(sentence).toContain(`"${verbLabel("site", 1)}"`);
+  });
+
+  it("mentions the retired label ONLY as history, never as a live claim", () => {
+    // A line may say "Track as site" only while marking it retired/corrected — that is the record
+    // of why this guard exists. A bare reintroduction fails here.
+    const offenders = SRC.split("\n")
+      .map((line, n) => ({ line, n: n + 1 }))
+      .filter(({ line }) => line.includes("Track as site"))
+      .filter(({ line }) => !/retired|until 2026-09-08|corrected/i.test(line));
+    expect(offenders.map((o) => o.n), "the retired label is being stated as current").toEqual([]);
   });
 });
