@@ -80,14 +80,14 @@
  * evidence. See that file's own header comment for the full three-tier breakdown.
  *
  * ⛔ B1176976 (owner report, 2026-09-05) — THE FAB SHIPPED AS RADIUS.pill (999, a full circle at
- * this 44×44 size); docs/DESIGN.md's shape rule (B942176) reserves `pill` for a CONTAINER that
- * holds several sub-controls — a segmented shell, the account chip, a toggle bar whose height IS
- * its shape — never a standalone action button's own resting shape, which is `RADIUS.md`
- * regardless of the button's own aspect ratio. Measured on the deployed build (after PR 1439):
- * this was the only circular chrome control on the map landing page (the one other >=90px-radius
- * element, the 20×20 account avatar "M", is a legitimately round BADGE, not a control). Fixed to
- * `RADIUS.md` — the button keeps its 44×44 hit area and its popover anchoring, only its own
- * corner curve changes. `design-drift-audit.mjs` never caught this because `999` is a legal value
+ * its then-fixed 44×44 size); docs/DESIGN.md's shape rule (B942176) reserves `pill` for a
+ * CONTAINER that holds several sub-controls — a segmented shell, the account chip, a toggle bar
+ * whose height IS its shape — never a standalone action button's own resting shape, which is
+ * `RADIUS.md` regardless of the button's own aspect ratio (or, since B1162016, its own SIZE).
+ * Measured on the deployed build (after PR 1439): this was the only circular chrome control on
+ * the map landing page (the one other >=90px-radius element, the 20×20 account avatar "M", is a
+ * legitimately round BADGE, not a control). Fixed to `RADIUS.md` — the button keeps its hit area
+ * and its popover anchoring, only its own corner curve changes. `design-drift-audit.mjs` never caught this because `999` is a legal value
  * on the RADIUS scale, just the wrong step for this role — `nestingMismatches()`/
  * `siblingMismatches()` couldn't either, because this control has no rounded containing ancestor
  * and no rounded row-peer (it renders fixed, alone, outside every workspace's own chrome tree) —
@@ -126,13 +126,30 @@
  * the second press adds no capture latency, only one more tap; and the row is the FIRST thing on
  * screen after opening — no typing, no scrolling — so filing a pure performance report is still
  * "open, then one more tap," never "open, navigate, then tap."
+ *
+ * B1162016 (owner report, 2026-09-07) — THE BUTTON'S SIZE WAS A BARE CONSTANT (44, the WCAG
+ * touch-target floor), so it rendered right on a phone and OVERSIZED under a mouse. Owner,
+ * verbatim: "the help button is massive on my computer. Like, I guess it's sized correctly on
+ * the phone, but it's massive on the computer." He's on a wide desktop viewport, so this was
+ * never a narrow-screen case — it's a POINTER-TYPE case, and the fix sizes by pointer
+ * capability (matchMedia("(pointer: coarse)"), the same reactive pattern SitePlanner.jsx's
+ * Properties sheet and Food's FoodMap.jsx already use — see `coarsePointer` below), never by
+ * viewport width. A coarse (touch, no-hover) pointer keeps CONTROL_H.touch (44, the existing
+ * floor); a fine (mouse/trackpad) pointer gets CONTROL_H.lg (30) — this app's own standard
+ * desktop icon-button size, already the default size of the shared IconButton primitive
+ * (controls.jsx's own header: "an icon button (IconButton's own default size, unchanged,
+ * already agrees with this)") — never an invented number. The reactive `fabSize` this produces
+ * feeds BOTH the button's own width/height AND cornerClearanceFromBottom's `width` — B966700's
+ * corner-measurement math must consume the size the button actually renders at, or it clears a
+ * box the button no longer occupies. A hybrid device that plugs in a mouse (or a touch laptop
+ * undocked from one) re-sizes live, no reload, via the same matchMedia change listener.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AnchoredMenu from "../shared/ui/AnchoredMenu.jsx";
 import { MenuItem } from "../shared/ui/controls.jsx";
 import { RADIUS } from "../shared/ui/radius.js";
-import { FONT_SIZE } from "../shared/ui/designTokens.js";
+import { CONTROL_H, FONT_SIZE } from "../shared/ui/designTokens.js";
 import { cornerClearanceFromBottom } from "../shared/ui/cornerClearance.js";
 import { safeAreaInsets } from "../shared/ui/safeAreaInsets.js";
 import { activeChromeDock } from "../shared/ui/chromeDock.js";
@@ -141,7 +158,6 @@ import { requestPerfCapture, perfCaptureDelivery, perfRecorderArmed } from "../s
 import { SUPPRESSED_AUTOMATED } from "../shared/telemetry/clientErrors.js";
 import { buildReportContext, submitReport, queuedReportCount } from "../shared/reports/reportsStore.js";
 
-const FAB_SIZE = 44;
 const FAB_RIGHT = 14;
 const Z_FAB = 2000;
 const Z_MENU = 2100;
@@ -194,6 +210,20 @@ export default function HelpReportControl({ user }) {
   // this is a module-scope signal rather than a prop (this control mounts once in the app Shell
   // and has no path down into whichever workspace's sheet is open).
   const sheetHeight = useBottomSheetHeight();
+  // B1162016 — size by POINTER CAPABILITY, not viewport width (mirrors SitePlanner.jsx's own
+  // `coarsePointer` state for its Properties sheet, and FoodMap.jsx's for its cluster hit
+  // targets). A coarse pointer (touch, no hover) is the WCAG touch-target floor; a fine pointer
+  // (mouse/trackpad) is this app's standard desktop icon-button size — see this file's header.
+  const [coarsePointer, setCoarsePointer] = useState(() => {
+    try { return window.matchMedia("(pointer: coarse)").matches; } catch (_) { return false; }
+  });
+  useEffect(() => {
+    let mq; try { mq = window.matchMedia("(pointer: coarse)"); } catch (_) { return undefined; }
+    const onChange = () => setCoarsePointer(mq.matches);
+    mq.addEventListener ? mq.addEventListener("change", onChange) : mq.addListener(onChange);
+    return () => { mq.removeEventListener ? mq.removeEventListener("change", onChange) : mq.removeListener(onChange); };
+  }, []);
+  const fabSize = coarsePointer ? CONTROL_H.touch : CONTROL_H.lg;
 
   useEffect(() => { setQueued(queuedReportCount()); }, [open]);
 
@@ -202,10 +232,12 @@ export default function HelpReportControl({ user }) {
       setDockEl(activeChromeDock());
       // Fold the real safe-area inset into the offsets BEFORE the occupant-overlap math runs
       // (never a CSS-only calc() — see this file's B1176480 header note for why the overlap
-      // check needs the inset as a number).
+      // check needs the inset as a number). `width` reads the LIVE `fabSize` (B1162016) — never
+      // the old bare constant — so the clearance always matches the box the button actually
+      // renders at.
       const insets = safeAreaInsets();
       const right = FAB_RIGHT + insets.right;
-      const bottom = cornerClearanceFromBottom({ right, width: FAB_SIZE, base: FAB_RIGHT + insets.bottom });
+      const bottom = cornerClearanceFromBottom({ right, width: fabSize, base: FAB_RIGHT + insets.bottom });
       setFabRight((prev) => (Math.abs(prev - right) > 0.5 ? right : prev));
       setFabBottom((prev) => (Math.abs(prev - bottom) > 0.5 ? bottom : prev));
     };
@@ -225,7 +257,7 @@ export default function HelpReportControl({ user }) {
       vv?.removeEventListener("scroll", measure);
       clearInterval(id);
     };
-  }, []);
+  }, [fabSize]);
 
   const closeAll = () => { setOpen(false); setTimeout(() => { setView("menu"); setDesc(""); setSubmitState(null); setCap(null); }, 200); };
 
@@ -332,22 +364,22 @@ export default function HelpReportControl({ user }) {
         dockEl
           // Docked (map / site planner) — real furniture inside the pane's own DOM, positioned
           // by its dock anchor's parent, not by this control. Same size/shape/tap-target as the
-          // floating case (never shrunk to match the canvas's own 30px zoom-stack rows — see
-          // this control's B1176976 header note on the deliberate 44×44 minimum).
+          // floating case — `fabSize` (B1162016, pointer-driven) is shared between both branches,
+          // never a value of its own for the docked case.
           ? {
               // No boxShadow here (deliberately unlike the zoom-stack's own container) — this
               // control is docked as its own furniture item, not merged into that bordered box,
               // and the floating case below never had one either; adding a new raw color literal
               // for a shadow here would be exactly the DESIGN.md drift this repo's own
               // design-drift-audit gate exists to catch (measured: it does).
-              position: "static", width: FAB_SIZE, height: FAB_SIZE, borderRadius: RADIUS.md,
+              position: "static", width: fabSize, height: fabSize, borderRadius: RADIUS.md,
               border: "1px solid var(--border-strong)", background: "var(--surface-raised)",
               color: "var(--text-primary)", display: "flex", alignItems: "center", justifyContent: "center",
               cursor: "pointer", padding: 0, font: "inherit", fontSize: FONT_SIZE.control,
             }
           : {
               position: "fixed", right: fabRight, bottom: fabBottom, zIndex: Z_FAB,
-              width: FAB_SIZE, height: FAB_SIZE, borderRadius: RADIUS.md,
+              width: fabSize, height: fabSize, borderRadius: RADIUS.md,
               border: "1px solid var(--border-strong)", background: "var(--surface-raised)",
               color: "var(--text-primary)", display: "flex", alignItems: "center", justifyContent: "center",
               cursor: "pointer", padding: 0, font: "inherit", fontSize: FONT_SIZE.control,

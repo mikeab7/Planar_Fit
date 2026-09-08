@@ -69,6 +69,22 @@
  * item rather than silently fixed in passing, because it affects `verify-capture-pipe.mjs` too
  * and predates this session's own changes (reproduces byte-identically on an unmodified build).
  *
+ * ⛔ B1162016 (owner report, 2026-09-07) — PART I proves the control sizes by POINTER
+ * CAPABILITY, never viewport width: a fine pointer (mouse/trackpad) gets `CONTROL_H.lg` (30, the
+ * app's standard desktop icon-button size) instead of the 44px touch floor, checked at BOTH a
+ * wide (1440px) and a narrow (390px) viewport so width alone can never be what decided it either
+ * direction; a coarse (touch) pointer keeps the 44px floor even at a desktop-wide 1440px
+ * viewport, for the same reason. A fourth arm mocks `matchMedia("(pointer: coarse)")`'s own
+ * `change` event (Playwright/CDP have no way to flip a REAL device's pointer type mid-session) to
+ * prove two things end to end, live, no reload: the button itself resizes, AND — the easy part to
+ * get wrong per the dispatch brief — `cornerClearanceFromBottom`'s occupant-overlap math re-runs
+ * against the NEW size, not the one it mounted with. That second half is proven with a purpose-
+ * built occupant positioned so it overlaps the button's own column ONLY at the wider (44px) size
+ * and misses it at the narrower (30px) size (worked out from `cornerClearance.js`'s own
+ * `colLeft = vw - right - width` math) — so a stale `width` fed into that function reads as
+ * `fabBottom` staying near the true corner even after the button visually grows, while the fix
+ * reads as `fabBottom` jumping to clear the now-overlapping occupant.
+ *
  * ⛔ HONESTY, three tiers — read before trusting a line of this section's own output, and see
  * `VERIFICATION.md` → Self-verification for the standing, repo-wide version of the same note
  * (added 2026-09-05 by B1168128, the same day):
@@ -753,6 +769,113 @@ try {
         check(`${route.label}@${width}: no interactive element's box intersects the control's box`, data.hits.length === 0, data.hits.length ? JSON.stringify(data.hits) : "");
         await ctx.close();
       }
+    }
+  }
+
+  // ─────────────────────────────────────────── PART I — B1162016: size by POINTER CAPABILITY,
+  // never viewport width, and the corner-clearance math consumes the SAME size the button renders at.
+  console.log("\nPART I — the control sizes by POINTER CAPABILITY (matchMedia \"(pointer: coarse)\"), never viewport width, and the corner-clearance math consumes the size the button actually rendered at");
+  {
+    async function fabBox(page) {
+      return page.evaluate(() => {
+        const el = document.querySelector('[data-testid="help-report-fab"]');
+        const r = el.getBoundingClientRect();
+        return { w: r.width, h: r.height, b: r.bottom, vh: window.innerHeight, pointerCoarse: window.matchMedia("(pointer: coarse)").matches };
+      });
+    }
+    async function openChromeFreeScreen(ctxOpts) {
+      const ctx = await browser.newContext(ctxOpts);
+      const page = await ctx.newPage();
+      await assertMeasurable(page, "verify-help-report-control PART I");
+      await page.goto(URL + "#/schedule", { waitUntil: "load" }); // chrome-free route — no Leaflet, no canvas, isolates the button's own sizing
+      await page.waitForSelector('[data-testid="help-report-fab"]', { timeout: 15000 });
+      await pacedWait(page, 400);
+      return { ctx, page };
+    }
+
+    // Fine pointer, WIDE viewport — the app's standard desktop icon-button size (CONTROL_H.lg,
+    // 30), never the 44px touch floor.
+    {
+      const { ctx, page } = await openChromeFreeScreen({ viewport: { width: 1440, height: 900 } });
+      const r = await fabBox(page);
+      check("fine pointer + 1440px viewport: this context reads pointer:fine", r.pointerCoarse === false, JSON.stringify(r));
+      check("fine pointer: FAB renders at the desktop icon-button size (30×30, CONTROL_H.lg) — not the 44px touch floor", Math.round(r.w) === 30 && Math.round(r.h) === 30, JSON.stringify(r));
+      await ctx.close();
+    }
+
+    // Coarse pointer, the SAME wide viewport — the 44px floor persists even at a desktop-wide
+    // viewport, proving width alone never decided this in either direction.
+    {
+      const { ctx, page } = await openChromeFreeScreen({ viewport: { width: 1440, height: 900 }, hasTouch: true });
+      const r = await fabBox(page);
+      check("a touch-capable 1440px-wide viewport reads pointer:coarse (Chromium ties this to hasTouch)", r.pointerCoarse === true, JSON.stringify(r));
+      check("coarse pointer at a DESKTOP-WIDE viewport still gets the 44×44 touch floor — sizing is pointer-driven, not width-driven", Math.round(r.w) === 44 && Math.round(r.h) === 44, JSON.stringify(r));
+      await ctx.close();
+    }
+
+    // Fine pointer, NARROW viewport — the reverse control: a small mouse-driven window must NOT
+    // get the touch floor just because the viewport happens to be narrow.
+    {
+      const { ctx, page } = await openChromeFreeScreen({ viewport: { width: 390, height: 844 } });
+      const r = await fabBox(page);
+      check("fine pointer + 390px viewport: this context still reads pointer:fine", r.pointerCoarse === false, JSON.stringify(r));
+      check("fine pointer at a NARROW viewport still gets the desktop icon-button size (30×30) — width alone never decides this either", Math.round(r.w) === 30 && Math.round(r.h) === 30, JSON.stringify(r));
+      await ctx.close();
+    }
+
+    // A live pointer-type change, mid-session, no reload — Playwright/CDP have no way to flip a
+    // real device's pointer type, so this mocks matchMedia("(pointer: coarse)")'s own change
+    // event to prove the app's OWN reactive listener (not the mock) resizes the button, and that
+    // the corner-clearance math consumes the NEW size, not the one it mounted with. The occupant
+    // below is positioned (from cornerClearance.js's own `colLeft = vw - right - width` math,
+    // FAB_RIGHT=14, vw=1440) so it overlaps the button's column ONLY at width=44
+    // (colLeft=1382) and misses it at width=30 (colLeft=1396): occupant right edge at
+    // vw-45=1395, 12px wide (left edge 1383) — 1395 is > 1382 but not > 1396.
+    {
+      const mockMatchMediaScript = `(() => {
+        const real = window.matchMedia.bind(window);
+        let mql = null;
+        window.matchMedia = (q) => {
+          if (q !== "(pointer: coarse)") return real(q);
+          if (mql) return mql;
+          const listeners = [];
+          mql = {
+            matches: false, media: q,
+            addEventListener: (t, fn) => { if (t === "change") listeners.push(fn); },
+            removeEventListener: (t, fn) => { const i = listeners.indexOf(fn); if (i > -1) listeners.splice(i, 1); },
+            addListener: (fn) => listeners.push(fn),
+            removeListener: (fn) => { const i = listeners.indexOf(fn); if (i > -1) listeners.splice(i, 1); },
+          };
+          window.__setCoarsePointer = (v) => { mql.matches = v; listeners.slice().forEach((fn) => fn({ matches: v })); };
+          return mql;
+        };
+      })();`;
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      await ctx.addInitScript(mockMatchMediaScript);
+      const page = await ctx.newPage();
+      await assertMeasurable(page, "verify-help-report-control PART I (live switch)");
+      await page.goto(URL + "#/schedule", { waitUntil: "load" });
+      await page.waitForSelector('[data-testid="help-report-fab"]', { timeout: 15000 });
+      await pacedWait(page, 400);
+
+      await page.evaluate(() => {
+        const el = document.createElement("div");
+        el.setAttribute("data-canvas-corner", "b1162016-width-sensitivity-probe");
+        Object.assign(el.style, { position: "fixed", right: "45px", top: "700px", width: "12px", height: "250px", background: "transparent" });
+        document.body.appendChild(el);
+      });
+      await page.evaluate(() => window.dispatchEvent(new Event("resize"))); // force an immediate re-measure rather than waiting on the poll
+      await pacedWait(page, 300);
+      const before = await fabBox(page);
+      check("[live-switch] mock installed, fine-pointer baseline still renders at 30×30", Math.round(before.w) === 30 && Math.round(before.h) === 30, JSON.stringify(before));
+      check("[live-switch] at 30px width the probe occupant does NOT overlap the button's column — clearance stays near the true corner", Math.abs((before.vh - before.b) - 14) <= 3, `clearance=${before.vh - before.b}`);
+
+      await page.evaluate(() => window.__setCoarsePointer(true));
+      await pacedWait(page, 400); // well under CORNER_POLL_MS (500) — only the matchMedia "change" listener could cause this
+      const after = await fabBox(page);
+      check("[live-switch] a live pointer-type change (matchMedia \"change\", no reload) resizes the button to the 44×44 touch floor", Math.round(after.w) === 44 && Math.round(after.h) === 44, JSON.stringify(after));
+      check("[live-switch] the corner-clearance math consumed the NEW size — the same probe occupant now overlaps the wider column and the button jumps to clear it (mutation-sensitive: reads ~14 if a stale width is fed in instead)", (after.vh - after.b) >= 205 && (after.vh - after.b) <= 215, `before clearance=${before.vh - before.b} after clearance=${after.vh - after.b}`);
+      await ctx.close();
     }
   }
 
