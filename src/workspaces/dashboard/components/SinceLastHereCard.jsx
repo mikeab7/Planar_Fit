@@ -72,7 +72,14 @@ function FeedRow({ row, now, handlers }) {
           {row.subline}
         </div>
       </div>
-      <span style={{ flex: "none", fontSize: 10.5, color: "var(--text-secondary)", paddingTop: 2 }}>{shortAge(row.ts, now)}</span>
+      {/* A snapshot-diffed schedule row knows only the interval its change fell in, never the
+          instant (sinceLastHereFeed.js's header). Its age is prefixed "~" and titled with the real
+          bounds, so the card never asserts a precision the data does not have — one character and
+          a hover, no added copy (PANEL-BREVITY). */}
+      <span
+        title={row.tsApprox ? `Sometime between ${new Date(row.tsEarliest).toLocaleString()} and ${new Date(row.tsLatest).toLocaleString()}` : undefined}
+        style={{ flex: "none", fontSize: 10.5, color: "var(--text-secondary)", paddingTop: 2 }}
+      >{row.tsApprox ? "~" : ""}{shortAge(row.ts, now)}</span>
     </div>
   );
 }

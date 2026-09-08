@@ -20,6 +20,33 @@
  * (root CLAUDE.md's owner constraint #1 — tasks don't need one), so "tasks completed" is read off
  * the health field flipping to "green" for ANY task in this account's own schedule data (which is
  * already scoped to this account by RLS — there is no cross-account visibility here to filter).
+ * ⛔ HOW SCHEDULE EVENTS ARE TIMESTAMPED, and why it is not `windowStartMs` (B<PENDING>, 2026-09-08).
+ * The two snapshot-diffed kinds (`schedule-slip`, `tasks-completed`) have no exact occurrence time
+ * — re-confirmed against production before this fix, not assumed: `public.planar_data` carries NO
+ * `updated_at` column, and no task object in the live document carries a temporal field of any
+ * kind (32 distinct task keys; none records when a field last changed). The first cut stamped them
+ * at `windowStartMs` — the OLDEST instant the change could possibly have happened. That is a valid
+ * lower bound and a catastrophic sort key: with the rows sorted newest-first and capped, an event
+ * stamped at the floor of the window sorts BELOW every real-stamped event in it, so a returning
+ * user who has been away long enough to overflow the cap loses 100% of their schedule rows, every
+ * time — measured at 3 of 3 on a one-month absence.
+ * The honest fix has two independent halves, because either alone still fails:
+ *   (a) STAMP AT A MEASURED UPPER BOUND, not the floor. `public.planar_history` is an append-only
+ *       ring of dated writes of this same document, so its newest `created_at` is a real, observed
+ *       moment: the schedule was last written THEN, and a change we detect by diff therefore
+ *       happened at or before it. `scheduleLastWriteAt` carries that in (one indexed row, no blob).
+ *       Where it is unavailable the bound loosens to `now`, never tightens to a guess. Either way
+ *       the row is marked `tsApprox` and carries its real `tsEarliest`/`tsLatest` interval, so no
+ *       consumer can mistake the point for an exact stamp.
+ *   (b) CAP FAIRLY ACROSS KINDS. (a) alone is not enough: a schedule last written early in a long
+ *       window legitimately stamps old, and would be cut again for an honest reason. So the cap
+ *       reserves one slot per event kind present before any kind takes a second, then fills what is
+ *       left by real recency. A date moving is the most consequential thing that can happen while
+ *       he is away; the cap may shorten that story, never delete it.
+ * No other event kind has this problem: plan-created/renamed/edited, comp-added and note-written
+ * every one reads a real recorded stamp off the record itself (`created_at`, `siteRenamedAt`,
+ * `updated_at`, `createdAt`) and is exact.
+ *
  * "Plans meaningfully edited" is scoped to whichever plans the Pursuits card already fetched
  * building geometry for (the touched-pursuit set) — reusing an existing, already-paid-for fetch
  * rather than adding a new account-wide element scan. A plan outside that set (tracked/complete/
@@ -156,10 +183,12 @@ function buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnaps
 
 /** Schedule events (a milestone's date moving, and bulk task completion) — diffed against the
  * per-task snapshot from the last visit, since nothing in the schedule data itself records when a
- * field last changed. Timestamped at `windowStartMs` (the moment the last visit ended) rather than
- * "now": the exact moment inside the gap is genuinely unknown, and stamping it at the start of the
- * gap is honest about that while still clearing the own-action debounce for any real absence. */
-function buildScheduleEvents({ scheduleProjects, prevTaskSnapshot, windowStartMs }) {
+ * field last changed. See this module's header for how these are timestamped and why it is NOT
+ * `windowStartMs`: they carry the tightest MEASURED upper bound available (`scheduleLastWriteAt`,
+ * the newest `planar_history` write of this document; `now` when that is unavailable), clamped so
+ * an approximate row can never suppress itself against the own-action debounce, and marked
+ * `tsApprox` with the real `[tsEarliest, tsLatest]` interval they are known to lie in. */
+function buildScheduleEvents({ scheduleProjects, prevTaskSnapshot, windowStartMs, approxTs, tsLatest }) {
   const rows = [];
   const nextTasks = {};
   const projects = scheduleProjects && typeof scheduleProjects === "object" ? Object.values(scheduleProjects) : [];
@@ -188,7 +217,10 @@ function buildScheduleEvents({ scheduleProjects, prevTaskSnapshot, windowStartMs
             rows.push({
               id: `schedule-slip:${p.id}:${t.id}`,
               kind: "schedule-slip",
-              ts: windowStartMs,
+              ts: approxTs,
+              tsApprox: true,
+              tsEarliest: windowStartMs,
+              tsLatest,
               parts: [
                 { text: "Milestone " },
                 { text: taskName, bold: true },
@@ -212,7 +244,10 @@ function buildScheduleEvents({ scheduleProjects, prevTaskSnapshot, windowStartMs
       rows.push({
         id: `tasks-completed:${p.id}:${windowStartMs}`,
         kind: "tasks-completed",
-        ts: windowStartMs,
+        ts: approxTs,
+        tsApprox: true,
+        tsEarliest: windowStartMs,
+        tsLatest,
         parts: [
           { text: `Closed ${completedNames.length} task${completedNames.length === 1 ? "" : "s"} on ` },
           { text: projectName, bold: true },
@@ -299,6 +334,36 @@ function buildNoteEvents({ notePages }) {
 }
 
 /**
+ * Take at most `cap` rows out of `rows` (already sorted newest-first) WITHOUT letting any one
+ * event kind be eliminated wholesale.
+ *
+ * Plain `slice(0, cap)` ranks purely on the timestamp, which is correct only while every kind's
+ * timestamp is equally precise. Two of the seven kinds are snapshot-diffed and can only carry an
+ * approximate one (see this module's header), so a plain slice systematically deletes exactly the
+ * rows that matter most. Instead: one reserved pass hands each kind present its single newest row,
+ * then every remaining slot is filled by real recency across what is left. With `cap` at or above
+ * the number of kinds — 12 against 7 here — a kind present in the feed ALWAYS reaches the card.
+ * The result is re-sorted newest-first so the card still reads as a chronology.
+ */
+export function capRowsFairlyByKind(rows, cap) {
+  if (!Array.isArray(rows) || rows.length <= cap) return (rows || []).slice();
+  if (cap <= 0) return [];
+  const taken = new Set();
+  const seenKind = new Set();
+  for (const r of rows) {                      // reserved pass — newest row of each kind
+    if (taken.size >= cap) break;
+    if (seenKind.has(r.kind)) continue;
+    seenKind.add(r.kind);
+    taken.add(r);
+  }
+  for (const r of rows) {                      // fill the rest by real recency
+    if (taken.size >= cap) break;
+    taken.add(r);
+  }
+  return rows.filter((r) => taken.has(r));     // `rows` order === newest-first
+}
+
+/**
  * Build the whole feed. Pure — no Date.now() default, so a caller (and every test) controls the
  * clock explicitly.
  *
@@ -323,12 +388,27 @@ export function buildSinceLastHereFeed({
   comps = [],
   notePages = [],
   prevSnapshot = { plans: {}, tasks: {} },
+  scheduleLastWriteAt = null,
 }) {
   const isFirstVisit = lastVisitAt == null;
   const windowStartMs = isFirstVisit ? now - FIRST_VISIT_FALLBACK_MS : lastVisitAt;
 
+  // The tightest MEASURED upper bound on when a snapshot-diffed schedule change happened: the
+  // newest write of the schedule document itself. Unavailable → `now`, which is a looser bound but
+  // still a true one. Then clamped into the window at both ends: never before `windowStartMs` (a
+  // write that predates the last visit cannot explain a change detected against it — the real
+  // change is later, and this is a stale ring), and never inside the own-action debounce (an
+  // approximate row must not be able to suppress ITSELF as "something you just did" — the debounce
+  // exists to hide known-recent actions, and this time is not known).
+  const lastWrite = Number(scheduleLastWriteAt);
+  const tsLatest = Math.min(Number.isFinite(lastWrite) && lastWrite > 0 ? lastWrite : now, now);
+  const scheduleTs = Math.min(Math.max(tsLatest, windowStartMs), now - OWN_ACTION_DEBOUNCE_MS);
+
   const plan = buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnapshot: prevSnapshot.plans, windowStartMs });
-  const schedule = buildScheduleEvents({ scheduleProjects, prevTaskSnapshot: prevSnapshot.tasks, windowStartMs });
+  const schedule = buildScheduleEvents({
+    scheduleProjects, prevTaskSnapshot: prevSnapshot.tasks, windowStartMs,
+    approxTs: scheduleTs, tsLatest,
+  });
   const compRows = buildCompEvents({ comps });
   const noteRows = buildNoteEvents({ notePages });
 
@@ -336,7 +416,7 @@ export function buildSinceLastHereFeed({
     .filter((r) => now - r.ts >= OWN_ACTION_DEBOUNCE_MS)
     .sort((a, b) => b.ts - a.ts);
 
-  const capped = allRows.slice(0, CAP_ROWS);
+  const capped = capRowsFairlyByKind(allRows, CAP_ROWS);
   const overflowCount = allRows.length - capped.length;
 
   const nextSnapshot = { plans: plan.nextPlans, tasks: schedule.nextTasks };

@@ -120,7 +120,15 @@ describe("buildSinceLastHereFeed — schedule", () => {
     expect(row.kind).toBe("schedule-slip");
     expect(row.parts.some((p) => p.bold && p.text === "Grading permit")).toBe(true);
     expect(row.subline).toBe("Goose Creek · +4d");
-    expect(row.ts).toBe(TWO_DAYS_AGO); // anchored at the last-visit mark, not "now"
+    // ⛔ WAS `expect(row.ts).toBe(TWO_DAYS_AGO)` — this line PINNED the defect the 2026-09-08
+    // adversarial review found. Stamping at the window FLOOR sorts a schedule row below every
+    // real-stamped event in the window, so the cap deleted 100% of them (3 of 3 measured on a
+    // one-month absence). A snapshot-diffed change has no exact time; it carries the tightest
+    // MEASURED upper bound instead, marked approximate, with its real interval alongside.
+    expect(row.tsApprox).toBe(true);
+    expect(row.tsEarliest).toBe(TWO_DAYS_AGO);
+    expect(row.ts).toBeGreaterThan(TWO_DAYS_AGO);
+    expect(row.ts).toBeLessThanOrEqual(NOW);
   });
 
   it("reports a milestone pulled in earlier as a negative slip", () => {
@@ -256,6 +264,119 @@ describe("KIND_META", () => {
       expect(KIND_META[k]).toBeTruthy();
       expect(typeof KIND_META[k].glyph).toBe("string");
       expect(typeof KIND_META[k].accent).toBe("string");
+    }
+  });
+});
+
+
+/* ── The "Since you were last here" feed defect, 2026-09-08 adversarial review ────────────────
+ * Reproduction: ui-audit/review-2026-09-08/probe-feed-month-away.mjs (17 events derived, 12 shown,
+ * all 3 schedule events in the hidden 5). These are the CI guards for both halves of the fix.
+ */
+describe("buildSinceLastHereFeed — schedule events survive a long absence (B<PENDING>)", () => {
+  const MONTH_AGO = NOW - 30 * DAY;
+
+  /** The probe's scene, as a fixture: a month away, enough plan/comp activity to overflow the
+   * 12-row cap on its own, plus two slipped milestones and a closed task. */
+  function monthAwayArgs(extra = {}) {
+    const sites = Array.from({ length: 10 }, (_, i) => ({
+      id: "s" + i, group_id: "g" + i, site: "Plan " + i, county: "harris", status: "pursuit",
+      created_at: new Date(MONTH_AGO + (i + 1) * 2 * DAY).toISOString(),
+      updated_at: new Date(MONTH_AGO + (i + 1) * 2 * DAY).toISOString(),
+    }));
+    const comps = Array.from({ length: 4 }, (_, i) => ({
+      id: "c" + i, compType: "lease", title: "Comp " + i, leaseRate: 0.65,
+      leaseRatePeriod: "monthly", leaseRateExpense: "nnn", leaseSizeSf: 600000,
+      createdAt: new Date(MONTH_AGO + (i + 1) * 5 * DAY).toISOString(),
+    }));
+    return baseArgs({
+      lastVisitAt: MONTH_AGO,
+      sites,
+      comps,
+      buildingCountBySite: {},
+      sqftBySite: {},
+      scheduleProjects: {
+        p1: {
+          id: "p1", name: "Bain Industrial", linkedSiteId: "s1",
+          tasks: [
+            { id: 1, name: "Site civil permit", end: "2026-10-01", health: "amber" },
+            { id: 2, name: "Foundation start", end: "2026-11-15", health: "amber" },
+            { id: 3, name: "TCO", end: "2027-02-01", health: "green" },
+          ],
+        },
+      },
+      prevSnapshot: {
+        plans: {},
+        tasks: {
+          p1: {
+            1: { end: "2026-09-10", health: "amber", name: "Site civil permit" },
+            2: { end: "2026-10-20", health: "amber", name: "Foundation start" },
+            3: { end: "2027-02-01", health: "amber", name: "TCO" },
+          },
+        },
+      },
+      ...extra,
+    });
+  }
+
+  it("derives more events than it can show — the precondition the defect needed", () => {
+    const feed = buildSinceLastHereFeed(monthAwayArgs());
+    expect(feed.totalCount).toBeGreaterThan(feed.rows.length);
+    expect(feed.overflowCount).toBeGreaterThan(0);
+  });
+
+  it("EVERY schedule event survives the cap (was 0 of 3)", () => {
+    const feed = buildSinceLastHereFeed(monthAwayArgs());
+    const scheduleRows = feed.rows.filter((r) => r.kind === "schedule-slip" || r.kind === "tasks-completed");
+    expect(scheduleRows.filter((r) => r.kind === "schedule-slip")).toHaveLength(2);
+    expect(scheduleRows.filter((r) => r.kind === "tasks-completed")).toHaveLength(1);
+  });
+
+  it("the cap can never delete a whole event kind", () => {
+    const feed = buildSinceLastHereFeed(monthAwayArgs());
+    const derivedKinds = new Set(["plan-created", "comp-added", "schedule-slip", "tasks-completed"]);
+    const shownKinds = new Set(feed.rows.map((r) => r.kind));
+    for (const k of derivedKinds) expect(shownKinds.has(k)).toBe(true);
+  });
+
+  it("still reads newest-first, and still respects the cap", () => {
+    const feed = buildSinceLastHereFeed(monthAwayArgs());
+    expect(feed.rows.length).toBeLessThanOrEqual(12);
+    for (let i = 1; i < feed.rows.length; i++) {
+      expect(feed.rows[i - 1].ts).toBeGreaterThanOrEqual(feed.rows[i].ts);
+    }
+  });
+
+  it("uses the measured last schedule WRITE as the stamp when one is available", () => {
+    const writeAt = NOW - 3 * DAY;
+    const feed = buildSinceLastHereFeed(monthAwayArgs({ scheduleLastWriteAt: writeAt }));
+    const row = feed.rows.find((r) => r.kind === "schedule-slip");
+    expect(row.ts).toBe(writeAt);
+    expect(row.tsLatest).toBe(writeAt);
+    expect(row.tsEarliest).toBe(MONTH_AGO);
+    expect(row.tsApprox).toBe(true);
+  });
+
+  it("a write time from BEFORE the last visit cannot drag the stamp back below the window", () => {
+    // A stale/pruned history ring: the newest recorded write predates the visit it is being
+    // compared against, so it cannot be the moment of a change detected against that visit.
+    const feed = buildSinceLastHereFeed(monthAwayArgs({ scheduleLastWriteAt: MONTH_AGO - 5 * DAY }));
+    const row = feed.rows.find((r) => r.kind === "schedule-slip");
+    expect(row.ts).toBeGreaterThanOrEqual(MONTH_AGO);
+  });
+
+  it("an approximate row never suppresses ITSELF against the own-action debounce", () => {
+    // The debounce hides what the account did in the last 30 seconds. That is a claim about a
+    // KNOWN time; an approximate row has none, so it must never be silently dropped by it.
+    const feed = buildSinceLastHereFeed(monthAwayArgs({ scheduleLastWriteAt: NOW - 1000 }));
+    expect(feed.rows.some((r) => r.kind === "schedule-slip")).toBe(true);
+  });
+
+  it("no event kind other than the two schedule ones is stamped approximately", () => {
+    const feed = buildSinceLastHereFeed(monthAwayArgs());
+    for (const r of feed.rows) {
+      if (r.kind === "schedule-slip" || r.kind === "tasks-completed") continue;
+      expect(r.tsApprox).toBeUndefined();
     }
   });
 });

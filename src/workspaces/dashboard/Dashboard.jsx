@@ -61,7 +61,7 @@ import { buildCompsCardData } from "./lib/compsCardModel.js";
 import { fetchRecentComps } from "./lib/dashboardCompsRecentFetch.js";
 import { fetchRecentNotePages } from "./lib/dashboardNotesRecentFetch.js";
 import { fetchLastTouchedDoc } from "./lib/dashboardDocFetch.js";
-import { fetchScheduleProjects } from "./lib/dashboardScheduleFetch.js";
+import { fetchScheduleProjects, fetchScheduleLastWriteAt } from "./lib/dashboardScheduleFetch.js";
 import { fetchAllElementRecency } from "./lib/dashboardElementRecencyFetch.js";
 import { fetchElementsForSites } from "./lib/dashboardYieldFetch.js";
 import { yieldBySite, buildingCountBySite } from "./lib/buildingYield.js";
@@ -209,6 +209,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         fetchAllElementRecency().then((v) => v),
         fetchRecentComps(sinceIso),
         fetchRecentNotePages(userId, windowStartMs),
+        fetchScheduleLastWriteAt(),
       ]);
       if (!live) return;
       const siteRows = results[0].status === "fulfilled" ? results[0].value || [] : [];
@@ -216,6 +217,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
       const elementRecencyRows = results[5].status === "fulfilled" ? results[5].value || [] : [];
       const recentComps = results[6].status === "fulfilled" ? results[6].value || [] : [];
       const recentNotePages = results[7].status === "fulfilled" ? results[7].value || [] : [];
+      const scheduleLastWriteAt = results[8].status === "fulfilled" ? results[8].value : null;
       const openPursuits = pursuitsTable(groupProjectsByGroupId(siteRows), {});
       const pursuitSiteIds = [...new Set(openPursuits.map((p) => p.siteId).filter(Boolean))];
       const elementRows = await fetchElementsForSites(pursuitSiteIds).catch(() => []);
@@ -233,6 +235,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         comps: recentComps,
         notePages: recentNotePages,
         prevSnapshot: mark.snapshot,
+        scheduleLastWriteAt,
       });
       setSinceLastHere({ feed, headerSpan: spanWords(feed.spanAnchorMs, nowMs), now: nowMs });
       // Fire-and-forget: this visit's own mark for NEXT time. Never blocks dataReady — a failed
@@ -266,7 +269,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   const openSchedule = (p) => onNavigate?.({ module: "scheduler", projectId: p.linkedSiteId, cross: false, org: false });
   const openDoc = (d) => onOpenReviewInDocReview?.({ id: d.id, project_id: d.projectId });
   const openTask = (row) => onOpenTaskInScheduler?.({ linkedSiteId: row.linkedSiteId, taskId: row.taskId });
-  // Deep-links to the comp ITSELF (main's #1564 behaviour, kept over this branch's older
+  // Deep-links to the comp ITSELF (main's Comps-card behaviour, kept over this branch's older
   // open-the-linked-plan route): MapFinder's `focusCompId` effect opens the Comps tab with the
   // panel on that comp, which is strictly more specific than landing on its plan.
   const openComp = (comp) => onOpenCompInSitePlanner?.({ compId: comp.id });
