@@ -35,10 +35,11 @@ import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../../ui/controls.jsx";
 import { parsePaste, rowHasBlockingFlags, parseProseLine, parseSingleRecord, splitPasteLines } from "../lib/compParse.js";
-import { emptyDraft, draftToComp, validateComp, summarizeLeaseComps, summarizeSaleComps, resolveCapTriangle } from "../lib/comps.js";
+import { emptyDraft, draftToComp, validateComp, summarizeLeaseComps, summarizeSaleComps, resolveCapTriangle, validAnchor, isCompType } from "../lib/comps.js";
 import {
   SHEET_COLUMNS, cellState, applyCellEdit, fillDownColumn, spillPaste, visibleColumnIndices,
   computeFlexWidths, widthFor, frozenLeftOffsets, saveButtonLabel, matchOption, optionsForColumn,
+  absorbPasteIntoSheet, groupLabelIsRedundant,
 } from "../lib/compSheetColumns.js";
 import { siteplanLocationText, pinFallbackText } from "../lib/compLocationText.js";
 import { todayIso } from "../lib/compDates.js";
@@ -217,7 +218,10 @@ function computeVisibleGroupRuns(visibleIdx) {
     group: run.group,
     span: run.span,
     align: run.span === 1 ? run.cols[0].align : "left",
-    showLabel: run.span > 1,
+    // NEW-3(e) — a one-column run is blank only when its group name says the same thing as the
+    // column header under it; see `groupLabelIsRedundant`'s own header for why the old
+    // count-only rule threw away DERIVED over "$/SF/yr".
+    showLabel: run.span > 1 || !groupLabelIsRedundant(run.group, run.cols[0].label),
   }));
 }
 
@@ -705,7 +709,14 @@ function markTouched(rows, ids) {
   return rows.map((r) => (idSet.has(r._id) ? { ...r, touched: true } : r));
 }
 
-export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, onFocusAnchor, onSave, onCancel, saving, saveError, overlaysById }) {
+export default function CompEntryGrid({
+  rows, onRowsChange, armedRowId, onArm, onFocusAnchor, onSave, onCancel, saving, saveError, overlaysById,
+  // NEW-2 — which row the user is actually working on, reported UP so a map pick can answer THAT
+  // row instead of the topmost unlocated one (`CompsPanel.jsx`'s pendingAnchor effect), plus the
+  // note that pick writes back so the sheet SAYS which row received it. `selectRowId` is the
+  // other direction: the panel names a row it just filled, and the sheet moves the cursor there.
+  onActiveRowChange, selectRowId, locationNote, onDismissLocationNote,
+}) {
   const isMobile = useIsMobileViewport();
   // B850016 (NEW-9) — arming a row's Location cell ("Set") has nowhere to go on desktop either:
   // the docked panel can still cover most of the map at a short window (measured 71% of a
@@ -720,7 +731,13 @@ export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, o
   useLayoutEffect(() => { setMinimizedForPlacement(!!armedRowId); }, [armedRowId]);
   const [pasteText, setPasteText] = useState("");
   const [lastPasteText, setLastPasteText] = useState(null);
-  const [lastCommitSummary, setLastCommitSummary] = useState(null);
+  // ⛔ NEW-1 (owner report, 2026-09-08: two adjacent lines reporting two different counts of the
+  // same sheet — "Added 1 comp — 2 in the sheet" over a footer reading "1 comp"). This used to be
+  // a formatted STRING, baked at paste time and then left on screen while the sheet moved on, so
+  // the total it asserted was a snapshot and the footer's was live. It is DATA now — what
+  // happened, never how many rows there are — and the total is read from `rows.length` at RENDER
+  // time by the same expression the footer uses, so the two cannot disagree by construction.
+  const [lastCommit, setLastCommit] = useState(null); // {kind:"paste"|"undo", count, splitReason?}
   const [showPastedText, setShowPastedText] = useState(false);
   const [lastSingleParse, setLastSingleParse] = useState(null);
   // B1063904 — a merge the parser refused because two lines disagreed on a field (MERGE SAFETY).
@@ -749,6 +766,9 @@ export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, o
   // rows the MOST RECENT paste (or paste-derived transform — Split/Merge below) added, so the
   // summary line can say so and Undo can remove precisely those rows, nothing else.
   const [lastPasteRowIds, setLastPasteRowIds] = useState(null);
+  // NEW-1 — the pre-paste state of the row a paste ABSORBED into, so Undo restores it instead of
+  // deleting the location the user had already picked. `null` whenever the paste purely appended.
+  const [lastPasteRestore, setLastPasteRestore] = useState(null);
 
   // B986096-HARDENING-9 — reverse-geocode a dropped pin's lat/lon into a street address, cached
   // on the ROW (`row.locationCache = {key, text, resolving}`) rather than re-fetched on every
@@ -915,6 +935,30 @@ export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, o
 
   const setSelection = (next) => { setRangeStartRow(null); setSelectionState(next); };
 
+  // ⛔ NEW-2 (owner report, 2026-09-08: "it even wouldnt let me save bc of the location even
+  // though I had already selected a parcel"). The sheet is the only thing that knows which row the
+  // user is on; without that, `CompsPanel.jsx`'s pendingAnchor effect could only guess "topmost
+  // row without an anchor" and silently attached his parcel to a row he could not see. Reporting
+  // the active row up is the whole fix on this side — the panel still falls back to the topmost
+  // rule (HARDENING-12's own P0 fix) whenever there is no active row to prefer.
+  const activeRowId = selection && rows[selection.row] ? rows[selection.row]._id : null;
+  const onActiveRowChangeRef = useRef(onActiveRowChange);
+  onActiveRowChangeRef.current = onActiveRowChange;
+  useEffect(() => { onActiveRowChangeRef.current?.(activeRowId); }, [activeRowId]);
+
+  // The other direction: the panel names the row a pick just filled, and the cursor goes there —
+  // so "Location added to row 2" is something the user can SEE, not just read. Guarded on the row
+  // still existing and on not being mid-edit, so it can never yank a cell editor out from under a
+  // keystroke.
+  const lastSelectRowIdRef = useRef(null);
+  useEffect(() => {
+    if (!selectRowId || selectRowId === lastSelectRowIdRef.current) return;
+    lastSelectRowIdRef.current = selectRowId;
+    const idx = rows.findIndex((r) => r._id === selectRowId);
+    if (idx === -1 || editingRef.current) return;
+    setSelectionState({ row: idx, col: 0 });
+  }, [selectRowId, rows]);
+
   // Every mutation to `rows` routes through here so Ctrl/Cmd+Z has something to pop —
   // cell edits, fill-down, spill-paste, a smart-parse commit, and row removal alike.
   const commitRows = (nextRows) => {
@@ -938,39 +982,54 @@ export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, o
     const { rows: parsedRows, mode, splitReason } = parsePaste(text);
     setLastPasteText(text);
     setShowPastedText(false);
+    onDismissLocationNote?.(); // a fresh paste supersedes "Location added to row N"
     const lineCount = splitPasteLines(text).length;
     if (!parsedRows.length) {
       setLastSingleParse(null);
       setLastSplitParse(null);
       setLastPasteRowIds(null);
-      setLastCommitSummary(`Nothing recognized in ${lineCount} pasted line${lineCount === 1 ? "" : "s"}.`);
+      setLastCommit({ kind: "none", lineCount });
       return;
     }
     const newRows = parsedRows.map(draftFromParsedRow);
-    const sheetTotal = rows.length + newRows.length;
-    commitRows([...rows, ...newRows]);
-    setLastSingleParse(mode === "single" ? { raw: text, rowIds: newRows.map((r) => r._id) } : null);
-    setLastSplitParse(mode === "split" ? { raw: text, rowIds: newRows.map((r) => r._id) } : null);
-    setLastPasteRowIds(newRows.map((r) => r._id));
-    // NEW-3 — every paste has to SAY what it did: "Added N — M in the sheet," never a silent
-    // append. `mode === "split"` still leads with WHY it became several rows instead of one
-    // (B1063904's MERGE SAFETY refusal reason) ahead of the same added/total accounting.
-    const addedWord = `Added ${newRows.length} comp${newRows.length === 1 ? "" : "s"}`;
-    const totalWord = `${sheetTotal} in the sheet`;
-    setLastCommitSummary(mode === "split" ? `${splitReason} ${addedWord} — ${totalWord}.` : `${addedWord} — ${totalWord}.`);
-    setSelection({ row: rows.length, col: 0 });
+    // ⛔ NEW-1 (owner report, 2026-09-08: "when i paste something, it seems to keep ending up in
+    // the second row"). A paste no longer appends unconditionally: an UNFILLED row already on the
+    // sheet — the one a map pick leaves behind, holding an anchor and nothing else — absorbs the
+    // first parsed comp, keeping its own location. That is both halves of what he asked for at
+    // once: the paste lands on the row he was looking at, and the empty row it used to skip does
+    // not survive as a phantom for NEW-2's parcel pick to answer instead. See
+    // `absorbPasteIntoSheet` / `isUnfilledRow` in compSheetColumns.js — nothing a user typed is
+    // ever absorbed over, by construction.
+    const placed = absorbPasteIntoSheet(rows, newRows, emptyDraft);
+    commitRows(placed.rows);
+    const parsedIds = newRows.map((r) => r._id);
+    setLastSingleParse(mode === "single" ? { raw: text, rowIds: parsedIds } : null);
+    setLastSplitParse(mode === "split" ? { raw: text, rowIds: parsedIds } : null);
+    // Undo removes the rows this paste APPENDED and restores the one it absorbed into — deleting
+    // the absorbed row would take the user's own picked location with it.
+    setLastPasteRowIds(placed.addedIds);
+    setLastPasteRestore(placed.restore);
+    setLastCommit({ kind: "paste", count: newRows.length, splitReason: mode === "split" ? splitReason : null });
+    setSelection({ row: placed.selectRow, col: 0 });
   };
 
   // NEW-3 — removes exactly the rows the most recent paste (or Split/Merge transform) added,
   // never anything the user has entered since. A no-op once those ids are already gone (e.g. the
   // user already deleted one by hand) — `.filter` simply finds nothing left to remove for it.
   const undoLastPaste = () => {
-    if (!lastPasteRowIds || !lastPasteRowIds.length) return;
-    const idSet = new Set(lastPasteRowIds);
-    const remaining = rows.filter((r) => !idSet.has(r._id));
+    const restore = lastPasteRestore;
+    const addedIds = lastPasteRowIds || [];
+    if (!addedIds.length && !restore) return;
+    const idSet = new Set(addedIds);
+    let remaining = rows.filter((r) => !idSet.has(r._id));
+    // NEW-1 — put the absorbed row back exactly as it was (anchor and all) rather than deleting
+    // it: the user picked that location by hand, the paste only borrowed the row.
+    if (restore) remaining = remaining.map((r) => (r._id === restore.row._id ? restore.row : r));
+    const removed = rows.length - remaining.length;
     commitRows(remaining);
-    setLastCommitSummary(`Removed ${lastPasteRowIds.length} comp${lastPasteRowIds.length === 1 ? "" : "s"} — ${remaining.length} in the sheet.`);
+    setLastCommit({ kind: "undo", count: removed + (restore ? 1 : 0) });
     setLastPasteRowIds(null);
+    setLastPasteRestore(null);
     setLastSingleParse(null);
     setLastSplitParse(null);
   };
@@ -1000,6 +1059,8 @@ export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, o
     commitRows([...remaining, ...multiRows]);
     setLastSingleParse(null);
     setLastPasteRowIds(multiRows.map((r) => r._id)); // Undo still refers to whatever this paste currently holds
+    setLastPasteRestore(null); // the absorbed row (if any) was replaced outright by this transform
+    setLastCommit({ kind: "paste", count: multiRows.length, splitReason: null });
   };
   // B1063904 — the inverse of a MERGE-SAFETY split: forces the same raw paste through
   // `parseSingleRecord` (bypassing the collision check), replacing the split rows with one merged
@@ -1016,6 +1077,8 @@ export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, o
     commitRows([...remaining, newRow]);
     setLastSplitParse(null);
     setLastPasteRowIds([newRow._id]); // Undo still refers to whatever this paste currently holds
+    setLastPasteRestore(null);
+    setLastCommit({ kind: "paste", count: 1, splitReason: null });
   };
 
   /* ---- sheet cell editing -------------------------------------------------------------------- */
@@ -1536,7 +1599,16 @@ export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, o
   // — a genuinely contradictory message, not a stale comment. A row without a date is still
   // visible (the quiet dot in its own Executed cell, `SheetCell`'s `quietUnfilled`) — it's just
   // no longer a blocker, so it no longer belongs in this line at all.
-  const missingLocationCount = rows.filter((r) => validateComp(draftToComp(r.draft)).length > 0).length;
+  // ⛔ NEW-1 (owner report, 2026-09-08, and this is what "it wouldnt let me save bc of the location
+  // even though I had already selected a parcel" actually was). This counted rows failing ANY
+  // `validateComp` check and then reported every one of them as "missing a Location" — so a row
+  // that HAD a location and was only missing its Type was announced, in the footer, as missing a
+  // Location. Reproduced live: a pin-dropped row reading "Waller County, TX" in its own Location
+  // cell, counted as "1 missing a Location". `validateComp` returns exactly two kinds of error, so
+  // they are counted (and named) separately now — a count and its label must describe the same
+  // thing. The two overlap on a genuinely blank row, which is correct: it is missing both.
+  const missingLocationCount = rows.filter((r) => !validAnchor(r.draft?.anchor)).length;
+  const missingTypeCount = rows.filter((r) => !isCompType(r.draft?.compType)).length;
   // NEW-3 — the count (and, when there's anything to say, the averages) now ride the SAME line as
   // the ready/issue status — see compAverageParts's own header for why the separate "N comps"
   // strip is gone. All-ready keeps the old, already-count-led phrasing verbatim; the issues case
@@ -1551,6 +1623,7 @@ export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, o
       const issues = [];
       if (blockingCount > 0) issues.push(`${blockingCount} rate${blockingCount === 1 ? "" : "s"} need${blockingCount === 1 ? "s" : ""} a period`);
       if (missingLocationCount > 0) issues.push(`${missingLocationCount} missing a Location`);
+      if (missingTypeCount > 0) issues.push(`${missingTypeCount} missing a Type`);
       segments.push(`${countWord} · ${readyRows.length} ready — ${issues.join(", ")}`);
     }
     segments.push(...compAverageParts(rows));
@@ -1597,6 +1670,20 @@ export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, o
   const linkBtnStyle = { border: "none", background: "none", color: "var(--accent)", cursor: "pointer", padding: 0, textDecoration: "underline", fontSize: 10.5 };
   const range = currentRange();
 
+  // ⛔ NEW-1 — ONE number for the sheet. The count in this line is `rows.length`, read at render
+  // time, exactly as the footer reads it a few lines below — never a total captured when the
+  // paste happened. Delete a row, undo, absorb into an unfilled row: both lines move together.
+  const sheetTotalText = `${rows.length} in the sheet`;
+  let commitSummaryText = null;
+  if (lastCommit?.kind === "none") {
+    commitSummaryText = `Nothing recognized in ${lastCommit.lineCount} pasted line${lastCommit.lineCount === 1 ? "" : "s"}.`;
+  } else if (lastCommit?.kind === "paste") {
+    const added = `Added ${lastCommit.count} comp${lastCommit.count === 1 ? "" : "s"}`;
+    commitSummaryText = `${lastCommit.splitReason ? `${lastCommit.splitReason} ` : ""}${added} — ${sheetTotalText}.`;
+  } else if (lastCommit?.kind === "undo") {
+    commitSummaryText = `Removed ${lastCommit.count} comp${lastCommit.count === 1 ? "" : "s"} — ${sheetTotalText}.`;
+  }
+
   // B1091712 — the paste box (the ONLY way rows land on this sheet by hand, rather than a
   // map pick) is shared verbatim between the desktop table and the mobile transposed layout below
   // — one implementation, so a paste behaves identically regardless of which layout is showing.
@@ -1625,9 +1712,14 @@ export default function CompEntryGrid({ rows, onRowsChange, armedRowId, onArm, o
           assembled from several parts (a split reason + the add/undo summary + link buttons)
           and can run long — capped to ~2 lines so it can never balloon further, the same
           defensive shape as the pasted-text preview below it. */}
-      {lastCommitSummary && (
+      {(commitSummaryText || locationNote) && (
         <div style={{ marginTop: 4, fontSize: 10.5, color: "var(--text-secondary)", maxHeight: 32, overflowY: "auto" }}>
-          {lastCommitSummary}
+          {/* NEW-2 — a map pick that answered a row the user may not be looking at SAYS so, right
+              here, rather than filling an off-screen row in silence (which is what made the app
+              read as ignoring him). Rendered ahead of the paste summary because it is the more
+              recent thing to have happened whenever both are present. */}
+          {locationNote && <span style={{ color: "var(--warn-text)" }}>{locationNote}{commitSummaryText ? " · " : ""}</span>}
+          {commitSummaryText}
           {lastPasteRowIds && lastPasteRowIds.length > 0 && (<> · <button onClick={undoLastPaste} style={linkBtnStyle}>Undo</button></>)}
           {lastPasteText && (<> · <button onClick={() => setShowPastedText((v) => !v)} style={linkBtnStyle}>{showPastedText ? "Hide pasted text" : "Show pasted text"}</button></>)}
           {lastSingleParse && (<> · <button onClick={switchToOnePerLine} style={linkBtnStyle}>Split one row per line</button></>)}

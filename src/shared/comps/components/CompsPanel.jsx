@@ -655,6 +655,14 @@ export default function CompsPanel({
   // anchor (set by that row's "＋ Location" button) so a plain "Drop a pin"/"Comp from parcel"
   // click routes its result to that row instead of opening a fresh one.
   const [gridRows, setGridRows] = useState([]);
+  // ⛔ NEW-2 (owner report, 2026-09-08) — which grid row the user is actually working on, reported
+  // up by `CompEntryGrid`. A map pick prefers THIS row over the topmost-unlocated rule below; see
+  // the pendingAnchor effect for why that rule alone put his parcel on a row he could not see.
+  const [activeGridRowId, setActiveGridRowId] = useState(null);
+  // What the sheet SAYS about a pick that landed — "Location added to row 2." A pick that answers
+  // a row other than the one on screen must never be silent again.
+  const [gridLocationNote, setGridLocationNote] = useState(null);
+  const [gridSelectRowId, setGridSelectRowId] = useState(null);
   const [armedRowId, setArmedRowId] = useState(null);
   const [gridSaving, setGridSaving] = useState(false);
   const [gridSaveError, setGridSaveError] = useState(null);
@@ -786,6 +794,11 @@ export default function CompsPanel({
     // soft, non-blocking flag on the row's Location cell (comps.js's `anchorCountyFlag`) instead
     // of a silent null — cleared automatically the moment a later pick DOES carry one.
     const locFlag = anchorCountyFlag(pendingAnchor);
+    // The sheet's row numbers are 1-based and are what the user reads off the screen.
+    const noteFor = (rowId) => {
+      const i = gridRows.findIndex((r) => r._id === rowId);
+      return i === -1 ? null : `Location added to row ${i + 1}.`;
+    };
     if (armedRowId) {
       if (gridRows.some((r) => r._id === armedRowId)) {
         // NEW-2 — picking a location for an armed row is a real edit to that row; mark it
@@ -797,13 +810,29 @@ export default function CompsPanel({
           if (locFlag) cellFlags.location = locFlag; else delete cellFlags.location;
           return { ...r, draft: { ...r.draft, anchor: pendingAnchor }, cellFlags, touched: true };
         }));
+        setGridLocationNote(noteFor(armedRowId));
+        setGridSelectRowId(armedRowId);
       } else {
         setDraftAnchors((m) => ({ ...m, [armedRowId]: pendingAnchor }));
       }
       setArmedRowId(null);
     } else {
-      const openTarget = view === "grid" ? gridRows.find((r) => !r.draft.anchor) : null;
+      // ⛔ NEW-2 (owner report, 2026-09-08) — HARDENING-12's rule below ("fill the TOPMOST row
+      // still missing a location") was the right fix for ITS report ("the toolbar pin ignores the
+      // row and makes a new one") and is deliberately KEPT as the fallback. What it could not do
+      // is prefer the row the user is on, because nothing told it which that was: with NEW-1's
+      // unfilled phantom row sitting above the row he was filling, his parcel silently attached to
+      // the phantom, the row on screen went on reporting "missing a Location", and Save stayed
+      // blocked. The active row now wins whenever it genuinely needs a location; the topmost rule
+      // still answers every case where it does not (nothing focused, focus elsewhere in the app,
+      // the active row already anchored).
+      const activeRow = gridRows.find((r) => r._id === activeGridRowId);
+      const openTarget = view === "grid"
+        ? ((activeRow && !activeRow.draft.anchor) ? activeRow : gridRows.find((r) => !r.draft.anchor))
+        : null;
       if (openTarget) {
+        setGridLocationNote(noteFor(openTarget._id));
+        setGridSelectRowId(openTarget._id);
         setGridRows((rows) => rows.map((r) => {
           if (r._id !== openTarget._id) return r;
           const cellFlags = { ...r.cellFlags };
@@ -811,7 +840,10 @@ export default function CompsPanel({
           return { ...r, draft: { ...r.draft, anchor: pendingAnchor }, cellFlags, touched: true };
         }));
       } else {
-        setGridRows((rows) => [...rows, draftFromParsedRow({ draft: emptyDraft(pendingAnchor), cellFlags: locFlag ? { location: locFlag } : {} })]);
+        const appended = draftFromParsedRow({ draft: emptyDraft(pendingAnchor), cellFlags: locFlag ? { location: locFlag } : {} });
+        setGridRows((rows) => [...rows, appended]);
+        setGridLocationNote(`Location added to row ${gridRows.length + 1} — a new row.`);
+        setGridSelectRowId(appended._id);
         setView("grid");
       }
     }
@@ -962,7 +994,11 @@ export default function CompsPanel({
   };
 
   // B849232/NEW-1 — the paste-grid create surface.
-  const openGrid = () => { setGridRows([]); setArmedRowId(null); setGridSaveError(null); setView("grid"); };
+  const openGrid = () => {
+    setGridRows([]); setArmedRowId(null); setGridSaveError(null);
+    setActiveGridRowId(null); setGridLocationNote(null); setGridSelectRowId(null);
+    setView("grid");
+  };
   const closeGrid = () => { setView("list"); setArmedRowId(null); };
   const saveGridRows = async (readyRows) => {
     if (!readyRows.length) return;
@@ -1163,6 +1199,10 @@ export default function CompsPanel({
         {view === "grid" && (
           <CompEntryGrid
             rows={gridRows} onRowsChange={setGridRows}
+            onActiveRowChange={setActiveGridRowId}
+            selectRowId={gridSelectRowId}
+            locationNote={gridLocationNote}
+            onDismissLocationNote={() => setGridLocationNote(null)}
             armedRowId={armedRowId} onArm={armRow}
             onFocusAnchor={(anchor) => onFocusAnchor?.(anchor)}
             onSave={saveGridRows} onCancel={closeGrid}
