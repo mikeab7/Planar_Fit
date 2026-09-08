@@ -6,90 +6,90 @@
   "surfaces": {
     "map-landing": {
       "light": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "dark": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "light--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "dark--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       }
     },
     "site-planner-header": {
       "light": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "dark": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "light--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "dark--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       }
     },
     "site-planner-left-rail": {
       "light": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "dark": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "light--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "dark--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       }
     },
     "library": {
       "light": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "dark": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "light--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       },
       "dark--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "2d6e3626",
+        "note": "B1321888: the Help/Report control now docks into the Site Planner canvas chrome stack (beside the zoom stack) instead of floating as separate fixed-corner app chrome, which intentionally moves pixels in the site-planner-header and site-planner-left-rail baseline region (bottom-right of the canvas pane). [CI-authored by run 34185103326 on 2d6e36262fa2bc604e3df00cfab6a8a5d825637f]"
       }
     }
   }
