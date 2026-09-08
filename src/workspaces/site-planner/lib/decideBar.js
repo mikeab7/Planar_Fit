@@ -54,5 +54,9 @@ export function verbLabel(key, selectedCount = 0) {
   if (key === "site") return selectedCount > 1 ? `Plan ${selectedCount} parcels` : "Plan a site";
   if (key === "comp") return "Log a comp";
   if (key === "siteplan") return "Place a site plan";
+  // B1372144 — the fourth verb. Reads the same however much ground is selected, like "a comp" and
+  // "a site plan": a note is one thing whatever it is pinned to. Only "site" varies with the count,
+  // because a user assembling adjoining lots is checking exactly that number before committing.
+  if (key === "note") return "Add a note";
   return "";
 }

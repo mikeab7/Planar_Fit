@@ -41,6 +41,7 @@ import { prefetchExtents, computeCoverage, boundsFromLeaflet, getNearbyRadiusMil
  * actually the one on screen, not merely mounted. The outer card (width/padding) is owned by
  * the wrapping `<div>` at the render site, not by this component, so the box itself never
  * resizes when the chunk arrives. */
+const MapNoteEditor = lazy(() => import("../../shared/mapNotes/components/MapNoteEditor.jsx"));
 const LayerPanel = lazy(() => import("./components/LayerPanel.jsx"));
 // B831777 (NEW-2) — the Comps tab's content. Loaded on demand, same reasoning as LayerPanel
 // above: it renders inside the left rail, not on the map's own critical path.
@@ -98,7 +99,7 @@ import { makeParcelDisplayLayer, makeSnapshotLayer, PARCEL_MINZOOM, ADD_CURSOR, 
 import { responseWasTruncated, featureCountOf, parcelTruncationNotice } from "./lib/parcelTruncation.js";
 import { siteBoundaryInfo, siteDrawParcels } from "./lib/siteBoundary.js";
 import { geocodeAddress } from "./lib/geocode.js";
-import { compAnchorFromSelection } from "./lib/compParcelAnchor.js";
+import { compAnchorFromSelection, parcelAnchorFromSelection } from "./lib/compParcelAnchor.js";
 import { statusToken, darken } from "../../shared/ui/statusTokens.js";
 /* lib/sharing.js is loaded ON DEMAND, and the reason is a budget one. This module is the
    ONLY importer of it, and both of its functions are already reached through an `await`
@@ -118,6 +119,13 @@ import { loadUserPrefs, saveUserPrefs, readMirror, setSitesPanelPref } from "./l
 import { adminBoundariesVisible, attachAdminBoundaries } from "./lib/adminBoundaryGate.js";
 import { compHeadline } from "../../shared/comps/lib/comps.js";
 import { compMarkerSvg, compMarkerSize } from "../../shared/comps/lib/compMarkerIcon.js";
+// B1372144 (map notes) — a note is a comp's ANCHOR with a note's payload. It reuses this file's
+// existing ground-first plumbing wholesale (the dropped pin, the parcel selection, the decide bar)
+// and adds only its own marker, editor and layer. It is NOT the Notes WORKSPACE
+// (src/workspaces/notes) — see shared/mapNotes/db/map_notes.sql's header for why that split holds.
+import { mapNoteMarkerSvg, mapNoteMarkerSize } from "../../shared/mapNotes/lib/mapNoteMarkerIcon.js";
+import { emptyMapNote, mapNoteHeadline } from "../../shared/mapNotes/lib/mapNotes.js";
+import { fetchAllMapNotes, insertMapNote, updateMapNote, deleteMapNote } from "../../shared/mapNotes/lib/mapNotesStore.js";
 // B834580 — the SAME time-sliced-paint primitive B802400 round 5 built for the contour layer
 // (terrainLayers.js). REUSED, not reimplemented: this module owns only the pure "where to split a
 // list of paint ops so no batch exceeds budget" decision; the scheduling policy (a MessageChannel
@@ -569,6 +577,8 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // `sitesLayerRef.current`.
   const sitesPaintEpochRef = useRef(0);
   const compsLayerRef = useRef(null); // leasing-comp markers (NEW-COMPS)
+  const notesLayerRef = useRef(null); // map-note markers (B1372144)
+  const pendingNotesRebuildRef = useRef(null); // deferred notes-layer rebuild, same as the comps one
   const onCompClickRef = useRef(onCompClick);
   useEffect(() => { onCompClickRef.current = onCompClick; }, [onCompClick]);
   const pressedRef = useRef(false);        // a pointer is currently down on the map (B64)
@@ -661,6 +671,49 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // parcel-identify machinery — just a raw point.
   const [placingCompPin, setPlacingCompPin] = useState(false);
   useEffect(() => { placingCompPinRef.current = placingCompPin; }, [placingCompPin]);
+
+  /* ── B1372144: MAP NOTES ──────────────────────────────────────────────────────────────────────
+   * A short piece of text pinned to a place. Self-contained data owner (the same shape CompsPanel
+   * uses for comps): this component fetches the list, renders it as its own map layer, and owns
+   * the little editor card. LOUD-FAILURE — a failed load shows a named banner, and a failed
+   * save/delete is surfaced inside the editor by the editor itself; nothing here reports a
+   * success it did not get.
+   *
+   * ⛔ A NOTE NEVER CREATES A SITE (see shared/mapNotes/db/map_notes.sql). Nothing in this block
+   * calls the comp path's site-materialization; `projectId` is only ever a site the user picked by
+   * hand from the editor's dropdown, and null is a real, permanent answer. */
+  const [mapNotes, setMapNotes] = useState([]);
+  const [mapNotesErr, setMapNotesErr] = useState("");
+  const [editingNote, setEditingNote] = useState(null); // the note in the editor card, or null
+  const [showNotesLayer, setShowNotesLayer] = useState(() => {
+    try { return localStorage.getItem("planarfit:mapShowNotes:v1") !== "0"; } catch (_) { return true; }
+  });
+  const toggleShowNotesLayer = (v) => { setShowNotesLayer(v); try { localStorage.setItem("planarfit:mapShowNotes:v1", v ? "1" : "0"); } catch (_) {} };
+
+  const reloadMapNotes = async () => {
+    const { data, error } = await fetchAllMapNotes();
+    if (error) { setMapNotesErr(error.message || String(error)); return; }
+    setMapNotesErr(""); setMapNotes(data);
+  };
+  useEffect(() => { if (visible) reloadMapNotes(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [visible]);
+
+  // An anchor (a decide-bar verb on a dropped pin or on a parcel selection) opens the editor on a
+  // brand-new, UNSAVED note. Nothing is written until the user saves, so a note started and
+  // cancelled leaves no row behind.
+  const beginNoteAt = (anchor) => { if (anchor) setEditingNote(emptyMapNote(anchor)); };
+
+  const saveMapNote = async (draft) => {
+    const res = draft.id ? await updateMapNote(draft.id, draft) : await insertMapNote(draft);
+    if (res.error) return res;
+    setMapNotes((prev) => [res.data, ...prev.filter((n) => n.id !== res.data.id)]);
+    return res;
+  };
+  const removeMapNote = async (id) => {
+    const res = await deleteMapNote(id);          // SOFT — stamps deleted_at, never a hard delete
+    if (res.error) return res;
+    setMapNotes((prev) => prev.filter((n) => n.id !== id));
+    return res;
+  };
   /* NEW-1 (2026-09-08) — THE STICKY ANSWER. The old Site/Comp toggle made one thing cheap that
    * this design makes dearer: flipping to Comp once meant every following search made a comp, so
    * entering comps one at a time cost nothing extra. Ground-first asks each time, which is one
@@ -1710,10 +1763,24 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       pressedRef.current = false;
       if (pendingRebuildRef.current) { const fn = pendingRebuildRef.current; pendingRebuildRef.current = null; setTimeout(fn, 0); }
       if (pendingCompsRebuildRef.current) { const fn = pendingCompsRebuildRef.current; pendingCompsRebuildRef.current = null; setTimeout(fn, 0); }
+      if (pendingNotesRebuildRef.current) { const fn = pendingNotesRebuildRef.current; pendingNotesRebuildRef.current = null; setTimeout(fn, 0); }
     };
     containerEl.addEventListener("pointerdown", onPress);
     containerEl.addEventListener("pointerup", onRelease);
     containerEl.addEventListener("pointercancel", onRelease);
+    /* ⛔ B1372144 — AND ON THE WINDOW TOO, because a press can legitimately END OUTSIDE THE MAP and
+     * this flag is a LATCH: nothing else ever clears it. Measured while building the map-notes
+     * layer, and it is NOT notes-specific — it strands the sites and comps rebuilds identically.
+     * The case: press on the container (pressed = true), a menu or a card mounts UNDER THE CURSOR,
+     * and the matching `pointerup` targets that instead — so the container's release listener never
+     * fires. Every subsequent layer rebuild is then deferred FOREVER, and the next map click
+     * flushes the whole backlog at once. Symptom, reproduced: a note saved straight after a
+     * right-click was written, counted in the panel, and PAINTED NOWHERE until the user happened to
+     * click the map again. A layer that silently stops repainting is exactly the class LOUD-FAILURE
+     * exists to prevent, so the release is bound where a press always ends. A pointerup inside the
+     * container reaches both listeners; the second is then a no-op. */
+    window.addEventListener("pointerup", onRelease);
+    window.addEventListener("pointercancel", onRelease);
     containerEl.addEventListener("wheel", markUserMoved, { passive: true }); // NEW-1 — a scroll-zoom is the user driving too
     map.on("dragstart", markUserMoved);
     /* NEW-2 — hover/click identify for the RASTER-painted overlays. Bound once with the map;
@@ -1727,7 +1794,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       // vector boundary identify reads. Panning is gated inside attachRasterIdentify.
       identifyOk: () => !selectModeRef.current,
     });
-    return () => { cancelled = true; detachRasterIdentify(); detachPermWatch(); if (locateWatchdogRef.current) { clearTimeout(locateWatchdogRef.current); locateWatchdogRef.current = null; } map.off("click", onClick); map.off("zoomend", onZoom); map.off("moveend", onMove); map.off("mousemove", onMouseMove); map.off("mousemove", onCoordMove); map.off("mouseout", onCoordOut); map.off("contextmenu", onMapCtx); map.off("dragstart", onDragStart); map.off("dragend", onDragEnd); map.off("dragstart", markUserMoved); map.off("locationfound"); map.off("locationerror"); containerEl.removeEventListener("pointerdown", onPress); containerEl.removeEventListener("pointerup", onRelease); containerEl.removeEventListener("pointercancel", onRelease); containerEl.removeEventListener("wheel", markUserMoved); map.remove(); mapRef.current = null; };
+    return () => { cancelled = true; detachRasterIdentify(); detachPermWatch(); if (locateWatchdogRef.current) { clearTimeout(locateWatchdogRef.current); locateWatchdogRef.current = null; } map.off("click", onClick); map.off("zoomend", onZoom); map.off("moveend", onMove); map.off("mousemove", onMouseMove); map.off("mousemove", onCoordMove); map.off("mouseout", onCoordOut); map.off("contextmenu", onMapCtx); map.off("dragstart", onDragStart); map.off("dragend", onDragEnd); map.off("dragstart", markUserMoved); map.off("locationfound"); map.off("locationerror"); containerEl.removeEventListener("pointerdown", onPress); containerEl.removeEventListener("pointerup", onRelease); containerEl.removeEventListener("pointercancel", onRelease); window.removeEventListener("pointerup", onRelease); window.removeEventListener("pointercancel", onRelease); containerEl.removeEventListener("wheel", markUserMoved); map.remove(); mapRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2188,6 +2255,44 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     build();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comps, selectMode, placingCompPin, showCompsLayer]);
+
+  /* B1372144 — the MAP NOTES layer. Same construction as the comps layer above and gated the same
+   * way: ONLY on its own "Notes" checkbox (B831778's rule — what is PAINTED is never a function of
+   * which tab is active), plus the same "don't rebuild mid-press" deferral. The marker is a third
+   * silhouette (a bubble, in the Notes accent) so a note can never be read as a comp or a site —
+   * see shared/mapNotes/lib/mapNoteMarkerIcon.js. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const build = () => {
+      if (!mapRef.current) return;
+      if (notesLayerRef.current) { map.removeLayer(notesLayerRef.current); notesLayerRef.current = null; }
+      const group = L.layerGroup();
+      (showNotesLayer ? mapNotes : []).forEach((n) => {
+        if (!n?.anchor || typeof n.anchor.lat !== "number" || typeof n.anchor.lon !== "number") return;
+        const { size, anchor: iconAnchor } = mapNoteMarkerSize(false);
+        // The marker carries its own note id so a check (or a future "focus this note" path) can
+        // address ONE note rather than guessing from marker order. Deliberately `data-note-id` and
+        // NOT the canvas census's `data-feature` vocabulary: that names drawn PLAN features on the
+        // planner SVG, and a Leaflet map marker is not one of them (COUNT-EVERY-KIND).
+        const icon = L.divIcon({
+          className: "map-note-feature",
+          html: `<span data-note-id="${String(n.id).replace(/"/g, "")}">${mapNoteMarkerSvg()}</span>`,
+          iconSize: size, iconAnchor,
+        });
+        const marker = L.marker([n.anchor.lat, n.anchor.lon], { icon, interactive: !selectMode && !placingCompPin, keyboard: false, riseOnHover: true });
+        if (!selectMode && !placingCompPin) {
+          marker.on("click", () => setEditingNote(n)).bindTooltip(mapNoteHeadline(n), { direction: "top" });
+        }
+        marker.addTo(group);
+      });
+      group.addTo(map);
+      notesLayerRef.current = group;
+    };
+    if (pressedRef.current) { pendingNotesRebuildRef.current = build; return; }
+    build();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapNotes, selectMode, placingCompPin, showNotesLayer]);
 
   const flyToSite = (site) => {
     if (site.origin && mapRef.current) mapRef.current.flyTo([site.origin.lat, site.origin.lon], 17, { duration: 0.7 });
@@ -2860,6 +2965,20 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
 
   // NEW-COMPS: drop a leasing comp pin at a raw clicked point — no parcel resolution needed,
   // handing off to `onPlaceComp` instead of creating a site.
+  /* B1372144 — a note dropped at a known ground point (the decide bar's "Add a note" on a pin).
+   * The editor opens IMMEDIATELY on the point rather than waiting up to three seconds for the
+   * best-effort county race; the county is folded into the same open draft if and when it
+   * resolves. Shares `resolveCompCounty` with the comp pin, so a note pin and a comp pin derive
+   * their county identically rather than growing a second lookup. */
+  const beginNoteAtPoint = async (latlng) => {
+    const lat = latlng.lat, lon = latlng.lng != null ? latlng.lng : latlng.lon;
+    beginNoteAt({ kind: "pin", lat, lon, county: null });
+    const county = await resolveCompCounty(lat, lon, "note pin");
+    if (!county) return;
+    setEditingNote((cur) => (cur && !cur.id && cur.anchor?.lat === lat && cur.anchor?.lon === lon
+      ? { ...cur, anchor: { ...cur.anchor, county } } : cur));
+  };
+
   const placeCompPinAt = async (latlng) => {
     setPlacingCompPin(false);
     const county = await resolveCompCounty(latlng.lat, latlng.lng, "pin");
@@ -2997,9 +3116,13 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
    * the keystroke and the button can never drift into doing different things (which is exactly
    * what B941152 had to go back and fix once already, when Enter mirrored a button by hand).
    * `run` takes the target so a verb reads the same on a parcel selection and on a raw pin.
-   * DELIBERATELY THREE, NOT FOUR: the owner also wants "add a note" here. There is no map-anchored
-   * note anywhere in this app today — no handler, no record, no marker — so it is a new concept
-   * rather than a fourth button, and it has its own backlog item. Do not invent one here. */
+   * ⛔ FOUR NOW, AND THE FOURTH IS THE ONE THIS TABLE SAID TO WAIT FOR. The comment here used to
+   * read "DELIBERATELY THREE, NOT FOUR … there is no map-anchored note anywhere in this app today
+   * — no handler, no record, no marker — so it is a new concept rather than a fourth button, and
+   * it has its own backlog item. Do not invent one here." That was exactly right, and the backlog
+   * item was B1372144, which has now built the concept: `public.map_notes`, a marker, an editor and
+   * a layer toggle. So the verb is added HERE, in this one table, rather than as a second entry
+   * point beside the bar — which is what that instruction was protecting. */
   const DECIDE_VERBS = [
     {
       key: "site",
@@ -3033,6 +3156,31 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       onAccent: ON_COMP_ACCENT,
       title: "Upload a broker flyer or park plan and place it on this ground",
       run: () => { startSitePlanUpload(); },
+    },
+    {
+      /* B1372144 — a short piece of text pinned to this ground. It takes the SAME two targets as
+       * every other verb here, through the same anchor derivations: `parcelAnchorFromSelection`
+       * for a selection (multipart- and multi-parcel-safe, B941152) and the dropped pin's own
+       * point otherwise. ⛔ Unlike "Log a comp", this must NEVER create a site (B843792 does that
+       * for comps) — `beginNoteAt` opens an editor whose site link is optional and defaults to
+       * none. The editor is also where nothing-is-written-until-save lives, so pressing this and
+       * changing your mind leaves no row. */
+      key: "note",
+      accent: "var(--accent-notes)",
+      onAccent: "var(--on-accent-notes)",
+      title: "Pin a note to this ground",
+      run: (target) => {
+        if (target === "parcels") {
+          const anchor = parcelAnchorFromSelection(selected, asm);
+          if (!anchor) return;
+          beginNoteAt(anchor);
+          clearSel();
+          return;
+        }
+        const pin = droppedPin;
+        clearDecidePin();
+        if (pin) beginNoteAtPoint({ lat: pin.lat, lng: pin.lon });
+      },
     },
   ];
   /* NEW-1 — the sticky answer made concrete, and its ORDERING + LABELS are pure functions in
@@ -3397,6 +3545,34 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
           bottom: 8, left: "50%", transform: "translateX(-50%)", zIndex: 900, maxWidth: "calc(100% - 20px)",
           color: "rgba(255,255,255,0.9)", background: "rgba(0,0,0,0.5)", padding: "3px 9px",
         }} />
+
+        {/* B1372144 — the note editor card. Floats over the map, bottom-centre, clear of the two
+            side panels and above the cursor readout; the map keeps working behind it (a card, never
+            a modal). Lazy, like every other panel here, so a user who never places a note downloads
+            none of it. */}
+        {editingNote && (
+          <div style={{ position: "absolute", left: "50%", bottom: 44, transform: "translateX(-50%)", zIndex: MAP_CHROME_Z.alert }}>
+            <Suspense fallback={null}>
+              <MapNoteEditor
+                note={editingNote}
+                sites={sites}
+                onSave={saveMapNote}
+                onDelete={removeMapNote}
+                onClose={() => setEditingNote(null)}
+              />
+            </Suspense>
+          </div>
+        )}
+
+        {/* B1372144 — LOUD-FAILURE: if the notes list could not be read, say so on the map rather
+            than silently drawing none of them (an empty layer and a failed fetch look identical). */}
+        {mapNotesErr && (
+          <div role="alert" data-testid="map-notes-error" style={{
+            position: "absolute", left: "50%", bottom: 30, transform: "translateX(-50%)", zIndex: MAP_CHROME_Z.alert,
+            background: "var(--surface-raised)", color: "var(--danger-text)", border: "1px solid var(--border-default)",
+            borderRadius: RADIUS.sm, padding: "4px 10px", fontSize: FONT_SIZE.control, maxWidth: "min(420px, 90%)",
+          }}>Notes couldn't load — {mapNotesErr}</div>
+        )}
 
         {/* Right-click-on-empty-map menu → export the map's sites to Google Earth (B684).
             Shared viewport-aware ContextMenu (B915) — flips/clamps at any edge. */}
@@ -4046,6 +4222,12 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: PAL.ink, cursor: "pointer", padding: "2px 0" }}>
               <input type="checkbox" checked={showCompsLayer} onChange={(e) => toggleShowCompsLayer(e.target.checked)} data-testid="map-show-comps" />
               <span>Comps{comps.length ? ` (${comps.length})` : ""}</span>
+            </label>
+            {/* B1372144 — map notes, the third drawn thing on this map, hidden and shown by exactly
+                the same rule as its two neighbours. */}
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: PAL.ink, cursor: "pointer", padding: "2px 0" }}>
+              <input type="checkbox" checked={showNotesLayer} onChange={(e) => toggleShowNotesLayer(e.target.checked)} data-testid="map-show-notes" />
+              <span>Notes{mapNotes.length ? ` (${mapNotes.length})` : ""}</span>
             </label>
           </div>
           {/* NEW-3 — the list takes whatever height the card has left instead of a flat 260px

@@ -37,6 +37,13 @@ export function sanitizeProjects(list) {
     .map((p) => {
       const out = { id: p.id ?? null, name: p.name };
       if (p.linkedSiteId != null) { out.linkedSiteId = p.linkedSiteId; out.linkedSiteName = p.linkedSiteName ?? null; }
+      // `ownerKind` rides along so the shell's owner grouping reads the SAME answer the embedded
+      // app's document holds, rather than re-deriving it from the link alone. Without it, a
+      // schedule explicitly moved to the organization while a stale `linkedSiteId` lingered would
+      // group under the organization in the embed and under the old project in the shell — two
+      // answers to one question. Carried only when present, so a pre-migration payload keeps its
+      // exact prior shape and `ownerOf` falls back to inferring from the link.
+      if (p.ownerKind != null) out.ownerKind = p.ownerKind;
       return out;
     });
 }
@@ -252,22 +259,35 @@ export function isGridMismatched(projects, siteId, activeId, pickShowing, navCon
   return !linked.some((p) => p.id === activeId);
 }
 
-/* ---- NEW-1 (B1080545) — "+ New project" while routed must never mint an orphan --------------------
+/* ---- "+ New schedule" ASKS. It never names a schedule for him and never picks an owner. ---------
  *
- * Owner report: pressing the Schedule module's own "+ New project" while standing on a routed
- * Planyr project created an unlinked, auto-named ("Project N") schedule and switched the grid to
- * it, while the breadcrumb (route-derived) kept naming the project the user was already on — so it
- * read as "nothing happened" even though a real, orphaned schedule object was minted (three of
- * them survive in production: pids 12/13/14, all empty). Decision: while a Planyr project is
- * routed, "+ New project" creates a SCHEDULE for THAT project — linked + named after it — never a
- * bare unlinked object. NEW-3 (multiple schedules per project) is what makes this well-defined even
- * when the project already has one: the new schedule gets a disambiguating name rather than
- * silently becoming a second, indistinguishable "Pappadoupolos". Outside a routed project
- * (Operations/Pursuits-style cross-cutting schedules, or the org/dashboard context) the generic
- * unlinked behaviour is unchanged — that pattern is deliberate, not a bug. */
-export function newProjectAction({ projectId = null, routedSiteName = null, projects = [] } = {}) {
-  if (projectId == null || !routedSiteName) return { type: "new" };
-  const existing = findAllBySiteId(projects, projectId);
-  const name = existing.length === 0 ? routedSiteName : `${routedSiteName} (${existing.length + 1})`;
-  return { type: "create-linked", name, siteId: projectId, siteName: routedSiteName };
+ * ⛔ THIS FUNCTION USED TO BE THE BUG. Three empty schedules — "Goose Creek (2)", "(3)" and "(4)" —
+ * sit on production right now because of exactly what it did: standing on a project, "+ New" took
+ * NO name and NO owner, auto-named the new schedule after the project, and on a collision appended
+ * "(2)", then "(3)", then "(4)". Three presses, three duplicates, no prompt at any point, and each
+ * one silently re-pointed the project's last-active pointer at the newest empty one — so it read as
+ * "nothing happened" while a real, indistinguishable schedule was minted every time.
+ *
+ * The old header called that disambiguating name the FIX for creating a second schedule under a
+ * project ("the new schedule gets a disambiguating name rather than silently becoming a second,
+ * indistinguishable 'Pappadoupolos'"). It was not: a machine-generated ordinal is exactly as
+ * indistinguishable as a repeated name, because neither says what the schedule is FOR. A second
+ * schedule under a project is a genuinely different thing — a master schedule and a land sale, as
+ * the owner's own "TAS Land Sale" under Goose Creek shows — and only he knows which.
+ *
+ * So there is now ONE action, and it opens the New-schedule dialog rather than creating anything:
+ * the name is PRE-FILLED (with the project's name when that project has no schedule yet, and left
+ * EMPTY when it does — see suggestScheduleName) and the owner is PRE-SELECTED to the routed
+ * project, and both are changeable before anything exists. Pre-filling an editable field in front
+ * of him is a different act from committing a name to an object he never saw named.
+ *
+ * `siteId`/`siteName` are the dialog's PRE-SELECTED owner, not a decision — null outside a routed
+ * project, where the dialog opens on the Organization instead. Pure; no I/O, no DOM. */
+export function newProjectAction({ projectId = null, routedSiteName = null } = {}) {
+  const routed = projectId != null && !!routedSiteName;
+  return {
+    type: "prompt",
+    siteId: routed ? projectId : null,
+    siteName: routed ? routedSiteName : null,
+  };
 }

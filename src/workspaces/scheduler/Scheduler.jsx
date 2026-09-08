@@ -21,6 +21,8 @@ import { ScheduleCenter, ScheduleActions } from "./components/ScheduleToolbar.js
 import { listProjects, warmProjectsIfEmpty, suggestNameMatch } from "../../shared/projects/projects.js";
 import { resolveControlledId } from "../../shared/projects/projectModel.js";
 import LinkSchedulePanel from "./components/LinkSchedulePanel.jsx";
+import NewScheduleModal from "./components/NewScheduleModal.jsx";
+import ScheduleOwnerList from "./components/ScheduleOwnerList.jsx";
 import AgendaView from "./components/AgendaView.jsx";
 
 export default function Scheduler({
@@ -99,6 +101,10 @@ export default function Scheduler({
   // let a deliberate pick of a cross-cutting unlinked schedule (Operations/Pursuits) show its grid
   // even on a routed project with no schedule of its own — see navState.js for the full story.
   const explicitPickRef = useRef(null);
+  // "New schedule" ASKS for a name and an owner (see NewScheduleModal's header — the old silent
+  // auto-naming is what put three empty "Goose Creek (2)/(3)/(4)" schedules on production). null
+  // when closed; otherwise { siteId, siteName } — the owner to PRE-SELECT, never a decision.
+  const [newSchedulePrompt, setNewSchedulePrompt] = useState(null);
   // DIAGNOSTIC INSTRUMENT (not a bug fix) — B1112449/B1112450, 2026-09-03. A same-day report that
   // the multi-schedule switcher/breadcrumb still failed live on planyr.io after the fix
   // (unionProjectLists' multi-link branch) turned out to be a FALSE ALARM: the report was measured
@@ -615,17 +621,13 @@ export default function Scheduler({
         // B1213312 — reworded from "go to the Site Planner map": see the org-scope branch above.
         logoDashboardTitle="Leave Schedule — go to the Dashboard"
         dashboardTitle="Schedule dashboard — reports for every project"
-        // NEW-1 (B1080545) — while routed on a Planyr project, "+ New project" must create a
-        // SCHEDULE FOR THAT PROJECT (linked + named after it, disambiguated if it already has
-        // one — NEW-3), never a bare unlinked "Project N" the route can never reach again. See
-        // newProjectAction's own header. Outside a routed project the generic unlinked creation
-        // (Operations/Pursuits-style) is unchanged.
-        onNewProject={() => {
-          const action = newProjectAction({ projectId, routedSiteName, projects });
-          post(action.type === "create-linked"
-            ? { type: "planar:nav-create-linked", name: action.name, siteId: action.siteId, siteName: action.siteName }
-            : { type: "planar:nav-new" });
-        }}
+        // "+ New schedule" opens the New-schedule dialog — it never creates anything by itself.
+        // It used to: standing on a project it auto-named the new schedule after that project and
+        // appended "(2)", "(3)", "(4)" on a collision, which is exactly how three empty duplicate
+        // schedules reached production with no prompt at any point. The dialog PRE-FILLS the name
+        // and PRE-SELECTS the owner (this project, or the Organization when none is routed) and
+        // lets him change both. See newProjectAction's and NewScheduleModal's own headers.
+        onNewProject={() => setNewSchedulePrompt(newProjectAction({ projectId, routedSiteName }))}
         // Rename/delete a SCHEDULE project (B440) — bridged to the embedded app's own hs-v1
         // record (not the Site store). The breadcrumb already confirmed the delete inline, so
         // the embedded handler deletes without re-prompting + routes home on the active project.
@@ -682,8 +684,40 @@ export default function Scheduler({
             siteName={routedSiteName}
             schedules={projects}
             suggestedMatch={suggestedMatch}
-            onCreate={() => post({ type: "planar:nav-create-linked", name: routedSiteName, siteId: projectId, siteName: routedSiteName })}
+            // Creating from the empty state goes through the SAME dialog as "+ New schedule" — a
+            // project with no schedule is the one case where auto-naming was defensible (there is
+            // nothing to collide with), but routing it separately is how two creation paths drift
+            // apart, and only one of them would then require an owner.
+            onCreate={() => setNewSchedulePrompt({ type: "prompt", siteId: projectId, siteName: routedSiteName })}
             onLink={(scheduleId) => post({ type: "planar:nav-link", id: scheduleId, siteId: projectId, siteName: routedSiteName })}
+          />
+        )}
+        {/* Which schedules this project owns, and which one is open. Rendered beside the empty
+            state (a project with none of its own can still reach the Organization's) — see
+            ScheduleOwnerList's header. */}
+        {showEmptyState && (
+          <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "40%", overflow: "auto", zIndex: 7 }}>
+            <ScheduleOwnerList
+              schedules={projects}
+              activeId={activeId}
+              siteId={projectId}
+              siteName={routedSiteName}
+              onSelect={selectSchedule}
+            />
+          </div>
+        )}
+        {newSchedulePrompt && (
+          <NewScheduleModal
+            schedules={projects}
+            siteProjects={siteProjects}
+            defaultSiteId={newSchedulePrompt.siteId}
+            defaultSiteName={newSchedulePrompt.siteName}
+            onClose={() => setNewSchedulePrompt(null)}
+            onCreate={({ name, ownerKind, siteId, siteName }) => {
+              setNewSchedulePrompt(null);
+              // One create message for both owners: an org-owned schedule simply carries no site.
+              post({ type: "planar:nav-create-linked", name, ownerKind, siteId, siteName });
+            }}
           />
         )}
       </div>

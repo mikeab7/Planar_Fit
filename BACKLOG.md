@@ -39,7 +39,7 @@ Add a new tag to this legend **in the same commit** you first use it (this preve
 `#persistence` `#gis` `#gantt` `#export` `#site-planner` `#doc-review` `#scheduler` `#selection` `#pond` `#drive` `#testing` `#ui` `#markup` `#infra` `#auth` `#perf` `#files` `#compare` `#stitching` `#yield` `#filing` `#library` `#road` `#sync` `#coordinates` `#thoroughfare` `#entitlements` `#floodplain` `#grading` `#notes` `#parcel` `#geometry` `#food`
 `#persistence` `#gis` `#gantt` `#export` `#site-planner` `#doc-review` `#scheduler` `#selection` `#pond` `#drive` `#testing` `#ui` `#markup` `#infra` `#auth` `#perf` `#files` `#compare` `#stitching` `#yield` `#filing` `#library` `#road` `#sync` `#coordinates` `#thoroughfare` `#entitlements` `#floodplain` `#grading` `#notes` `#parcel` `#geometry` `#keyboard` `#view` `#food`
 `#persistence` `#gis` `#gantt` `#export` `#site-planner` `#doc-review` `#scheduler` `#selection` `#pond` `#drive` `#testing` `#ui` `#markup` `#infra` `#auth` `#perf` `#files` `#compare` `#stitching` `#yield` `#filing` `#library` `#road` `#sync` `#coordinates` `#thoroughfare` `#entitlements` `#floodplain` `#grading` `#notes` `#parcel` `#geometry`
-`#persistence` `#gis` `#gantt` `#export` `#site-planner` `#doc-review` `#scheduler` `#selection` `#pond` `#drive` `#testing` `#ui` `#markup` `#infra` `#auth` `#perf` `#files` `#compare` `#stitching` `#yield` `#filing` `#library` `#road` `#sync` `#coordinates` `#thoroughfare` `#entitlements` `#floodplain` `#grading` `#notes` `#parcel` `#geometry` `#keyboard` `#view` `#a11y` `#admin` `#comps` `#mobile` `#telemetry` `#model` `#formula` `#security` `#dashboard` `#process`
+`#persistence` `#gis` `#gantt` `#export` `#site-planner` `#doc-review` `#scheduler` `#selection` `#pond` `#drive` `#testing` `#ui` `#markup` `#infra` `#auth` `#perf` `#files` `#compare` `#stitching` `#yield` `#filing` `#library` `#road` `#sync` `#coordinates` `#thoroughfare` `#entitlements` `#floodplain` `#grading` `#notes` `#parcel` `#geometry` `#keyboard` `#view` `#a11y` `#admin` `#comps` `#mobile` `#telemetry` `#model` `#formula` `#security` `#dashboard` `#process` `#map-notes`
 
 ### Item template
 
@@ -4468,7 +4468,129 @@ physical row is a later polish," so **B104** is that remaining polish for the *m
 ---
 
 ## ⏳ Verify — awaiting live confirmation
+### B1372144 — You cannot put a note on the map `[Site Planner / map-notes]` (feature) #site-planner #map-notes #comps #persistence  *(owner chat block 2026-09-08, NEW-1, verbatim: "i should be able to add a note, we need this as a feature, but its not something greatly new, it should be able to take the same form code wise as placing a comp but just with different data." Minted **B1372144 / V995408** from this branch's reserved block B1372144–B1372159 · V995408–V995423 against freshly-fetched `origin/main` 268f1f1. DEDUPE-FIRST — searched Open / ⏳ Verify / Done for `map note`, `note pin`, `annotation`, `anchor_kind`, `map_notes`, `B1318`, `B1156865`, `B1156868`: **B1318** ("Link a note to a site, a plan element, or a Library file") is the Notes WORKSPACE gaining outward links from a document — the opposite direction and a different entity; **B1156865** merges a site's plans/deals/notes into one site-centric VIEW and presupposes the entity this item creates; **B1156868** is a COMP TYPE for an unclosed asking rate, which lives in `comps` and is excluded from comp averages — not a piece of text pinned to the ground. Nothing owns "put a note on the map". Net-new.)*
 
+**What shipped.** A map note is a short piece of text pinned to a place — `public.map_notes`, mirroring
+`comps.sql`'s anchor, ownership, team-READ/owner-WRITE sharing and soft-delete shape verbatim, with the
+three comp types and every deal column replaced by one payload (`body` plus an optional `title`).
+Placement, marker, editor and layer toggle all reuse the comp machinery rather than cloning it.
+- **Table + RLS** — `src/shared/mapNotes/db/map_notes.sql`, idempotent, beside the others. Four policies:
+  team members READ a shared note, only its author may change or delete it (comps' deliberate departure
+  from `team_sharing.sql`, kept). Applied to production 2026-09-08 and verified (`relrowsecurity` true,
+  4 policies present) — nothing owner-side to run.
+- **⛔ A NOTE NEVER CREATES A SITE.** B843792 made every comp acquire an owning site, materializing a
+  tracked one when nothing matched; a note must not, or the sites list fills with junk. `project_id` is an
+  optional link to an EXISTING site, "No site" is the default and a permanent answer, and this is asserted
+  on the real source (`test/mapNotes.test.js`) rather than left to a comment.
+- **ONE placement mechanism, generalised — not a second copy.** `placeCompPinAt` → `placePinAt` routed by
+  a new `pinIntent`; `armCompAnchor` → `armAnchor(kind, intent = "comp")` (every existing call site
+  unchanged); `compAnchorFromSelection` → `parcelAnchorFromSelection`, old name kept as an alias so an
+  in-flight branch importing it still resolves. Arming a NOTE pin no longer re-points the comp toolbar's
+  sticky anchor kind.
+- **Both anchor kinds.** Pin: right-click the map → "Add a note here", anchored on the clicked ground
+  point with the same best-effort county race a comp pin uses. Parcel: a "Note" action in the
+  parcels-selected row, mode-independent (a note is neither a plan nor a deal), off the SAME multi-parcel
+  derivation comps use. **A site-plan-anchored note (comps' third kind) is deliberately NOT in this cut** —
+  adding it later is one `anchor_kind` value plus two nullable columns, exactly as it was for comps.
+- **Marker + editor.** A third silhouette — a bubble in the Notes accent, anchored at its tail tip — so a
+  note can never be read as a comp's rotated tag or a site's precision pin; asserted against the real comp
+  marker. The editor is an inline card (never a dialog box), refuses to save an empty note in a sentence,
+  and confirms Delete on a second click of the same control.
+- **Notes (N) toggle** in Imagery & layers beside Sites (N) and Comps (N), remembered across reloads and
+  gated ONLY on its own checkbox — B831778's decoupling rule.
+- **Soft delete only**, keyed on (owner, id) by RLS's owner-only UPDATE policy. `MapFinder` cannot reach
+  the purge path at all (asserted).
+
+**A REAL BUG FOUND AND FIXED ON THE WAY, and it was never notes-specific.** MapFinder's "don't rebuild a
+map layer mid-press" flag (`pressedRef`, B64) is a LATCH released only by a `pointerup` on the Leaflet
+container — but a press can END OUTSIDE it: right-click the map and the context menu mounts under the
+cursor, so the release targets the menu and the flag stays set forever. Every subsequent layer rebuild —
+**sites and comps as much as notes** — is then deferred until the next map click. Reproduced: a note saved
+straight after a right-click was written, counted in the panel ("Notes (2)"), and painted nowhere. The
+release is now also bound to the window. A layer that silently stops repainting is exactly LOUD-FAILURE's
+class, and the regression arm is in `ui-audit/verify-map-notes-writes.mjs` (a later map click must change
+nothing).
+
+**✅ THE DECIDE-BAR VERB IS NO LONGER OWED — IT SHIPPED IN THIS SAME ITEM.** When this work started,
+the parcel-first toolbar was still unmerged, so placement was wired through the toolbar path the brief
+named as the fallback. It then LANDED mid-session (`origin/main` 4194dda, the ground-first decide bar),
+and its own verb table said so in as many words: *"DELIBERATELY THREE, NOT FOUR: the owner also wants
+'add a note' here. There is no map-anchored note anywhere in this app today — no handler, no record, no
+marker — so it is a new concept rather than a fourth button, and it has its own backlog item. Do not
+invent one here."* That backlog item is this one, and it had by then built the concept — so the fourth
+verb was added HERE, in that one table, which is exactly what that instruction was protecting.
+- **`Add a note` is the fourth verb**, beside Plan a site · Log a comp · Place a site plan. It takes
+  BOTH targets the bar can be about, through the same shared derivations every other verb uses:
+  `parcelAnchorFromSelection` for a selection, the dropped pin's own point otherwise.
+- **`verbLabel("note")` moved into `lib/decideBar.js`** with the other three — no second label source.
+- **`test/decideBar.test.js`'s "has no fourth verb" case is SUPERSEDED, not deleted:** its own words
+  are kept on the replacement, and the property that actually mattered (an unknown key must never get
+  a label, because a label with no feature behind it is a button that lies) is still asserted. Its
+  sibling case used `"note"` as its example of a stale/unreal stored verb; the example moved to a key
+  nothing has ever shipped, and a real stored verb leading the bar is now asserted beside it.
+- **The pin-intent routing this item first built is GONE, deliberately.** Ground-first supersedes it:
+  the pin is dropped first and the bar asks what it is, so a note needs no armed mode of its own —
+  which satisfies the brief's "never a second parallel mechanism" more completely than the rename did.
+  `parcelAnchorFromSelection` stays (with `compAnchorFromSelection` as an alias, so the comp call site
+  and any in-flight branch still resolve).
+
+Verify: **live** — see **V995408** (the signed-in write legs on the owner's own account). Sandbox evidence,
+re-run in full after merging the ground-first toolbar: lint clean · full suite **16,026 green** · build green ·
+design-drift ceiling held · `ui-audit/verify-map-notes.mjs` **27/27 at 1600×465** (the owner's window, logged
+out — including the decide bar's absence before ground is pointed at, as its known-good arm) ·
+`ui-audit/verify-map-notes-writes.mjs` **24/24** (real app code, server stubbed — proves the client half of
+place/edit/soft-delete end to end, and explicitly does NOT claim RLS or a real reload).
+
+
+### B1380336 — A schedule belonged to nobody, so nothing could say which schedules a project has `[Scheduler]` (bug) #scheduler #persistence #ui #testing  *(owner chat block 2026-09-08, dispatched with a written brief measured on production. Minted **B1380336 / V1003600** from this branch's reserved block B1380336–B1380351 · V1003600–V1003615 against freshly-fetched `origin/main` 195cdba. DEDUPE-FIRST — searched Open / ⏳ Verify / Done for "multiple schedules", "schedules per project", "lastActiveBySite", "nTid", "unionProjectLists", "newProjectAction", B1080544/5/6/7, B1112449: **B1080547** (Done) shipped multi-schedule-per-site, **B1112449** (Done) fixed the switcher that de-duplicated them by site, and **B1080545** (Done) is the item that ADDED the auto-naming this one removes. None of them gives a schedule an OWNER — that is what is net-new here, and it is what the two remaining halves (the organization as a container, and the create-time prompt) both need. Filed as its own number rather than a recurrence of B1080545 because the finding REVERSES that item's premise: it treated a machine-generated "(2)" as the fix for a second schedule under a project, and it is the defect.)*
+
+**Verify: live** — a whole-account single-row cloud document (`public.planar_data`, key `hs-v1`), a migration over 813 real tasks, and a two-browser drift case. Sandbox proof is strong but cannot be the last word on his own data. → **V1003600**.
+
+⛔ **AUDIT-FIRST — THE BRIEF'S LOAD-BEARING FINDING NO LONGER DESCRIBED PRODUCTION, AND THIS IS RECORDED HERE SO IT IS NOT RE-DIAGNOSED.** The brief (measured at `__rev` 4195) stated *"NO SCHEDULE CARRIES siteId, groupId OR projectId. NOT ONE"* and concluded the data model had no room for a second schedule per project. Re-measured at **`__rev` 4232** before writing any code: **ten of the twelve schedules DO carry `linkedSiteId`**, and the Goose Creek site (`smqfy48tlk9j`) already owns **five** of them — the real one, the three empty duplicates, and **"TAS Land Sale", which now has 8 tasks** and is exactly the second schedule the brief said was impossible. B1080547 and B1112449 had landed in between. Consequences, both deliberate:
+- **The risky half the brief anticipated — reconstructing ownership for twelve schedules by NAME-MATCHING — is not needed and was not built.** The migration reads the link the data already carries. Guessing an owner by name where the data already answers is strictly more dangerous than reading it. Only **Pursuits** and **Operations** — the two genuinely cross-project schedules, which match no project name either — become the organization's.
+- **"A project can hold more than one schedule" could NOT be made to fail on main**, because it does not fail on main. It is asserted as a regression guard and reported honestly as one, not as a fix.
+
+**What was actually wrong.** Ownership was one optional field, `linkedSiteId`, and its ABSENCE meant two things nothing could tell apart: *"belongs to the whole business"* (Pursuits, Operations) and *"belongs to nothing at all"* (an orphan nobody meant to create). Because absence was never a decision anyone made, the orphan state was reachable in one click and indistinguishable from the deliberate one.
+
+**What shipped.**
+1. **`ownerKind` is mandatory** — `site` or `org`, nothing else. `src/shared/schedule/scheduleOwnership.js` is the one-answer module (`ownerOf`, `partitionSchedules`, `migrateScheduleOwnership`, `pruneScheduleRefs`, `validateNewSchedule`), inlined verbatim into `public/sequence/index.html` between `SCHEDULE-OWNERSHIP` markers by `scripts/sync-sequence-ownership.mjs`, drift-guarded by `test/scheduleOwnership-inline-sync.test.js`. **The unowned state is now unrepresentable**: an `ownerKind:"site"` whose site is missing resolves to the organization, and unlinking a schedule MOVES it to the organization rather than orphaning it.
+2. **"New schedule" ASKS** (`components/NewScheduleModal.jsx`). Name pre-filled and owner pre-selected to the routed project, both changeable, neither defaultable — `validateNewSchedule` refuses a blank name and refuses a missing owner. **The pre-filled name is left EMPTY once the project already has a schedule** — never "Goose Creek (5)" — because a second schedule under a project is a different thing (a master schedule and a land sale) and only he knows which. A same-owner name collision WARNS and does not block. `newProjectAction` no longer creates anything; it opens the dialog.
+3. **A project's schedules are LISTED** (`components/ScheduleOwnerList.jsx`) — this project's first, then the **Organization** as a peer heading, then other projects. **No "unassigned"/"no project" pile**, asserted by the e2e.
+4. **Delete prunes its references** — `pruneScheduleRefs` drops the deleted schedule's `nTid` counter and any `lastActiveBySite` pointer aimed at it, and sweeps the **eight orphaned counters production is carrying** (ids 4, 8–14, 17, 18) inside a document that is the entire account in one row. Asks the LIVE set rather than the removed id, so it cannot miss a map by forgetting to name it.
+5. **Duplicate now KEEPS its owner.** It used to drop `linkedSiteId` — correct when the link was a one-per-site pointer, but under this model every "Duplicate" would have silently emigrated the copy to the organization.
+
+**The assignment table (the migration's actual output, asserted in two places):**
+
+| # | Schedule | Tasks | Owner after migration | How decided |
+|---|---|---|---|---|
+| 1 | Goose Creek | 301 | Goose Creek (`smqfy48tlk9j`) | link already on the record |
+| 19/20/21 | Goose Creek (2)/(3)/(4) | 0 each | Goose Creek | link already on the record |
+| 22 | TAS Land Sale | 8 | Goose Creek | link already on the record |
+| 2 | Grand Port | 278 | Grand Port (`smqfy2r7pdec`) | link already on the record |
+| 3 | 8 South | 161 | 8 South (`smqiljx5fngg`) | link already on the record |
+| 6 | Pappadoupolos | 42 | Pappadoupolos (`smqgpt12zh5o`) | link already on the record |
+| 15 | Richfield | 1 | Richfield (`smsdrvzr9gzx`) | link already on the record |
+| 16 | ZZ-RENAME-TEST-G | 0 | `smtjb0lrexb3` | link already on the record |
+| 5 | Pursuits | 15 | **Organization** | no link, matches no project name |
+| 7 | Operations | 7 | **Organization** | no link, matches no project name |
+
+**NOT deleted, flagged for his decision:** **ZZ-RENAME-TEST-G** (pid 16, 0 tasks — a rename-test leftover from B1080545's own verification run) and the three empty **Goose Creek (2)/(3)/(4)**. **TAS Land Sale is NOT a leftover** — the brief listed it at 0 tasks; it now has 8 and is linked to Goose Creek, so it is live work. Per the brief, his data was NOT hand-edited: the three empties are the live reproduction and he deletes them through the UI.
+
+**Verification.** 32 unit tests over a fixture that mirrors production exactly (twelve schedules, 813 tasks, the eight orphaned counters — a simplified fixture passes every assertion while hiding both cases that matter). 14 e2e tests against the real built app, three of which drive **`/sequence/index.html` itself** and call the INLINED module in the shipped, Babel-precompiled bytes: **813 tasks in, 813 out; all twelve schedules present; the eight orphan counters swept; idempotent.** Red-proof against `origin/main` in a throwaway worktree: `newProjectAction` there returns `{type:"create-linked", name:"Richfield (2)"}` — the auto-naming, reproduced — and 7 assertions fail. Full suite green (794 files / 16,050 tests).
+
+### B1373057 — A parcel you pick lands on the topmost row missing a location, not the row you are working on `[Site Planner / comps]` (bug) #comps #ui #site-planner #parcel  *(owner chat block, 2026-09-08, filed as "NEW-2", same sitting and same sheet as **B1373056** — verbatim: "it even wouldnt let me save bc of the location even though I had already selected a parcel." Minted **B1373057 / V996320** from this branch's reserved block B1373056–B1373071 · V996320–V996335 against freshly-fetched `origin/main` 268f1f1. DEDUPE-FIRST — searched Open / ⏳ Verify / Done / Done-archive for "pendingAnchor", "topmost such row", "armedRowId", "orphan row", "HARDENING-12": **B986096-HARDENING-12** (Done) is the item that INTRODUCED the topmost-row rule, as the fix for its own owner P0 ("the toolbar pin ignores the row and makes a new one") — this is a defect in that rule, not a re-report of it, and the fallback it added is deliberately kept. Net-new.)*
+`[x]` **FIXED THIS SESSION — the active row wins, the fallback is intact, and the sheet now SAYS which row it answered.**
+
+- **The mechanism, confirmed by reading it and then reproducing it.** `CompsPanel.jsx`'s `pendingAnchor` effect had no idea which row the user was on, so with nothing explicitly armed it could only take `gridRows.find((r) => !r.draft.anchor)` — the topmost row without an anchor. With **B1373056**'s unfilled phantom sitting above the row he was actually filling, his parcel attached to the phantom, the row on screen went on reporting "missing a Location", and Save stayed blocked. That is the whole reported symptom: he DID select a parcel, and the app put it somewhere he could not see.
+- **The fix, and it is deliberately NOT a deletion of the old rule.** `CompEntryGrid` reports its active row up (`onActiveRowChange`); the panel prefers that row whenever it genuinely needs a location, and falls through to HARDENING-12's topmost rule in every case where it does not — nothing focused, focus elsewhere in the app, or the active row already anchored. **HARDENING-12's own P0 cannot regress**: with the active row already anchored, a pick still fills the topmost unlocated row and still appends no orphan, and that case is asserted in its own harness arm.
+- **It says so, out loud.** Every pick — armed row, active row, topmost fallback, or a genuinely new appended row — writes a note onto the sheet's own status line ("Location added to row 2.") and moves the cursor to that row, so a pick can never again land somewhere silently. A fresh paste supersedes the note.
+- **Read HARDENING-12's comment block before changing this effect again** — it is still there, above the code, and it still records why the fallback exists.
+- Verify: live `Blocker: live-GIS` `Blocker: auth` — see **V996320**. What is proven here is the whole mechanism driven with a real toolbar PIN anchor; what genuinely cannot be reached from this sandbox is the **parcel** anchor specifically (it needs a live external ArcGIS parcel-identify call, which the egress blocks) and the **signed-in save** that ends his path. The routing code is anchor-kind-agnostic — `pendingAnchor` is one shared slot and the effect never branches on `kind` — but the report says "parcel", so it parks rather than claiming a leg it did not walk.
+- Origin: owner chat block, 2026-09-08.
+- **Sandbox proof, mutation-proven.** `ui-audit/verify-comp-paste-parcel-0908.mjs` (new), at the owner's own 1600×465, driving the real map toolbar's "Place comp" arm and a real map click: with two location-free rows and row 2 active, the pick lands on **row 2** and the note reads "Location added to row 2"; with row 2 already anchored, the next pick falls back to **row 1**, says so, and appends nothing. Against the un-fixed build the same arms report the pick on row 1 with `note=null`. The pick's own wait is deterministic (it polls the panel's own state for a change and THROWS rather than measure if none arrives) — a fixed wait reported a working pick as no pick at all, twice, before that was fixed. 25/25 green. Full repo suite green (see B1373056).
+- **No contradiction with `## Owner product constraints`.**
+- Files: `src/shared/comps/components/CompsPanel.jsx`, `src/shared/comps/components/CompEntryGrid.jsx`, `ui-audit/verify-comp-paste-parcel-0908.mjs` (new).
+- Base: `origin/main` @ `268f1f1`.
 ### B1373536 — Dashboard cards: schedule events silently dropped from the "Since you were last here" feed, and plan thumbnails with no size ceiling or attribute escaping `[Dashboard / site-planner]` (bug ×2) #dashboard #scheduler #site-planner #ui #perf  *(dispatched task, 2026-09-08, from the adversarial review of PRs #1561–#1564. Both defects were already reproducible from the committed probes in `ui-audit/review-2026-09-08/`. Minted **B1373536 / V996800** from this branch's reserved block B1373536–B1373551 · V996800–V996815 against freshly-fetched `origin/main` 4194dda.)*
 
 `[x]` **Both shipped this session, in full.**

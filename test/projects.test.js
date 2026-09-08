@@ -305,6 +305,34 @@ describe("resolveCurrentName — header crumb tracks a live rename (auto-update-
   });
 });
 
+describe("relTime — the ISO-string case behind the deleted-project screen's stray space", () => {
+  /* ⛔ RED-PROOF. Every assertion here fails on current main, where `Number(ts) || 0` turns an ISO
+   * timestamp into NaN → 0 → "". `cloudCheckDeleted` hands `deletedAt` through from Postgres,
+   * where `deleted_at` IS an ISO string, so the deleted-project screen rendered
+   * "was moved to Recently deleted ." — the reported stray space was the missing relative time,
+   * not a typo. The bin LIST was unaffected (`listDeletedProjects` calls toMs first), which is
+   * exactly how one broken caller stayed invisible beside a correct one. */
+  const now = Date.parse("2026-09-08T12:00:00.000Z");
+
+  it("parses the Postgres ISO timestamp the deleted-project screen actually receives", () => {
+    expect(relTime("2026-09-08T11:55:00.000Z", now)).toBe("5m ago");
+    expect(relTime("2026-09-08T09:00:00.000Z", now)).toBe("3h ago");
+    expect(relTime("2026-09-06T12:00:00.000Z", now)).toBe("2d ago");
+    expect(relTime("2026-09-08T11:59:50.000Z", now)).toBe("just now");
+  });
+
+  it("still reads a numeric epoch, whether as a number or a numeric string", () => {
+    expect(relTime(now - 5 * 60_000, now)).toBe("5m ago");
+    expect(relTime(String(now - 5 * 60_000), now)).toBe("5m ago");
+  });
+
+  it("returns empty — never a partial string — for something genuinely unparseable", () => {
+    for (const junk of ["", "not a date", null, undefined, 0, {}, []]) {
+      expect(relTime(junk, now)).toBe("");
+    }
+  });
+});
+
 describe("relTime", () => {
   const now = 1_000_000_000_000;
   it("reports 'just now' under 45s and blank for missing timestamps", () => {

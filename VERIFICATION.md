@@ -189,6 +189,83 @@ was never clicked" quietly ships broken.
 
 **Result:** ⏳ pending — needs his own signed-in browser, his own note, and a real Outlook clipboard.
 
+### V1003600 — B1380336: every schedule gets an owner on HIS OWN account — the migration over 813 real tasks, the New-schedule prompt, and the two-browser case `Blocker: auth` `Blocker: real-data`
+
+**Why this needs a real pass, and exactly how far the sandbox already got.** The schedule document is ONE row for the whole account (`public.planar_data`, key `hs-v1`, `__rev` 4232 at the time of writing) holding twelve schedules and 813 tasks. The migration is proven here against a fixture that mirrors that row exactly, AND — the stronger half — by driving `/sequence/index.html` in a real browser and calling the INLINED module in the shipped, Babel-precompiled bytes. What a sandbox cannot do is sign in (the proxy CORS-blocks the Supabase auth handshake), so the migration landing on HIS row, and the multi-writer case that only exists because this is a single-row whole-account blob, are the legs left. This is a NARROW residual, not an unverified feature.
+
+**What was verified here (this session — never assumed, and the fix proven to have teeth).**
+1. `test/scheduleOwnership.test.js` — 32 tests over a fixture mirroring production exactly (twelve schedules, 813 tasks, the eight orphaned `nTid` counters, five schedules under one site). A simplified fixture passes every assertion while hiding both cases that matter (the many-under-one-owner grouping and the counter growth), so it is deliberately not simplified.
+2. `e2e/schedule-ownership.spec.js` — 14 tests against the REAL built app, logged out. Three of them load `/sequence/index.html` itself and call the inlined migration in the shipped bytes: **813 tasks in, 813 out; all twelve schedules present; the eight orphan counters swept; a second run returns the identical object** (so it never bumps `__rev` on every tab that opens). Includes the phone-width case.
+3. `test/scheduleOwnership-inline-sync.test.js` — the canonical module and the iframe's inlined copy cannot drift, and the four load paths and the delete path are asserted to actually call it.
+4. **Red-proof against `origin/main`** in a throwaway worktree: `newProjectAction` there returns `{type:"create-linked", name:"Richfield (2)"}` — the silent auto-naming, reproduced live — and 7 assertions fail. The ownership module does not exist there at all.
+5. Full suite green: 794 files / 16,050 tests. `npm run lint` 0 errors.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner:**
+1. **Read the served chunk hash in the SAME observation as every check below** (Network tab, or `document.querySelectorAll('script[src]')`) and confirm it names a build after this PR merged. A tab can silently keep serving a pre-deploy bundle. **Expect:** a chunk hash newer than the merge.
+2. Open Schedule and confirm the account still holds **twelve** schedules with their task counts intact — Goose Creek 301, Grand Port 278, 8 South 161, Pappadoupolos 42, Pursuits 15, TAS Land Sale 8, Operations 7, Richfield 1, and the four empties. **Expect:** every count exactly as listed. **Fail immediately, and revert, if ANY count dropped** — nothing may lose its tasks.
+3. Open a project that owns schedules (Goose Creek) and read the schedule list. **Expect:** its five schedules grouped under its own heading, **Organization** as a peer heading holding Pursuits and Operations, and other projects below. **Fail if** any heading reads "unassigned", "no project", or "none" — the owner explicitly rejected that pile.
+4. Press **New project** in the Schedule breadcrumb while standing on Goose Creek. **Expect:** a **New schedule** dialog opens and NOTHING is created by the press itself; the owner reads "Goose Creek" and the name field is **EMPTY** (never "Goose Creek (5)"); **Create schedule is disabled** until a name is typed.
+5. Change the owner to **Organization**, type a name, create. **Expect:** the new schedule appears under the Organization heading, not under any project.
+6. Create one under Goose Creek named exactly "Goose Creek". **Expect:** a warning that a schedule of that name already lives there, and Create still ENABLED — a warning, never a block.
+7. **Delete the three empty duplicates — "Goose Creek (2)", "(3)" and "(4)" — through the UI.** Their data was deliberately NOT hand-repaired; they are the live reproduction. **Expect:** each deletes, the real Goose Creek keeps its 301 tasks, TAS Land Sale keeps its 8, and re-opening the project still lands on a real schedule.
+8. Re-read the document afterwards (`select value->'nTid', value->'lastActiveBySite' from planar_data where key='hs-v1'`). **Expect:** `nTid` holds a key for every live schedule and **no others** — in particular ids 4, 8–14, 17 and 18 are gone — and no `lastActiveBySite` pointer names a deleted schedule.
+9. **Rename a schedule, then rename its PROJECT.** **Expect:** the schedule keeps its own name and stays under the project; the project's new name is what the group heading reads.
+10. **Two browsers, same account, both on Schedule** — the case this document's single-row shape makes real. Create a schedule in browser A. **Expect:** browser B converges on its own reload/poll with both schedules present and neither browser's schedules lost; a blocked save surfaces the embedded app's own stale-version notice, never a silent clobber.
+11. **Phone.** Open Schedule on the phone and press New project. **Expect:** the dialog fits the screen, both the name field and the owner picker are reachable, and the page does not scroll sideways.
+12. **Flagged for HIS decision, not deleted by anyone:** **ZZ-RENAME-TEST-G** (0 tasks, a leftover from an earlier verification run) and, once step 7 is done, nothing else. **TAS Land Sale is NOT a leftover** — it has 8 tasks and is live work. Confirm he wants ZZ-RENAME-TEST-G gone before removing it.
+### V996320 — B1373057: a PARCEL you pick lands on the row you are working on, and the comp then saves `Blocker: live-GIS` `Blocker: auth`
+
+**Why this needs its own live pass.** Two named walls, and only these two. A **parcel** anchor requires a live external ArcGIS parcel-identify call, which this sandbox's egress blocks — so the leg driven here uses a real toolbar PIN drop instead, which exercises the identical routing code (`pendingAnchor` is ONE shared slot and the effect never branches on the anchor's `kind`) but is not the word the owner used. And the END of the path he walked is a signed-in cloud write, which no sandbox session can reach. Everything between those two is proven headless below, at his own window, mutation-proven against the un-fixed build.
+
+**What was verified here (this session, real headless Chromium at 1600x465, signed out, fixture-seeded, zero network).** `ui-audit/verify-comp-paste-parcel-0908.mjs` — 25/25 green, driving the real map toolbar's "Place comp" arm and a real map click, never a synthetic event:
+1. With two location-free rows and row 2 the active row, the pick lands on **row 2**; row 1 is untouched; the sheet's own status line reads "Location added to row 2."
+2. With the active row already anchored, the next pick falls back to the **topmost** unlocated row (row 1), says "Location added to row 1.", and appends **no orphan row** — B986096-HARDENING-12's own P0 does not regress.
+3. A toolbar pin with the grid closed opens the sheet holding one anchored row; a paste then ABSORBS that row (B1373056), it keeps its location, and the footer Save button reads `Save 1 comp`, enabled — the owner's blocked-Save symptom, cleared.
+4. Against the un-fixed build the same arms report the pick landing on row 1 with no note at all, and Save reading disabled — so the harness is proven able to SEE the defect, not merely to pass.
+5. Full repo suite green (785 files / 15,842 tests); `npm run lint` / `npm run build` clean.
+
+**What is NOT provable from here, and why:** a parcel-kind anchor cannot be produced without the live parcel service, and a comp cannot be written to the cloud signed out. Neither is a code-reading claim — both are honest gaps this pass cannot close.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner, on a THROWAWAY comp, never a real one:**
+1. Read the served chunk hash in the same observation as every step below (`document.querySelectorAll('script[src]')`) — confirm it names a build after this PR merged. A stale tab invalidates everything that follows.
+2. Open Comps → **+ Paste comps**. Paste any real broker lease line. **Expect:** one row appears, the line above the sheet reads "Added 1 comp — 1 in the sheet", and the footer below it reads the SAME total. **The two lines must never disagree.**
+3. Paste a second, different comp. Delete the second row with its ✕. **Expect:** both lines fall back to "1" together — neither keeps a stale count.
+4. Click any cell in **row 2** (add a second row first if needed). Then, from the map toolbar, use **Comp from parcel** and select a real lot. **Expect:** the parcel's location lands on **row 2** — the row you were on — and the sheet says "Location added to row 2." **Fail if it lands on row 1.**
+5. Now click a cell in row 2 again (already anchored) and pick a second parcel. **Expect:** it falls back to row 1 and says "Location added to row 1." — and does NOT create a third row.
+6. Read the footer with one row anchored and the other not. **Expect:** "1 missing a Location" — and if a row is missing only its Type, the footer must say **"missing a Type"**, never call that a missing Location.
+7. Press **Save comps**. **Expect:** the button is enabled and names the ready count; the comp saves and appears in the Comps list with the parcel's own location. Delete the throwaway comp afterwards and say so in the verification note.
+### V995408 — B1372144: place, edit and soft-delete a map note on the owner's own signed-in account `Blocker: auth` `Blocker: real-data`
+**Why this is walled:** every write path needs a signed-in Supabase session, and this sandbox's proxy
+CORS-blocks the auth handshake. The parcel leg additionally needs a live county parcel service, which the
+egress blocks (`Blocker: live-GIS`). **What was already driven here and is NOT pending** (logged out, at the
+owner's real 1600×465): the Notes toggle exists beside Sites and Comps with a count and is remembered;
+right-click → "Add a note here" opens the editor on the clicked point with nothing painting over the row;
+the editor fits the short window, offers an optional site link defaulting to "No site", refuses to save an
+empty note, and leaves nothing behind on cancel (`ui-audit/verify-map-notes.mjs`, 23/23). The client half of
+the write paths was then driven against a STUBBED server with the real app code
+(`ui-audit/verify-map-notes-writes.mjs`, 24/24) — that proves the requests, the marker layer, the editor and
+the soft-delete shape, and proves NOTHING about RLS, the real schema or a genuine reload, which is what the
+steps below are for.
+
+**All steps on THROWAWAY notes created during the check — do not touch site-plan row
+`aa2d8163-7d45-4929-8a05-dad94ba2528d` or comp `ddb5a9e5-76c5-49e6-88b0-4a842f1b0a46` (Core 5 - West Hardy).**
+Signed in, at 1600×465, on the Site Planner map:
+1. **Place by pin** — press **Drop a pin** on the map toolbar, click the ground, then press
+   **Add a note** on the decide bar that appears; type a body, Save.
+   *Expected:* the card closes and a magenta bubble marker appears at that exact point immediately, with no
+   further clicking. The Notes count goes up by one.
+2. **Place by parcel** — select a parcel, press **Add a note** on the same decide bar, type, Save.
+   *Expected:* the note saves anchored to the parcel (the card says "On a parcel"), and the selection clears.
+3. **Reopen and edit** — click the pin-anchored marker, change the text, Save, then click it again.
+   *Expected:* it opens showing the text you saved, and the edit is still there on the second open.
+4. **Reload the page.** *Expected:* both notes are still on the map with their edited text — this is the leg
+   the stubbed run cannot prove.
+5. **Toggle the layer** — untick Notes in Imagery & layers, then re-tick it.
+   *Expected:* both markers disappear and come back; site pins and comp markers never move either time.
+6. **Soft-delete one** — open it, click Delete, click it again to confirm.
+   *Expected:* the marker leaves the map and the count drops. Then confirm the row is SOFT-deleted, not gone:
+   `select id, deleted_at from public.map_notes where deleted_at is not null;` returns the row with a stamp.
+7. **Clean up** — soft-delete the remaining throwaway notes.
 
 ### V996800 — B1373536: on a real signed-in account, a schedule change made while away actually reaches the "Since you were last here" card, and a busy real plan's thumbnail is both small and recognisable `Blocker: auth` `Blocker: real-data`
 
