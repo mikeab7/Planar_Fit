@@ -25,11 +25,12 @@
  * We hand-roll the entire UI. We never hand-roll the engine.
  */
 import StarterKit from "@tiptap/starter-kit";
-import { Extension } from "@tiptap/core";
+import { Extension, getStyleProperty } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 
-import { DEFAULT_DENSITY, blockFontSize, densityFor, spacingFromElement, spacingStyle } from "./notesSpacing.js";
-import { TextStyleKit } from "@tiptap/extension-text-style";
+import { DEFAULT_DENSITY, blockFontSize, densityFor, spacingFromElement, spacingStyle, fontSizePx } from "./notesSpacing.js";
+import { inheritedStyle } from "./notesPasteInherit.js";
+import { FontFamily, FontSize, TextStyleKit } from "@tiptap/extension-text-style";
 import { TableKit } from "@tiptap/extension-table";
 import { TaskList, TaskItem } from "@tiptap/extension-list";
 import { Highlight } from "@tiptap/extension-highlight";
@@ -123,7 +124,53 @@ export const NOTE_EXTENSIONS = [
   // switched OFF deliberately: highlight already owns background (with its own multicolor
   // swatch), and neither has a toolbar control, so admitting them would put constructs into
   // the schema that the exporter would have to guess at.
-  TextStyleKit.configure({ backgroundColor: false, lineHeight: false }),
+  /* ⛔ FONT FAMILY AND FONT SIZE ARE THE KIT'S OWN, RE-POINTED AT AN INHERITANCE-AWARE READ
+   * (NEW-5 / NEW-4). Turned off in the kit and re-added here rather than duplicated, so there
+   * is ONE definition of each attribute and no chance of two that disagree.
+   *
+   * Two corrections, both at the same boundary — where foreign HTML becomes a mark:
+   *   NEW-5  a run that inherits its font from an ancestor keeps it, instead of silently
+   *          falling back to the app font while the run beside it (styled directly) keeps
+   *          Calibri. The uneven patchwork in his pasted notes is manufactured here, out of
+   *          internally-consistent clipboard HTML — see lib/notesPasteInherit.js for the
+   *          measured evidence and for why this is NOT the sanitiser and NOT later editing.
+   *   NEW-4  a size arrives in whatever unit its source used (Word emits POINTS) and is stored
+   *          in px, so 11pt is stored as the 14.67px it actually renders at and can never again
+   *          read as the same "11" an 11px run reads as. See lib/notesSpacing.js's fontSizePx.
+   *
+   * Nothing already saved is touched: this runs only while PARSING incoming HTML. */
+  TextStyleKit.configure({ backgroundColor: false, lineHeight: false, fontFamily: false, fontSize: false }),
+  FontFamily.extend({
+    addGlobalAttributes() {
+      return [{
+        types: this.options.types,
+        attributes: {
+          fontFamily: {
+            default: null,
+            parseHTML: (el) => inheritedStyle(el, "fontFamily", (n) => getStyleProperty(n, "font-family")),
+            renderHTML: (attrs) => (attrs.fontFamily ? { style: `font-family: ${attrs.fontFamily}` } : {}),
+          },
+        },
+      }];
+    },
+  }),
+  FontSize.extend({
+    addGlobalAttributes() {
+      return [{
+        types: this.options.types,
+        attributes: {
+          fontSize: {
+            default: null,
+            parseHTML: (el) => {
+              const px = fontSizePx(inheritedStyle(el, "fontSize", (n) => getStyleProperty(n, "font-size")));
+              return px ? `${px}px` : null;
+            },
+            renderHTML: (attrs) => (attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {}),
+          },
+        },
+      }];
+    },
+  }),
 
   // Resizable columns — dragging a column edge is the first thing anyone tries.
   TableKit.configure({ table: { resizable: true, allowTableNodeSelection: true } }),

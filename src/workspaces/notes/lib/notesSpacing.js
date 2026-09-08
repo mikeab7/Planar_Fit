@@ -118,6 +118,46 @@ const num = (v) => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
+/* ⛔ A FONT SIZE CARRIES A UNIT, AND STRIPPING IT IS NOT READING IT (NEW-4).
+ *
+ * `num` is a bare `parseFloat`, which is right for a line height (unitless) and for a margin
+ * (this module only ever writes px). It is WRONG for a font size, because a pasted document
+ * does not use px — Word and Outlook emit POINTS. `num("11pt")` returns 11, the same answer it
+ * returns for `"11px"`, and the two are not the same size: 11pt is 14.67px, a third bigger.
+ *
+ * MEASURED, on the fixture rebuilt from his own Silvestri > Utility note — this is his NEW-4
+ * report reproduced end to end, and it is worse than a cosmetic mislabel:
+ *   • "Contacts:" (declared 11pt) computes 14.67px on screen, and the size box reads **11**.
+ *   • "713-416-5353" (declared 11px) computes 11px on screen, and the size box reads **11**.
+ *   • Selecting the 11pt run and picking the "11" the box was ALREADY SHOWING took it from
+ *     14.67px to 11px — the control silently shrank his text by a quarter to "set" it to the
+ *     value it claimed it already had.
+ * Two visibly different sizes presented as one number, and the obvious no-op gesture was a
+ * destructive one.
+ *
+ * So every font size is resolved to ONE unit — px, the unit this app writes and the unit the
+ * size menu's own values are in — at the two boundaries where a foreign unit can enter: the
+ * `parseHTML` that reads a pasted element, and the toolbar's read of what to display.
+ *
+ * ⛔ ONLY ABSOLUTE UNITS ARE CONVERTED. `em` / `rem` / `%` / `larger` are RELATIVE to something
+ * this pure function cannot see, so they return `null` — "I do not know", which reads as no
+ * override and leaves the text alone. A guessed base would be a wrong number that looks right,
+ * which is the one outcome this repo treats as worse than no number at all. */
+const PER_PX = { px: 1, pt: 96 / 72, pc: 16, in: 96, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6 };
+
+export function fontSizePx(value) {
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : null;
+  if (typeof value !== "string") return null;
+  const m = /^\s*([0-9]*\.?[0-9]+)\s*([a-z%]*)\s*$/i.exec(value);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const unit = (m[2] || "px").toLowerCase();
+  const per = PER_PX[unit];
+  if (!per) return null;                       // em/rem/% — relative to something unknowable here
+  return Math.round(n * per * 100) / 100;      // two decimals: 11pt → 14.67px, never 14.666666
+}
+
 /** The three attributes as a style string — the ONE place the shape is decided, used by the
  *  schema's `renderHTML` and therefore by the screen, the print sheet and the HTML export. */
 export function spacingStyle({ lineHeight, spaceBefore, spaceAfter, fontSize } = {}) {
@@ -155,7 +195,7 @@ export function blockFontSize(runs, { defaultPx = null } = {}) {
   if (!Array.isArray(runs) || !runs.length) return null;
   let seen = null;
   for (const r of runs) {
-    const px = num(r && r.fontSize);
+    const px = fontSizePx(r && r.fontSize);
     if (!px) return null;                       // an unsized run keeps the block's own size
     if (seen == null) seen = px;
     else if (seen !== px) return null;          // two sizes on one line — tallest run wins
@@ -171,7 +211,7 @@ export function spacingFromElement(el) {
     lineHeight: num(st.lineHeight),
     spaceBefore: num(st.marginTop),
     spaceAfter: num(st.marginBottom),
-    fontSize: num(st.fontSize),
+    fontSize: fontSizePx(st.fontSize),
   };
 }
 

@@ -102,6 +102,15 @@ const ALL_NOTES_FILES = [
   "lib/notesTableToText.js",
   // B849105 — orders a conflict's two copies by recency, never by which browser window they came from.
   "lib/notesVersionOrder.js",
+  // NOTES-TOOLBAR-STATE (B1382549) — the ONE mechanism every toolbar readout goes through:
+  // does this selection agree on a value, or is it mixed? A control that grows its own
+  // mixed-check is the defect, which is exactly why this file is on the list.
+  "lib/notesMixedSelection.js",
+  // B1382544/B1382545 — "is this the same typeface": compare by first family, never by the raw
+  // stack string, or Word's `"Calibri",sans-serif` reads as "Default".
+  "lib/notesFontFamily.js",
+  // B1382548 — a pasted run inherits the font its source gave it. Paste boundary only.
+  "lib/notesPasteInherit.js",
 ];
 const SKETCH_FILES = ALL_NOTES_FILES.filter((f) => f.includes("Sketch"));
 
