@@ -3,6 +3,7 @@ import {
   sizeBandFor, bandSentenceLabel, compSizeSf, compHeadlineRate, buildPeerSet,
   peerComparisonSentence, compScaleLayout, countyLabel, countyEntry, relativeTimeLabel,
   mostRecentlyAddedComp, buildCompsCardData, SIZE_BANDS, TYPE_LABEL,
+  compScaleKey, scaleLabel, CARD_LEASE_PERIOD, MIN_PEERS_FOR_SCALE,
 } from "../src/workspaces/dashboard/lib/compsCardModel.js";
 
 describe("compsCardModel: sizeBandFor", () => {
@@ -81,6 +82,10 @@ function leaseComp(id, { county = "harris", sf = 600000, rate = 5, createdAt = "
     anchor: { county },
     leaseSizeSf: sf, leaseRate: rate, leaseRatePeriod: "annual", leaseRateExpense: "nnn",
   };
+}
+
+function landComp(id, { county = "harris", price = 2600000, value = 20, unit = "ac", createdAt = "2026-09-01" } = {}) {
+  return { id, compType: "land", createdAt, anchor: { county }, landPrice: price, landSizeValue: value, landSizeUnit: unit };
 }
 
 describe("compsCardModel: buildPeerSet", () => {
@@ -270,5 +275,195 @@ describe("compsCardModel: buildCompsCardData (integration)", () => {
   });
   it("names TYPE_LABEL for every comp type (sanity — the chip vocabulary)", () => {
     expect(TYPE_LABEL).toEqual({ land: "Land", building_sale: "Building sale", lease: "Lease" });
+  });
+});
+
+/* ---------------------------------------------------------------------------------------------
+ * The four defects an adversarial review found in the shipped card (2026-09-08). Each block below
+ * names the defect it pins and the probe that reproduced it, so a future reader can re-derive the
+ * failure rather than take these expectations on faith:
+ *   ui-audit/review-2026-09-08/probe-comps-production-rows.mjs   (defects 1 and 4, on real rows)
+ *   ui-audit/review-2026-09-08/probe-comps-peer-set.mjs          (defects 2 and 3)
+ * ------------------------------------------------------------------------------------------- */
+
+/** Michael's four real Harris/Chambers County lease comps, verbatim from `public.comps` on
+ * planyr_production — the headline defect only reproduces on the real values, which is why the
+ * review's probe embeds them too. The featured one is recorded ANNUAL; every sibling is MONTHLY. */
+const PRODUCTION_ROWS = [
+  { id: "989b10b8", createdAt: "2026-09-08T20:22:47Z", compType: "lease", anchor: { county: "harris" }, leaseRate: 0.64, leaseRatePeriod: "annual", leaseRateExpense: "nnn", leaseSizeSf: 648720 },
+  { id: "3c9e2473", createdAt: "2026-09-04T18:08:30Z", compType: "lease", anchor: { county: "chambers" }, leaseRate: 0.645, leaseRatePeriod: "monthly", leaseRateExpense: "nnn", leaseSizeSf: 1218956 },
+  { id: "45f9e6d0", createdAt: "2026-09-04T18:06:30Z", compType: "lease", anchor: { county: "chambers" }, leaseRate: 0.58, leaseRatePeriod: "monthly", leaseRateExpense: "nnn", leaseSizeSf: 800405 },
+  { id: "ddb5a9e5", createdAt: "2026-09-03T21:55:51Z", compType: "lease", anchor: { county: "harris" }, leaseRate: 0.65, leaseRatePeriod: "monthly", leaseRateExpense: "nnn", leaseSizeSf: 613208 },
+];
+
+describe("compsCardModel: DEFECT 1 — one named period across the whole card", () => {
+  it("names the period it speaks in, rather than leaving it implicit in a unit string", () => {
+    expect(CARD_LEASE_PERIOD.key).toBe("annual");
+    expect(CARD_LEASE_PERIOD.unit).toBe("$/SF/yr");
+  });
+
+  it("stamps that period on every lease rate it returns, however the comp was recorded", () => {
+    // An annual comp passes through untouched; the same figure recorded monthly is x12'd. Both
+    // come back stamped with the card's period, so neither can be read in the other's units.
+    expect(compHeadlineRate(leaseComp("a", { rate: 6 }))).toMatchObject({ value: 6, period: "annual" });
+    const asMonthly = compHeadlineRate({ ...leaseComp("m", { rate: 0.5 }), leaseRatePeriod: "monthly" });
+    expect(asMonthly.value).toBeCloseTo(6, 10);
+    expect(asMonthly.period).toBe("annual");
+    expect(asMonthly.unit).toBe("$/SF/yr");
+  });
+
+  it("a monthly comp and an annual comp meet on ONE scale — the featured figure and every peer rate", () => {
+    // $0.50/SF/mo and $6.00/SF/yr are the SAME rate. If either side skipped normalization they
+    // would land 12x apart, and the card would rank one against the other as if they differed.
+    const featured = leaseComp("f", { rate: 6, createdAt: "2026-09-08" });
+    const comps = [
+      featured,
+      { ...leaseComp("p1", { createdAt: "2026-09-01" }), leaseRate: 0.5, leaseRatePeriod: "monthly" },
+      { ...leaseComp("p2", { createdAt: "2026-08-01" }), leaseRate: 0.5, leaseRatePeriod: "monthly" },
+      leaseComp("p3", { rate: 6, createdAt: "2026-07-01" }),
+    ];
+    const { peers } = buildPeerSet(comps, featured);
+    expect(peers.map((p) => p.rate)).toEqual([6, 6, 6]);
+  });
+
+  it("refuses a lease rate whose period isn't recorded — never prints the raw number under an annual label", () => {
+    const noPeriod = { ...leaseComp("x", { rate: 0.64 }), leaseRatePeriod: null };
+    expect(compHeadlineRate(noPeriod)).toBeNull();
+  });
+
+  it("on Michael's real rows, the featured figure and its peer are both annual — one ruler", () => {
+    const data = buildCompsCardData(PRODUCTION_ROWS);
+    expect(data.featured.id).toBe("989b10b8");
+    expect(data.rate.period).toBe("annual");
+    expect(data.rate.unit).toBe("$/SF/yr");
+    // The one same-county peer was recorded monthly and reaches the scale annualized (0.65 x 12).
+    expect(data.peerSet.peers.map((p) => p.rate)).toEqual([0.65 * 12]);
+  });
+});
+
+describe("compsCardModel: DEFECT 2 — a peer set is one lease structure and one unit of measure", () => {
+  it("a scale key carries the lease basis, so NNN and gross are different rulers", () => {
+    expect(compScaleKey(leaseComp("a"))).toBe("lease:annual:nnn");
+    expect(compScaleKey({ ...leaseComp("b"), leaseRateExpense: "gross" })).toBe("lease:annual:gross");
+  });
+
+  it("a lease with no stated basis declares no scale at all — never defaulted into NNN's ruler", () => {
+    expect(compScaleKey({ ...leaseComp("a"), leaseRateExpense: null })).toBeNull();
+  });
+
+  it("a land comp's ruler is its OWN recorded unit — $/AC and $/SF are 43,560x apart", () => {
+    expect(compScaleKey(landComp("a", { unit: "ac" }))).toBe("land:ac");
+    expect(compScaleKey(landComp("b", { unit: "sf" }))).toBe("land:sf");
+  });
+
+  it("EXCLUDES gross peers from an NNN featured comp, and counts them", () => {
+    const featured = leaseComp("f", { rate: 5, createdAt: "2026-09-08" });
+    const comps = [
+      featured,
+      { ...leaseComp("g1", { rate: 11, createdAt: "2026-09-01" }), leaseRateExpense: "gross" },
+      { ...leaseComp("g2", { rate: 12, createdAt: "2026-08-01" }), leaseRateExpense: "gross" },
+      leaseComp("n1", { rate: 5.2, createdAt: "2026-07-01" }),
+    ];
+    const { peers, excludedCount, excludedReason } = buildPeerSet(comps, featured);
+    expect(peers.map((p) => p.comp.id)).toEqual(["n1"]);
+    expect(excludedCount).toBe(2);
+    expect(excludedReason).toBe("not quoted NNN");
+  });
+
+  it("EXCLUDES a land comp quoted per SF from a featured comp quoted per acre, and counts it", () => {
+    // Both are the same ~20-acre tract at the same price. Sharing one scale produced the review's
+    // "$129996.90 above the median"; they are two rulers, not two values.
+    const featured = landComp("f", { price: 2600000, value: 20, unit: "ac", createdAt: "2026-09-08" });
+    const comps = [
+      featured,
+      landComp("p1", { price: 2600000, value: 20, unit: "ac", createdAt: "2026-09-01" }),
+      landComp("p2", { price: 2600000, value: 871200, unit: "sf", createdAt: "2026-08-01" }),
+      landComp("p3", { price: 2700000, value: 871200, unit: "sf", createdAt: "2026-07-01" }),
+    ];
+    const { peers, excludedCount, excludedReason } = buildPeerSet(comps, featured);
+    expect(peers.map((p) => p.comp.id)).toEqual(["p1"]);
+    expect(peers.map((p) => p.rate)).toEqual([130000]);
+    expect(excludedCount).toBe(2);
+    expect(excludedReason).toBe("not quoted $/AC");
+  });
+
+  it("a mismatched scale in ANOTHER county is still just a non-match, never an exclusion", () => {
+    const featured = leaseComp("f", { county: "harris" });
+    const comps = [featured, { ...leaseComp("g", { county: "waller" }), leaseRateExpense: "gross" }];
+    expect(buildPeerSet(comps, featured).excludedCount).toBe(0);
+  });
+
+  it("reports both exclusion reasons together when both occur", () => {
+    const featured = leaseComp("f", { createdAt: "2026-09-08" });
+    const comps = [
+      featured,
+      { ...leaseComp("g", { createdAt: "2026-09-01" }), leaseRateExpense: "gross" },
+      { ...leaseComp("nosize", { createdAt: "2026-08-01" }), leaseSizeSf: null },
+    ];
+    const { excludedCount, excludedReason } = buildPeerSet(comps, featured);
+    expect(excludedCount).toBe(2);
+    expect(excludedReason).toBe("not quoted NNN, or missing county or size");
+  });
+
+  it("a featured comp with no usable scale yields no peer set at all — never a blended one", () => {
+    const featured = { ...leaseComp("f"), leaseRateExpense: null };
+    const { peers, scale } = buildPeerSet([featured, leaseComp("p1")], featured);
+    expect(scale).toBeNull();
+    expect(peers).toEqual([]);
+  });
+
+  it("scaleLabel names each ruler for the excluded note, and is null for an unknown one", () => {
+    expect(scaleLabel("lease:annual:nnn")).toBe("NNN");
+    expect(scaleLabel("lease:annual:gross")).toBe("gross");
+    expect(scaleLabel("land:sf")).toBe("$/SF");
+    expect(scaleLabel(null)).toBeNull();
+  });
+});
+
+describe("compsCardModel: DEFECT 3 — a tie reads as a tie, never as a rank", () => {
+  const say = (featuredRate, peers) => peerComparisonSentence({
+    featuredRate, peerSet: { band: SIZE_BANDS[3], peers: peers.map((rate) => ({ rate })) },
+    compType: "lease", countyLabel: "Harris County, TX",
+  });
+
+  it("every comp at the same rate is level with its peers — not 'the highest'", () => {
+    expect(say(6, [6, 6, 6])).toMatch(/^level with all three of its peers, and right at the median/);
+  });
+  it("sharing the top rate reads as tied for the highest", () => {
+    expect(say(9, [9, 7, 5])).toMatch(/^tied for the highest of the four,/);
+  });
+  it("sharing the bottom rate reads as tied for the lowest", () => {
+    expect(say(5, [9, 7, 5])).toMatch(/^tied for the lowest of the four,/);
+  });
+  it("sharing a middle rate keeps the ordinal but names the tie", () => {
+    expect(say(7, [9, 7, 5])).toMatch(/^tied for second highest of the four,/);
+  });
+  it("an untied rate is unchanged — the plain rank phrasing still applies", () => {
+    expect(say(9, [8, 7, 5])).toMatch(/^the highest of the four,/);
+    expect(say(8, [9, 7, 5])).toMatch(/^second highest of the four,/);
+    expect(say(4, [9, 7, 5])).toMatch(/^the lowest of the four,/);
+  });
+  it("two rates within half a cent are ONE rate — the rank clause and the median clause agree", () => {
+    // Rates are divisions, so 'equal' has to tolerate float noise; the delta clause already
+    // treats anything under half a cent as "right at the median" and the rank clause now matches.
+    const sentence = say(6.001, [6, 6, 6]);
+    expect(sentence).toMatch(/^level with all three of its peers, and right at the median/);
+  });
+});
+
+describe("compsCardModel: DEFECT 4 — below the minimum, the card makes ONE statement", () => {
+  it("names the minimum peer count once, so the sentence and the card cannot disagree", () => {
+    expect(MIN_PEERS_FOR_SCALE).toBe(3);
+  });
+
+  it("withholds the sentence at exactly one below the minimum", () => {
+    const peerSet = { band: SIZE_BANDS[3], peers: [{ rate: 5 }, { rate: 6 }] };
+    expect(peerComparisonSentence({ featuredRate: 5, peerSet, compType: "lease", countyLabel: "Harris County, TX" })).toBeNull();
+  });
+
+  it("Michael's real account: one peer, so no sentence — the card draws no scale and says so once", () => {
+    const data = buildCompsCardData(PRODUCTION_ROWS);
+    expect(data.peerSet.peers.length).toBeLessThan(MIN_PEERS_FOR_SCALE);
+    expect(data.sentence).toBeNull();
   });
 });
