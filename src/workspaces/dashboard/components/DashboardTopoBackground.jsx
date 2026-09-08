@@ -196,9 +196,9 @@ export default function DashboardTopoBackground({ paused = false }) {
         ctx.save();
         ctx.globalCompositeOperation = "source-atop";
         const g = ctx.createRadialGradient(ptr.x, ptr.y, 0, ptr.x, ptr.y, 340);
-        g.addColorStop(0, `rgba(${coralTopRgb},${(0.92 * ptr.s).toFixed(3)})`);
-        g.addColorStop(0.5, `rgba(${coralMidRgb},${(0.40 * ptr.s).toFixed(3)})`);
-        g.addColorStop(1, `rgba(${coralMidRgb},0)`);
+        g.addColorStop(0, `rgba(${coralTopRgb},${(0.92 * ptr.s).toFixed(3)})`); // design-exempt: canvas gradient stop built from BRAND.coral (a token), not a literal
+        g.addColorStop(0.5, `rgba(${coralMidRgb},${(0.40 * ptr.s).toFixed(3)})`); // design-exempt: canvas gradient stop built from BRAND.coral (a token), not a literal
+        g.addColorStop(1, `rgba(${coralMidRgb},0)`); // design-exempt: canvas gradient stop built from BRAND.coral (a token), not a literal
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, W, H);
         ctx.restore();
