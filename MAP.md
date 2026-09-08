@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-08 @ `e59ab416d` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-08 @ `19b797c93` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -15,7 +15,7 @@
 > iframe), **Doc Review**, **Library**. `/server` is listed as folder structure only (below) —
 > never its contents or secrets.
 
-_714 source files mapped._
+_715 source files mapped._
 
 ## infra
 
@@ -69,6 +69,8 @@ _714 source files mapped._
   - _exports_: `default (DashboardCard)`
 - **`src/workspaces/dashboard/components/DashboardCards.jsx`** — the six default Dashboard card renderers (pure presentational, token-only).
   - _exports_: `CardSkeleton`, `CompsSummaryCard`, `GoingQuietCard`, `JumpBackInCard`, `PipelineCard`, `ScheduleHealthCard`
+- **`src/workspaces/dashboard/components/DashboardTopoBackground.jsx`** — the animated topographic contour field behind the dashboard's card grid.
+  - _exports_: `default (DashboardTopoBackground)`
 - **`src/workspaces/dashboard/components/NeedsAttentionCard.jsx`** — Needs-attention dashboard card — flat cross-project task list sorted by days since needs-attention.
   - _exports_: `NeedsAttentionCard`
 - **`src/workspaces/dashboard/components/PursuitsCard.jsx`** — Pursuits dashboard card — table of open pursuits sorted by soonest contractual date.
