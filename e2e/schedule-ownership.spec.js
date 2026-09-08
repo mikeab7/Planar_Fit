@@ -25,6 +25,13 @@
  */
 import { test, expect } from "@playwright/test";
 
+/* The migration block below calls the scheduler page's OWN module-scope declarations from inside
+ * `page.evaluate`, where they are live globals of that document — not imports of this file. Declared
+ * for ESLint only; if a future build ever wrapped that script in a closure these identifiers would
+ * stop resolving and the test would fail LOUDLY, which is exactly the signal wanted (the module
+ * would no longer be reachable in the shipped page). */
+/* global normalizeScheduleOwnership, migrateScheduleOwnership, pruneScheduleRefs, ownerOf, validateNewSchedule */
+
 const GOOSE = "g-goose";
 const GRAND = "g-grand";
 /* A project with no schedule of its own — the empty state, where the list and the dialog live. */
