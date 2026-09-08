@@ -16,6 +16,7 @@
 import { loadAndDownscaleImage } from "./image.js";
 import { releaseCanvas } from "./releaseCanvas.js";
 import { detectSheet, parseScaleNote } from "./overlayScale.js";
+import { runBudgeted, PAINT_FRAME_BUDGET_MS } from "./paintSchedule.js";
 
 // B749 — base raster cap raised 2600 → 4500 px so a 36×24 sheet has headroom to zoom into a
 // truck court before it softens; MAX_RASTER_SCALE lets a small sheet sharpen too (the old 2×
@@ -51,17 +52,55 @@ export function baseRasterScale(pageMaxPts) {
   return Math.max(0.5, Math.min(MAX_RASTER_SCALE, MAX_RASTER_DIM / Math.max(1, pageMaxPts)));
 }
 
+/* NEW-1 (canvas freeze on cold load with PDF overlays) — post `fn` as a genuine MACROTASK, the
+ * same MessageChannel idiom terrainLayers.js's `scheduleMacrotask` uses and for the same measured
+ * reason: a `requestAnimationFrame` continuation lands in the SAME animation frame as whatever
+ * else is rAF-scheduled and does not actually free the main thread (measured there: chunking
+ * alone via rAF only shaved a long task from 265ms to 242ms). A MessageChannel-posted macrotask
+ * genuinely hands control back to the browser to paint / handle input between chunks. */
+function yieldToMainThread() {
+  return new Promise((resolve) => {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => { resolve(); ch.port1.close(); ch.port2.close(); };
+    ch.port2.postMessage(0);
+  });
+}
+
 /* Knock near-white to transparent IN BANDS (B749) so the getImageData transient stays bounded
  * at (width × BAND) px even for a 4500-px raster — the whole-canvas read of a big page is a
- * large one-shot allocation. Tainted-canvas safe (skips rather than throws). */
-function knockoutCanvas(ctx, w, h) {
+ * large one-shot allocation. Tainted-canvas safe (skips rather than throws).
+ *
+ * ⛔ NEW-1 — EVERY BAND USED TO RUN IN ONE UNBROKEN SYNCHRONOUS LOOP, WITH NO AWAIT ANYWHERE IN IT.
+ * Measured on a real 2592×1728pt site-plan-density PDF (4,580 vector primitives, the owner's Bain
+ * overlay's own page size): rasterizing ONE overlay with knockout cost 584ms against 233ms with
+ * knockout off — the ~350ms difference is (near-exactly) time spent inside `getImageData`, all of
+ * it one uninterruptible call stack. Opening a plan with two such overlays pays this TWICE, back
+ * to back, on the main thread, before the browser gets a chance to paint or respond to input —
+ * which is the reported "canvas frozen for ten seconds" on a cold load. `page.render()` itself
+ * already yields at its own `await` boundary; this loop was the one place in the whole rasterize
+ * pass that never gave the browser a turn. Chunking the SAME bands through `paintSchedule.js`'s
+ * `runBudgeted` (the `terrainLayers.js` mechanism, proven on exactly this class of "long
+ * FrameRequestCallback tasks" bug) turns one long block into many sub-frame ones without changing
+ * a single pixel written — same bands, same `knockoutNearWhite`, same `getImageData`/`putImageData`
+ * calls, just yielded between. Exported (was module-private) so a unit test can inject a fake
+ * `now`/`yieldFn` and PROVE the yielding happens rather than trusting real timers. */
+export async function knockoutCanvas(ctx, w, h, { budgetMs = PAINT_FRAME_BUDGET_MS, now = () => performance.now(), yieldFn = yieldToMainThread } = {}) {
   const BAND = 512;
   try {
+    const ops = [];
     for (let y = 0; y < h; y += BAND) {
       const bh = Math.min(BAND, h - y);
-      const img = ctx.getImageData(0, y, w, bh);
-      knockoutNearWhite(img.data);
-      ctx.putImageData(img, 0, y);
+      ops.push(() => {
+        const img = ctx.getImageData(0, y, w, bh);
+        knockoutNearWhite(img.data);
+        ctx.putImageData(img, 0, y);
+      });
+    }
+    const gen = runBudgeted(ops, now, budgetMs);
+    let step = gen.next();
+    while (!step.done) {
+      await yieldFn();
+      step = gen.next();
     }
   } catch (_) { /* getImageData blocked — leave the white in, the opacity slider still applies */ }
 }
@@ -76,7 +115,7 @@ async function renderPageCanvas(pdf, n, scale, knockout) {
   canvas.height = Math.max(1, Math.floor(viewport.height));
   const ctx = canvas.getContext("2d");
   await page.render({ canvasContext: ctx, viewport }).promise;
-  if (knockout) knockoutCanvas(ctx, canvas.width, canvas.height);
+  if (knockout) await knockoutCanvas(ctx, canvas.width, canvas.height);
   return { canvas, base };
 }
 
