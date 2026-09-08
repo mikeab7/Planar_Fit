@@ -45,22 +45,28 @@ import {
 } from "./components/DashboardCards.jsx";
 import { NeedsAttentionCard } from "./components/NeedsAttentionCard.jsx";
 import { PursuitsCard } from "./components/PursuitsCard.jsx";
+import { SinceLastHereCard } from "./components/SinceLastHereCard.jsx";
 import {
   CARD_DEFS, GRID_COLS, normalizeLayout, availableToAdd, addCard, removeCard, resetLayout,
   applyGridChange, narrowOrder, toRglItem,
 } from "./lib/dashboardLayout.js";
 import { loadDashboardLayout, saveDashboardLayout } from "./lib/dashboardPrefs.js";
+import { loadSinceLastHere, saveSinceLastHere } from "./lib/dashboardSinceLastHerePrefs.js";
 import { fetchSiteSummaries } from "./lib/dashboardSitesFetch.js";
 import { fetchCompsCounts } from "./lib/dashboardCompsFetch.js";
+import { fetchRecentComps } from "./lib/dashboardCompsRecentFetch.js";
+import { fetchRecentNotePages } from "./lib/dashboardNotesRecentFetch.js";
 import { fetchLastTouchedDoc } from "./lib/dashboardDocFetch.js";
 import { fetchScheduleProjects } from "./lib/dashboardScheduleFetch.js";
 import { fetchAllElementRecency } from "./lib/dashboardElementRecencyFetch.js";
 import { fetchElementsForSites } from "./lib/dashboardYieldFetch.js";
-import { yieldBySite } from "./lib/buildingYield.js";
+import { yieldBySite, buildingCountBySite } from "./lib/buildingYield.js";
 import { groupProjectsByGroupId, pipelineCounts, goingQuiet, mostRecentProject } from "./lib/dashboardPipeline.js";
 import { summarizeScheduleHealth } from "./lib/scheduleHealth.js";
 import { needsAttentionList } from "./lib/needsAttentionList.js";
 import { pursuitsTable, quietDaysByGroupFromRows } from "./lib/pursuitsList.js";
+import { buildSinceLastHereFeed } from "./lib/sinceLastHereFeed.js";
+import { spanWords } from "./lib/dashboardDates.js";
 
 const SAVE_DEBOUNCE_MS = 900;
 const ROW_HEIGHT_PX = 32;
@@ -93,7 +99,7 @@ function useMeasuredWidth() {
   return [ref, width];
 }
 
-export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler }) {
+export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenNoteInNotes }) {
   const [layout, setLayout] = useState(() => normalizeLayout(null));
   const [customizing, setCustomizing] = useState(false);
   const [saveNote, setSaveNote] = useState(null); // null | "saved" | "local" | "error"
@@ -147,6 +153,11 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   const [comps, setComps] = useState(null);
   const [doc, setDoc] = useState(null);
   const [scheduleProjects, setScheduleProjects] = useState(null);
+  // B1366384 (NEW-1) — "Since you were last here". `sinceLastHere` holds the already-built feed
+  // + its header span string, computed ONCE per mount alongside everything else (see the effect
+  // below) rather than re-derived on every render, so the card's "since X" doesn't creep forward
+  // on an unrelated re-render.
+  const [sinceLastHere, setSinceLastHere] = useState(null);
   // B1161793 (NEW-2) — building elements for each open pursuit's own representative plan, for
   // the Yield column. Fetched as a genuinely SECOND round trip (not a fifth parallel branch):
   // which plans to ask for isn't known until `sites` resolves — see the effect below.
@@ -166,22 +177,54 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     let live = true;
     setDataReady(false);
     (async () => {
+      // The since-last-here mark has to be known BEFORE the recent-comps/recent-notes fetches
+      // fire — both are bounded by it (`since`), never an account-wide pull. It's one small,
+      // fast read (profiles.prefs, same row dashboardLayout already reads), not a second waterfall.
+      const nowMs = Date.now();
+      const { mark } = await loadSinceLastHere(userId);
+      if (!live) return;
+      const windowStartMs = mark.lastVisitAt != null ? Number(mark.lastVisitAt) : nowMs - 24 * 60 * 60 * 1000;
+      const sinceIso = new Date(windowStartMs).toISOString();
+
       const results = await Promise.allSettled([
         fetchSiteSummaries().then((v) => { if (live) setSites(v); return v; }),
         fetchCompsCounts().then((v) => { if (live) setComps(v); }),
         fetchLastTouchedDoc().then((v) => { if (live) setDoc(v); }),
-        fetchScheduleProjects().then((v) => { if (live) setScheduleProjects(v); }),
+        fetchScheduleProjects().then((v) => { if (live) setScheduleProjects(v); return v; }),
         fetchAllElementRecency().then((v) => v),
+        fetchRecentComps(sinceIso),
+        fetchRecentNotePages(userId, windowStartMs),
       ]);
       if (!live) return;
       const siteRows = results[0].status === "fulfilled" ? results[0].value || [] : [];
       const elementRecencyRows = results[4].status === "fulfilled" ? results[4].value || [] : [];
+      const scheduleProjectsValue = results[3].status === "fulfilled" ? results[3].value : null;
+      const recentComps = results[5].status === "fulfilled" ? results[5].value || [] : [];
+      const recentNotePages = results[6].status === "fulfilled" ? results[6].value || [] : [];
       const openPursuits = pursuitsTable(groupProjectsByGroupId(siteRows), {});
       const pursuitSiteIds = [...new Set(openPursuits.map((p) => p.siteId).filter(Boolean))];
       const elementRows = await fetchElementsForSites(pursuitSiteIds).catch(() => []);
       if (!live) return;
       setYieldRows(elementRows);
       setQuietDaysByGroup(quietDaysByGroupFromRows(elementRecencyRows, siteRows));
+
+      const feed = buildSinceLastHereFeed({
+        now: nowMs,
+        lastVisitAt: mark.lastVisitAt != null ? Number(mark.lastVisitAt) : null,
+        sites: siteRows,
+        buildingCountBySite: buildingCountBySite(elementRows),
+        sqftBySite: yieldBySite(elementRows),
+        scheduleProjects: scheduleProjectsValue,
+        comps: recentComps,
+        notePages: recentNotePages,
+        prevSnapshot: mark.snapshot,
+      });
+      setSinceLastHere({ feed, headerSpan: spanWords(feed.spanAnchorMs, nowMs), now: nowMs });
+      // Fire-and-forget: this visit's own mark for NEXT time. Never blocks dataReady — a failed
+      // cloud write here degrades to "the next visit re-derives against the local mirror (or a
+      // fresh 24h window)", not a broken dashboard.
+      saveSinceLastHere(userId, { lastVisitAt: nowMs, snapshot: feed.nextSnapshot });
+
       setDataReady(true);
     })();
     return () => { live = false; };
@@ -200,16 +243,25 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     goingQuiet: { rows: goingQuiet(projects) },
     compsSummary: { counts: comps },
     scheduleHealth: { rows: scheduleProjects ? summarizeScheduleHealth(scheduleProjects) : [] },
-  }), [projects, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap]);
+    sinceLastHere: { feed: sinceLastHere?.feed || null },
+  }), [projects, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap, sinceLastHere]);
 
   const openProject = (p) => onNavigate?.({ module: "site-planner", projectId: p.groupId, cross: false, org: false });
   const openSchedule = (p) => onNavigate?.({ module: "scheduler", projectId: p.linkedSiteId, cross: false, org: false });
   const openDoc = (d) => onOpenReviewInDocReview?.({ id: d.id, project_id: d.projectId });
   const openTask = (row) => onOpenTaskInScheduler?.({ linkedSiteId: row.linkedSiteId, taskId: row.taskId });
+  // B1366384 — a comp's own `projectId` is a bare SITE id (comps.project_id → public.sites.id),
+  // not the GROUP id `onNavigate` needs to open the right plan; resolve it off the already-fetched
+  // `sites` list rather than a second query.
+  const openComp = (comp) => {
+    const site = sites.find((s) => s.id === comp?.projectId);
+    const groupId = site ? (site.group_id || site.id) : comp?.projectId;
+    if (groupId) onNavigate?.({ module: "site-planner", projectId: groupId, cross: false, org: false });
+  };
 
   // NEW-1 — while data is still loading every slot renders the SAME stable-height skeleton
   // instead of its real (variable-height) content; see the `dataReady` effect above.
-  const SKELETON_ROWS = { jumpBackIn: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 2, goingQuiet: 3 };
+  const SKELETON_ROWS = { jumpBackIn: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 2, goingQuiet: 3, sinceLastHere: 6 };
   const CARD_RENDERERS = dataReady ? {
     jumpBackIn: () => <JumpBackInCard {...cardData.jumpBackIn} onOpenProject={openProject} onOpenDoc={openDoc} />,
     pipelineStatus: () => <PipelineCard {...cardData.pipelineStatus} />,
@@ -218,6 +270,17 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     goingQuiet: () => <GoingQuietCard {...cardData.goingQuiet} onOpenProject={openProject} />,
     compsSummary: () => <CompsSummaryCard {...cardData.compsSummary} />,
     scheduleHealth: () => <ScheduleHealthCard {...cardData.scheduleHealth} onOpenSchedule={openSchedule} />,
+    sinceLastHere: () => (
+      <SinceLastHereCard
+        feed={cardData.sinceLastHere.feed}
+        now={sinceLastHere?.now ?? Date.now()}
+        onOpenProject={openProject}
+        onOpenTask={openTask}
+        onOpenSchedule={openSchedule}
+        onOpenComp={openComp}
+        onOpenNote={onOpenNoteInNotes}
+      />
+    ),
   } : Object.fromEntries(Object.keys(CARD_DEFS).map((k) => [k, () => <CardSkeleton rows={SKELETON_ROWS[k]} />]));
 
   const toAdd = availableToAdd(layout);
@@ -230,6 +293,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     return (
       <DashboardCard
         title={def.title}
+        headerRight={entry.key === "sinceLastHere" ? sinceLastHere?.headerSpan : null}
         customizing={customizing}
         showDragHandle={!isNarrow}
         onRemove={() => setLayout((l) => removeCard(l, entry.key))}

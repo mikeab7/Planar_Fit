@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { grossBuildingSqft, yieldBySite } from "../src/workspaces/dashboard/lib/buildingYield.js";
+import { grossBuildingSqft, yieldBySite, buildingCountBySite } from "../src/workspaces/dashboard/lib/buildingYield.js";
 
 describe("grossBuildingSqft", () => {
   it("sums rectangular buildings' w*h", () => {
@@ -41,5 +41,30 @@ describe("yieldBySite", () => {
   it("handles empty/missing input without throwing", () => {
     expect(yieldBySite(null)).toEqual({});
     expect(yieldBySite([])).toEqual({});
+  });
+});
+
+describe("buildingCountBySite", () => {
+  it("counts only building-type elements, per site", () => {
+    const rows = [
+      { site_id: "s1", data: { type: "building", w: 1, h: 1 } },
+      { site_id: "s1", data: { type: "building", w: 1, h: 1 } },
+      { site_id: "s1", data: { type: "paving", w: 1, h: 1 } },
+      { site_id: "s2", data: { type: "pond", w: 1, h: 1 } },
+    ];
+    expect(buildingCountBySite(rows)).toEqual({ s1: 2, s2: 0 });
+  });
+
+  it("carries the same siteId set yieldBySite does, over the identical rows", () => {
+    const rows = [
+      { site_id: "s1", data: { type: "building", w: 10, h: 10 } },
+      { site_id: "s2", data: { type: "paving", w: 5, h: 5 } },
+    ];
+    expect(Object.keys(buildingCountBySite(rows)).sort()).toEqual(Object.keys(yieldBySite(rows)).sort());
+  });
+
+  it("handles empty/missing input without throwing", () => {
+    expect(buildingCountBySite(null)).toEqual({});
+    expect(buildingCountBySite([])).toEqual({});
   });
 });

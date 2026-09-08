@@ -14,7 +14,7 @@
 import { RADIUS } from "../../../shared/ui/radius.js";
 import { IconButton } from "../../../shared/ui/controls.jsx";
 
-export default function DashboardCard({ title, customizing, showDragHandle = true, onRemove, children }) {
+export default function DashboardCard({ title, headerRight, customizing, showDragHandle = true, onRemove, children }) {
   return (
     <div
       style={{
@@ -41,6 +41,11 @@ export default function DashboardCard({ title, customizing, showDragHandle = tru
             {title}
           </span>
         </span>
+        {headerRight && (
+          <span style={{ flex: "none", fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" }}>
+            {headerRight}
+          </span>
+        )}
         {customizing && (
           <IconButton size={22} onClick={onRemove} title="Remove this card">
             <span style={{ fontSize: 14, lineHeight: 1 }}>×</span>
