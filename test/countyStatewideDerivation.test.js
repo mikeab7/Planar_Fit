@@ -165,8 +165,26 @@ describe("the derivation changes nothing about enumeration or the statewide pseu
   });
 });
 
-describe("a point genuinely outside Texas and Colorado still reports honestly", () => {
-  it("New York City resolves to `outside`, never a guessed derivation", () => {
-    expect(countyIdentity(40.7128, -74.006).status).toBe("outside");
+describe("a point genuinely outside every state + DC still reports honestly", () => {
+  // B1361425 — New York City used to be the example here, back when county-polygons.json
+  // covered only Texas and Colorado. It no longer proves this: the file now carries real
+  // geometry for every US county (the nationwide Esri source), so NYC correctly resolves to
+  // `no-source` — "this is New York County, NY, and Planyr has no parcel service configured
+  // there" — which is the MORE honest answer, not a regression (that IS what B209502's whole
+  // "naming a gap honestly" contract is for). `outside` now means genuinely outside every US
+  // county — international waters, mid-ocean, another country.
+  it("New York City resolves to `no-source`, naming the real county with no parcel source — not a blanket `outside`", () => {
+    const id = countyIdentity(40.7128, -74.006);
+    expect(id.status).toBe("no-source");
+    expect(id.name).toBe("New York County");
+    expect(id.state).toBe("NY");
+  });
+
+  it("a point mid-Atlantic, hundreds of miles from any coastline, still resolves to `outside`", () => {
+    expect(countyIdentity(35.0, -50.0).status).toBe("outside");
+  });
+
+  it("Toronto, Canada resolves to `outside`, never a guessed US derivation", () => {
+    expect(countyIdentity(43.6532, -79.3832).status).toBe("outside");
   });
 });

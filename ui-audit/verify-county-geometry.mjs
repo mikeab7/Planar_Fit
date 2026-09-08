@@ -108,7 +108,10 @@ if (result.error) {
   ok(false, `asset fetch in-page: ${result.error}`);
 } else {
   ok(result.format === "county-polygons/1", `asset format "${result.format}"`);
-  ok(result.counties === 318, `${result.counties} counties in the asset (expect 318 — 254 TX + 64 CO)`);
+  // B1361425 — nationwide coverage: 254 TX + 64 CO (each state's own dedicated, higher-fidelity
+  // source) + 2,826 from every other state + DC (the Esri USA_Counties_Generalized_Boundaries
+  // nationwide source) = 3,144 total US counties/county-equivalents.
+  ok(result.counties === 3144, `${result.counties} counties in the asset (expect 3144 — every US county/county-equivalent)`);
 
   console.log("\n3) the owner's six audit sites resolve to the RIGHT county");
   for (const s of result.sites) {
