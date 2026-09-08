@@ -257,6 +257,10 @@ export default function Notes({
   // ORG SCOPE (NEW-1) — the route's org flag, uniform with `projectId`/`crossProject`. `org`
   // and `projectId` are mutually exclusive by construction (Shell never routes both true).
   projectId, crossProject, org: orgScope = false, onNavigate, onGoDashboard, onNewProject, onSelectOrg,
+  // B1366384 — Shell's token-stamped "open this exact page" request (the Dashboard's "Since you
+  // were last here" card). Every other workspace receives this prop too and ignores it, the same
+  // way Notes already receives (and ignores) docIntent/scheduleTaskIntent.
+  noteIntent,
 }) {
   const [tree, setTree] = useState(emptyTree);
   const [activePageId, setActivePageId] = useState(null);
@@ -575,6 +579,19 @@ export default function Notes({
     const visible = new Set(roots.flatMap((r) => subtreePageIds(r)));
     if (!activePageId || !visible.has(activePageId)) setActivePageId(roots[0]?.id || null);
   }, [projectId, orgScope, tree, activePageId]);
+
+  /* B1366384 — honor a cross-workspace "open this exact page" request (Shell's `noteIntent`,
+   * from the Dashboard's "Since you were last here" card). Runs after the visibility-guard effect
+   * above so it wins the same commit once the tree includes the target; re-checks on every tree
+   * change so it takes effect the moment a not-yet-loaded cloud tree actually arrives, rather than
+   * racing it. A stale/unknown pageId (the page was since deleted) is a silent no-op — the guard
+   * effect above already has the right fallback for that. */
+  useEffect(() => {
+    if (!noteIntent?.pageId) return;
+    if (!findPage(tree, noteIntent.pageId)) return;
+    setActivePageId(noteIntent.pageId);
+    setMobileShowList(false);
+  }, [noteIntent, tree]);
 
   const active = useMemo(() => (activePageId ? findPage(tree, activePageId) : null), [tree, activePageId]);
   const activePage = active?.page || null;

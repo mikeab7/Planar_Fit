@@ -191,6 +191,44 @@ was never clicked" quietly ships broken.
 11. **Phone.** Open Schedule on the phone and press New project. **Expect:** the dialog fits the screen, both the name field and the owner picker are reachable, and the page does not scroll sideways.
 12. **Flagged for HIS decision, not deleted by anyone:** **ZZ-RENAME-TEST-G** (0 tasks, a leftover from an earlier verification run) and, once step 7 is done, nothing else. **TAS Land Sale is NOT a leftover** — it has 8 tasks and is live work. Confirm he wants ZZ-RENAME-TEST-G gone before removing it.
 
+### V996800 — B1373536: on a real signed-in account, a schedule change made while away actually reaches the "Since you were last here" card, and a busy real plan's thumbnail is both small and recognisable `Blocker: auth` `Blocker: real-data`
+
+**Why this needs a real pass.** Every mechanism is proven in the sandbox (below), but three things exist only on a signed-in account with real data: the `planar_history` read that supplies the schedule stamp, a genuinely busy plan whose thumbnail engages the escalation ladder, and the visit-to-visit snapshot round-trip that the feed's schedule kinds are diffed from. This sandbox's proxy CORS-blocks the Supabase auth handshake — the standing `Blocker: auth` wall.
+
+**What was verified here (this session, sandbox — never assumed).**
+1. `test/sinceLastHereFeed.test.js` — 30 tests. The one-month-absence fixture from the review's own probe: 17 events derived, cap overflowed, and **all 3 schedule events now shown (was 0 of 3)**; no event kind can be deleted wholesale by the cap; rows still read newest-first and still respect the cap; the measured write time is used as the stamp; a write time predating the last visit cannot drag the stamp below the window; an approximate row never suppresses itself against the own-action debounce; and no kind other than the two schedule ones is ever marked approximate.
+2. `test/planThumbnail.test.js` — 22 tests. Under the 24 KB ceiling at 10×8 through 1200×60; never degrades to nothing even with no boundary parcel; a realistic 60×24 plan is not degraded at all (all 61 paths render); maximum outline deviation stays under the stated bound; drawn content still fills the viewBox after the heaviest case; and three escaping cases (a quote, angle brackets and ampersands, and a plan-name-shaped value) all round-trip as inert text through a strict parser that rejects any breakout.
+3. **Teeth-proved both ways**, rather than trusting green: un-escaping → 3 red · removing the ceiling → 5 red · reverting both feed halves → 3 red · reverting only the stamp → 1 red · restored → all green.
+4. The two committed review probes re-run against this branch: feed 0 of 3 → **3 of 3** schedule rows surviving; thumbnail 380 KB → **19.4 KB** at 600×40, and the injected `"/><script>` now fully escaped.
+5. `npm run ci-parity -- --skip-install` — **full PASS, every gate green** (lint, mint gate, 15,980 tests, build, bundle budget, signature budget, 16/16 visual-regression baselines identical). Degraded only on the documented dummy Supabase secrets.
+
+**The steps still pending, with a named expected result for each.**
+1. Sign in on `planyr.io`. Open the Dashboard once so a last-visit mark is written, then confirm in the browser console that a `planar_history` read fired. **Expect:** one `planar_history` request selecting `created_at` only — never `value`. If a ~216 KB response body appears on that request, this is wrong and must be reported, not accepted.
+2. Open the Scheduler, move a milestone's finish date by a week, and mark a task complete. Wait past the 30-second own-action debounce, then return to the Dashboard. **Expect:** a "Milestone … slipped 7 days" row AND a "Closed 1 task on …" row, both visible on the card, both with a `~`-prefixed age whose hover names a real interval. Both rows must appear even if the account has enough other recent activity to overflow the 12-row cap — that overflow is the whole defect.
+3. Click each of those two rows. **Expect:** the slip row opens that exact task in the Scheduler; the completion row opens that schedule.
+4. Leave the account alone for several days (or set the last-visit mark back by hand), make one schedule change, and return. **Expect:** the schedule rows still appear, still not last, and the `~` age reads as days rather than as the full length of the absence.
+5. Open the Dashboard on an account whose Recent plans card shows a genuinely busy real plan (many drawn elements, surveyed pond/parcel rings). **Expect:** the thumbnail still reads recognisably as that plan — the boundary and the major buildings/ponds in the right places and the right colors — and its `thumbnail_svg` in `public.sites` is at most 24 KB. A thumbnail that is blank, that has lost its boundary, or that no longer resembles the plan is a FAIL and must be reported, not explained away.
+6. Rename a plan (or set a parcel stroke/fill) to something containing `"`, `<`, `>` and `&`, save it so the thumbnail regenerates, and reload the Dashboard. **Expect:** the thumbnail renders normally, unchanged in appearance.
+### V999936 — B1376672: an out-of-state comp pin gets NO county (never a Texas one), and a Colorado pin gets its own `co_` county `Blocker: live-GIS` `Blocker: real-data`
+
+**Why this needs a real pass.** The pure resolution is fully proven in the sandbox (below), but the leg that runs FIRST in production is `countyAtPoint`'s live boundary identify against the TxDOT / Colorado county services — hosts this sandbox's egress blocks, the same wall every other `Blocker: live-GIS` item here documents. Dropping a real comp pin also needs a signed-in account (`Blocker: auth` applies to the comp leg; the Site leg below is reachable signed-out).
+
+**What was verified here (sandbox, this session).**
+1. `ui-audit/review-2026-09-08/probe-comp-county-state.mjs` — the real shipped resolver against the real bundled national geometry: 4 of 4 out-of-state points returned a Texas key before the fix, `null` after; the Texas known-good arm still returns `montgomery`, and the Colorado arm goes from `null` to `co_denver`.
+2. `test/countyStateQualifier.test.js` — 9 tests: the repo-wide sweep (which caught a fifth call site the manual read missed) and the value table with its known-good TX/CO arms. Mutation-checked: reverting any one call site turns it red.
+3. `npm run ci-parity` — full required-gate parity, PASS (degraded secrets only).
+
+**Steps, each with a named expected result — on `planyr.io`:**
+1. Read the served chunk hash (`document.querySelectorAll('script[src]')`) in the SAME observation as every step below. **Expect:** a chunk from a build after this PR merged. A hash from before it makes the whole run void.
+2. Signed in, Comps → drop a comp pin somewhere clearly outside Texas and Colorado — Norristown, Pennsylvania is the exact reproduction (Montgomery County, PA). **Expect:** the comp's county reads as EMPTY / unresolved and the sheet shows the existing "Couldn't determine the county…" soft warning. **Fail:** any label reading "Montgomery County, TX" or any Texas county name.
+3. Open the Dashboard with that comp as the most recently added. **Expect:** the Comps card names no county for it (and it is counted as excluded from the peer set, never averaged into one) — never a Texas county line.
+4. Drop a second comp pin in Denver, Colorado. **Expect:** the county resolves and reads as Denver (`co_denver`) — this is the improvement half; before the fix it came back with no county at all.
+5. Signed out is enough for this one: Site → "Start blank here" with the map centred on a point outside TX/CO. **Expect:** the plan is created with no county, and the Layers panel reports its honest no-parcel-source state rather than a Texas county's jurisdiction, drainage authority or setbacks.
+6. Regression arm, the one that must NOT change: open an existing Houston-area plan (any Harris/Fort Bend/Montgomery TX site). **Expect:** its county, jurisdiction badge, parcel source and detention criteria read exactly as they did before — identical, not merely plausible.
+
+**Cleanup:** both comp pins in steps 2 and 4 are throwaway test entries on a duplicate, never one of Michael's real plans (owner constraint 7) — delete them at the end and say what was touched.
+
+**Result:** ⏳ pending — needs a real browser with live GIS egress; not reachable from this sandbox. `Cadence: once`.
 ### V1003376 — B1380112: the four Comps-card fixes (one rate period, one ruler per peer set, ties, the sparse-state footer) as the card actually paints on a real signed-in account `Blocker: auth` `Blocker: real-data`
 
 **Why this needs a real pass, and exactly how far the sandbox already got.** All four defects were found ON Michael's real production comp rows, and all four fixes are proven here against those same rows — the four records are embedded verbatim in `test/compsCardModel.test.js` (`PRODUCTION_ROWS`), the way the review's own `probe-comps-production-rows.mjs` embeds them, because the headline case only reproduces on the real values. What a sandbox cannot do is sign in: the proxy CORS-blocks the Supabase auth handshake, so the card as it paints on his account — against his live comps, at whatever counts and mixes they hold on the day — is the one leg left. This is a NARROW residual, not an unverified feature.
@@ -214,6 +252,22 @@ was never clicked" quietly ships broken.
 
 ### V991408 — B1368144: the ground-first map toolbar on a real parcel selection — three verbs, an acreage chip on the shape, and a search that finds instead of creating `Blocker: live-GIS` `Blocker: auth`
 
+> **⛔ STATE THIS FIRST, EVERY TIME THIS ITEM IS READ OR REPORTED: ONLY THE PIN FLAVOUR OF THE DECIDE
+> BAR HAS BEEN DRIVEN END TO END. THE PARCEL FLAVOUR HAS NOT BEEN DRIVEN AT ALL, AND IT IS THE ONE
+> THE OWNER WILL USE MOST** (a plan almost always starts from a real lot; a raw pin is the fallback).
+> The 54/54 headless run is real and is not evidence about the parcel path: this sandbox's egress
+> proxy refuses the county/statewide ArcGIS hosts at the CONNECT tunnel with a fast 403, so
+> selecting a real lot — and therefore the acreage chip on the shape, the "Plan N parcels" plural,
+> "Plan a site" opening from lots, and "Log a comp" writing a multi-parcel anchor — was never
+> exercised by any check on this branch. **This item may not be closed on the headless run, on the
+> partial pass recorded below, or on a reading of the code.** (STANDING RULE #2: a null or a partial
+> is a FINDING, never a DISPOSITION.)
+>
+> **Partial live pass, 2026-09-08, owner's own browser, deployed build `4194dda`** — the AT-REST row
+> only: no Site/Comp toggle present, and Select parcels · Draw · Drop a pin all render. That closes
+> step 2 below and nothing else. Steps 3–13 remain open, and steps 3, 4, 5, 6 and 7 are the parcel
+> flavour this note is about.
+
 **Why this needs a live pass at all, given 54/54 headless checks passed.** The PIN flavour of the decide bar needs no parcel service, so it is fully driven here (see below) at both of the owner's widths. Two things are NOT reachable from this sandbox and neither is a code-reading claim:
 - **The PARCEL flavour.** Selecting a real lot requires a live county parcel identify. This environment's egress proxy 403s the county/statewide ArcGIS hosts at the CONNECT tunnel — a fast refusal, not a timeout, so no amount of waiting bridges it. Everything downstream of that selection — the acreage chip painting ON the parcels, "Plan a site" opening a plan from them, "Log a comp" writing a multi-parcel anchor — is unexercised by construction.
 - **"Log a comp" LANDING.** A comp needs a signed-in session; Supabase auth is CORS-blocked here.
@@ -227,7 +281,7 @@ was never clicked" quietly ships broken.
 
 **Steps, each with a named expected result — on `planyr.io`, signed in as the owner. Use a THROWAWAY duplicate for anything that writes; never a real plan or comp.**
 1. Read the served chunk hash in the SAME observation as every check below (`document.querySelectorAll('script[src]')`) and confirm it names a build after this PR merged. A reload does not guarantee a fresh bundle.
-2. Open the map with nothing selected. **Expect:** the address field, then Select parcels · Draw · Drop a pin. **Expect NOT:** any Site/Comp toggle, and no "Place comp" button.
+2. ✅ **PASSED 2026-09-08** (owner's own browser, build `4194dda`). Open the map with nothing selected. **Expect:** the address field, then Select parcels · Draw · Drop a pin. **Expect NOT:** any Site/Comp toggle, and no "Place comp" button. — *Observed: no toggle; all three buttons present.*
 3. Click **Select parcels** and click one real lot. **Expect:** the toolbar reads `1 parcel · N.NN AC` with a NEUTRAL dot, three verbs beside it — Plan a site · Log a comp · Place a site plan — and **a small acreage chip painted on the selected lot itself**, reading the same acreage.
 4. Add two more adjoining lots. **Expect:** the count and both acreages track together, and the first verb now reads **"Plan N parcels"** (the plural wording), not "Plan a site".
 5. Press the acreage chip on the map. **Expect:** it does not swallow the press — the lot under it deselects exactly as a click on that lot would (the chip is not a hit target).
@@ -240,7 +294,7 @@ was never clicked" quietly ships broken.
 12. Confirm all three retired comp anchors are still reachable: pin → Log a comp · Select parcels → Log a comp · a site plan card's three-dot menu → "Pin comp here".
 13. Click the left rail's Comps tab and then the Sites tab. **Expect:** nothing on the centre toolbar changes at all (B850016's decoupling, which this item must not have re-coupled).
 
-**Result:** ⏳ pending — needs a signed-in browser with live county parcel service, on production. `Cadence: once`.
+**Result:** ⏳ **pending — PARCEL FLAVOUR NOT DRIVEN.** Step 2 (the at-rest row) passed on the owner's own browser 2026-09-08 on build `4194dda`; every parcel-flavour step is untouched and needs a signed-in browser with a reachable county parcel service. `Cadence: once`.
 
 ### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back `Blocker: real-data`
 
@@ -360,6 +414,27 @@ was never clicked" quietly ships broken.
 
 **Result:** ⏳ pending — needs a real signed-in browser session on production; not reachable from this sandbox. `Cadence: once`.
 
+### V989648 — B1366384: the new "Since you were last here" dashboard card actually reports the right thing for each event kind, on a real signed-in account, and every row clicks through correctly `Blocker: auth` `Blocker: real-data`
+
+**Why this needs its own real pass.** The whole derivation is pure and exhaustively unit-tested against synthetic data (`test/sinceLastHereFeed.test.js`, 22 tests; `test/sinceLastHereCard.test.js`, 5 tests covering real rendered markup) — every rule (created/renamed/edited priority, the schedule-diff snapshot, the 30-second own-action debounce, the 12-row cap, day-divider grouping) is proven against inputs shaped exactly like what Supabase actually returns. What can't run here: this sandbox's proxy CORS-blocks the real Supabase auth handshake, so nothing can confirm the feed against the owner's OWN real plans/comps/notes/schedule, or that each row's click-through actually lands on the right screen in the real, deployed app.
+
+**What was verified here (this session, sandbox, never signed in).** A signed-out headless Chromium pass against a local dev build (`npm run dev`, no `VITE_SUPABASE_URL` configured — every Supabase call gracefully degrades to empty, matching a fresh, no-data account) confirmed: the card renders as the first, largest card on the dashboard; the header shows "SINCE YOU WERE LAST HERE" with a span on the right ("a day", the 24-hour first-visit fallback); the body shows the calm empty-state line "Nothing happened since your last visit."; zero console/page errors. `npm test` (782/782 files, 15,822 tests), `npm run lint` (0 errors), `npm run build` (clean), `npm run perf:bundle` (all budgets pass, including the allowlist gate a first draft of this item tripped — see B1366384's own writeup).
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner, using ONLY throwaway plans/comps/notes/schedule tasks created for this check (never one of his real plans — root `CLAUDE.md`'s owner constraint #7):**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. On an account (or a fresh throwaway account) with nothing recent, open the Dashboard. **Expect:** the "Since you were last here" card shows the calm one-line empty state, never a wall of unrelated older history.
+3. Create a throwaway plan with a couple of buildings. Reload the Dashboard **more than 30 seconds later**. **Expect:** a "New plan **\<name\>**" row naming the real building count and square footage; clicking the row opens that exact plan.
+4. Immediately reload the Dashboard again within a few seconds of step 3. **Expect:** that same row does NOT reappear as new on this immediate reload (own-action debounce) — but reappears normally on the NEXT genuine visit after this one, since the mark only advances past it once it's been shown.
+5. Rename that throwaway plan, wait 30+ seconds, reload. **Expect:** a "Renamed to **\<new name\>**" row, sub-line naming its county and pipeline status (not duplicated with a "created" row).
+6. On a SECOND later visit, add a building to that same plan (so a baseline snapshot already exists from step 3/5's visit), wait 30+ seconds, reload. **Expect:** a "**\<name\>** updated" row whose sub-line states the new building count/square footage.
+7. On a throwaway schedule, move a task's due date, wait 30+ seconds, reload. **Expect:** a "Milestone **\<task\>** slipped N days" (or "moved up") row whose sub-line names the project and the day count; clicking it opens that exact task in the Scheduler.
+8. Mark 3+ throwaway tasks in one project done, wait 30+ seconds, reload. **Expect:** one "Closed N tasks on **\<project\>**" row whose sub-line lists the task names (capped at 4, "+N more" beyond that); clicking it opens that project's schedule.
+9. Add a throwaway comp (a lease or land deal), wait 30+ seconds, reload. **Expect:** a "New comp **\<title\>**" row whose sub-line states its rate and size; clicking it opens the plan the comp is attached to.
+10. Write a throwaway note with a few sentences, wait 30+ seconds, reload. **Expect:** a "New note **\<title\>**" row quoting its opening words; clicking it opens Notes with that EXACT page selected (not just the Notes tab in general).
+11. If more than 12 things happened since the last visit (or force it by doing 13+ of the above across one gap), **expect:** the card shows the 12 most recent and a footer stating "+N more since your last visit" rather than an unbounded list.
+12. Clean up every throwaway plan/comp/note/schedule task created for this check.
+
+**Result:** ⏳ pending — needs a real signed-in account. `Cadence: once`.
 ### V983168 — B1359904: the Dashboard's new "Locations" map card actually plots real projects/pursuits/comps, opens one on click, and paints its basemap `Blocker: auth` `Blocker: real-data` `Blocker: live-GIS`
 
 **Why this needs its own real pass.** Every data source this card reads (`dashboardSitesFetch.fetchSiteSummaries`, `dashboardCompsFetch.fetchCompsForMap`) is cloud-only (Supabase) — this sandbox's proxy CORS-blocks the Supabase auth handshake, so a signed-out session always sees zero projects/pursuits/comps and can only ever reach the card's empty state. Separately, the quiet Esri Gray Canvas basemap tiles (`server.arcgisonline.com`) are an external GIS host this sandbox's egress proxy hard-blocks (reproduced live in this same session: a `net::ERR_TUNNEL_CONNECTION_FAILED` against a different Esri-hosted GIS endpoint from the same host family, driving the Site Planner's own map). So three things can only be confirmed live: (1) real located markers actually plotting at the right three visual weights, (2) the fit-to-bounds/comps-toggle/marker-click-opens-project interactions against real data, and (3) the basemap tiles actually painting in both themes.
@@ -441,7 +516,7 @@ was never clicked" quietly ships broken.
 
 **Result:** ⏳ pending — step 1 is confirmed here (source live-queried from this sandbox, unblocked); the app-level render checks (2-4) need a real browser session against the deployed app and have not been separately confirmed. `Cadence: once` (re-probe on suspicion of drift via `node scripts/build-county-polygons.mjs --fetch`).
 
-### V984944 — B1358128 (×2) / B1361680 / B1361681: deleting a project from the switcher really writes `sites.deleted_at`, on the owner's own two named throwaway projects `Blocker: auth` `Blocker: real-data`
+### V984944 — B1358128 (×2) / B1361680 / B1361681 / B1361683: deleting a project from the switcher really writes `sites.deleted_at`, on the owner's own two named throwaway projects `Blocker: auth` `Blocker: real-data`
 
 **Why this still needs a real pass, and what no longer does.** Most of what was previously deferred to "a live check" is now driven HERE: `ui-audit/verify-signed-in-project-delete.mjs` runs the real app **signed in** against a stubbed Supabase (`ui-audit/lib/stubSupabase.mjs`) and asserts the actual `PATCH /rest/v1/sites … {"deleted_at":…}` goes out — 11/11 green after the fix, 3/10 with zero soft-delete writes before it. `e2e/menu-layer-nesting.spec.js` pins the mechanism in a real browser (4 of its 5 cases go red when the one-line fix is reverted; the "outside click still dismisses" control stays green). What those cannot cover is the real account's own RLS, the real embedded Gantt app over `postMessage`, and the owner's two specific rows.
 
@@ -455,6 +530,7 @@ was never clicked" quietly ships broken.
 5. Hard reload, then open the picker on BOTH routes. **Expect:** neither project is listed on either, and both appear under **Recently deleted** (restorable for 30 days).
 6. **Schedule module** → any real schedule with one linked site (e.g. "Grand Port") → kebab → **Rename** → type a new name → Enter. **Expect:** the inline editor OPENS (it previously opened nothing at all), the row shows the new name immediately, and the name survives a reload.
 7. **The negative control, so a wedged-open menu is caught too:** open the project crumb and click anywhere on the page outside every menu. **Expect:** the dropdown closes normally.
+8. **B1361683, the ordering leg — only if it is convenient, and it is genuinely awkward to stage.** With DevTools set to offline (or a request-blocking rule on `rest/v1/sites`), delete any throwaway project. **Expect:** an honest failure message, and the project is **still listed** — it must not disappear. Restore the network and delete it again normally. This is proven in `test/deleteConfirmedBeforeLocal.test.js` (mutation-proven three ways), so a live pass here is confirmation, not the proof; skip it rather than spend real effort staging it.
 
 **Result:** ⏳ pending — needs a real signed-in browser on production. `Cadence: once`.
 
