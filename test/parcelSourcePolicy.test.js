@@ -26,8 +26,8 @@ import {
 } from "../src/workspaces/site-planner/lib/parcelTruncation.js";
 
 describe("NEW-2 — the statewide policy follows the URL, not the key", () => {
-  it("recognises BOTH states' composites by URL", () => {
-    expect(STATEWIDE_LAYER_URLS.length).toBe(2);
+  it("recognises every state's composite by URL (NEW-1 raised this from 2 to 21 — the derivation, not the count, is what's asserted)", () => {
+    expect(STATEWIDE_LAYER_URLS.length).toBe(STATEWIDE_KEYS.length);
     for (const url of STATEWIDE_LAYER_URLS) expect(isStatewideLayerUrl(url)).toBe(true);
     // …and every key flagged `statewide` resolves to one of them, so the two views agree.
     for (const key of STATEWIDE_KEYS) expect(isStatewideLayerUrl(COUNTIES_MAP[key].layerUrl)).toBe(true);
