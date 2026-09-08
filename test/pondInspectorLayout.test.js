@@ -36,8 +36,11 @@ describe("B1/B2 — header + status card sit above the Dimensions rows", () => {
 
   it("v3 B7.3 — a pond's inner Section passes NO title (bare card) so 'DETENTION POND' isn't a double header", () => {
     // The panel-chrome row already reads "ELEMENT · DETENTION POND" and owns the collapse chevron;
-    // the selected-element Section must not repeat the pond label as a second header.
-    expect(src).toContain('title={selEl.type === "pond" ? false : `Selected · ${TYPE[selEl.type].label}`}');
+    // the selected-element Section must not repeat the pond label as a second header. B1215682/
+    // NEW-2 generalized this same rule to every type on the phone sheet (whose full label carries
+    // no " / " qualifier the chrome's own shortened label would drop) — pond is still unconditionally
+    // `false` on both desktop and phone, it's just the first arm of a wider OR now.
+    expect(src).toContain('title={selEl.type === "pond" || (phoneSheetSolo && !(TYPE[selEl.type]?.label || "").includes(" / ")) ? false : `Selected · ${TYPE[selEl.type].label}`}');
     expect(src.includes('title={selEl.type === "pond" ? TYPE[selEl.type].label')).toBe(false);
   });
 });

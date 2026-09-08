@@ -6,7 +6,7 @@
   "description": "Industrial site planner (TestFit-style) for Harris / Fort Bend / Chambers County, TX",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/build-sequence-compiled.mjs",
     "preview": "vite preview --host",
     "lint": "eslint .",
     "ci-parity": "node scripts/ci-parity.mjs",

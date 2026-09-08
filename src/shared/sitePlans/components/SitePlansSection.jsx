@@ -23,10 +23,11 @@
  * flow CompsPanel already has — no new comp-creation plumbing here.
  */
 import { useEffect, useRef, useState } from "react";
-import { Button, Field, IconButton, MenuItem, ToggleChip } from "../../ui/controls.jsx";
+import { createPortal } from "react-dom";
+import { Button, Field, IconButton, ToggleChip } from "../../ui/controls.jsx";
 import { RADIUS } from "../../ui/radius.js";
 import { FONT_SIZE } from "../../ui/designTokens.js";
-import AnchoredMenu from "../../ui/AnchoredMenu.jsx";
+import { MAP_CHROME_Z, panelMaxHeight, SCALE_BAR_CLEARANCE_PX } from "../../../workspaces/site-planner/lib/mapChromeStack.js";
 import {
   fetchAllOverlays, insertOverlay, updateOverlay, deleteOverlay,
   fetchOverlayCompPoints, commitOverlayPlacementWithComps,
@@ -229,23 +230,16 @@ function emptyFlow() {
   };
 }
 
-/** One overlay's row — module scope (MODULE-SCOPE-COMPONENTS). */
-function OverlayRow({
-  o, expanded, onToggleExpand, isActive, onActivate, onDeactivate, pinning, onStartPin, onStopPin,
-  onSetOpacity, onOpacityCommit, onSetRotation, onToggleVisible, onRename, onConfirmChangePage, onDelete, rasterFailed,
-  teams, onShareTeam, duplicateCount, isOwner, onToggleLocked, zoomBelowGate, onZoomToOverlay, onStartCrop,
-}) {
+/** One overlay's RESTING card (B1310208, NEW-1, owner decision 2026-09-07: "at rest the plan card
+ * shows what it IS and nothing you operate"). Thumbnail, name, date/page and status lines only —
+ * every editing control (visibility, lock, opacity, rotation, share, move/resize, crop, pin,
+ * change page, delete) lives in the docked SitePlanAdjustPanel below, reached through the one
+ * "Adjust" button. There is no overflow menu ("why do we even have the three dots" — owner,
+ * NEW-3): Edit/adjust IS the Adjust button; Delete moved to the Adjust panel's own footer.
+ * Module scope (MODULE-SCOPE-COMPONENTS). */
+function OverlayRow({ o, adjustOpen, onOpenAdjust, onRename, rasterFailed, duplicateCount, zoomBelowGate, onZoomToOverlay }) {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(o.docTitle || "");
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [confirmingChangePage, setConfirmingChangePage] = useState(false);
-  // B1134753 NEW-20 — "rotation needs a way to type an exact value." `null` = not editing (show
-  // the live stored value); a string while the field has focus, so a half-typed "12." isn't
-  // clobbered by the next map-driven re-render mid-keystroke.
-  const [rotDraft, setRotDraft] = useState(null);
-  const rotCancelingRef = useRef(false); // Escape sets this so the resulting blur doesn't ALSO commit
-  const menuBtnRef = useRef(null);
 
   const commitName = () => {
     setEditingName(false);
@@ -254,22 +248,11 @@ function OverlayRow({
     else setNameDraft(o.docTitle || "");
   };
 
-  const commitRotation = () => {
-    if (rotCancelingRef.current) { rotCancelingRef.current = false; setRotDraft(null); return; }
-    const v = parseFloat(rotDraft);
-    setRotDraft(null);
-    if (Number.isFinite(v)) onSetRotation(((v % 360) + 360) % 360);
-  };
-
   const placed = overlayPlaced(o);
-  const sizeFt = placed ? `≈ ${Math.round(o.imgW * o.ftPerPx).toLocaleString()} × ${Math.round(o.imgH * o.ftPerPx).toLocaleString()} ft` : null;
 
   return (
-    <div style={{ border: "1px solid var(--border-default)", borderRadius: 8, padding: "8px 10px", marginBottom: 8, background: isActive ? "var(--surface-raised)" : "transparent" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
-        <button onClick={onToggleExpand} aria-label={expanded ? "Collapse" : "Expand"} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--text-secondary)", padding: "2px 0 0", flex: "none" }}>
-          <span style={{ fontSize: FONT_SIZE.micro, display: "inline-block", transform: expanded ? "none" : "rotate(-90deg)" }}>▾</span>
-        </button>
+    <div style={{ border: "1px solid var(--border-default)", borderRadius: 8, padding: "8px 10px", marginBottom: 8, background: adjustOpen ? "var(--surface-raised)" : "transparent" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
         {o.thumbDataUrl ? (
           <img src={o.thumbDataUrl} alt="" style={{ width: 32, height: 32, objectFit: "cover", borderRadius: RADIUS.sm, border: "1px solid var(--border-default)", flex: "none" }} />
         ) : (
@@ -298,39 +281,12 @@ function OverlayRow({
             {o.sourceFileName && stripFileExt(o.sourceFileName) !== (o.docTitle || "") ? `${o.sourceFileName} · ` : ""}{o.docDate || ""} · p.{o.page}
           </div>
         </div>
-        <IconButton ref={menuBtnRef} size={24} onClick={() => setMenuOpen(true)} aria-label="More actions" title="More actions" style={{ flex: "none" }}>⋯</IconButton>
-        <AnchoredMenu open={menuOpen} onClose={() => { setMenuOpen(false); setConfirmingDelete(false); }} anchorRef={menuBtnRef} placement="below-right" width={210}>
-          {!confirmingDelete ? (
-            <>
-              {/* B849840/NEW-1 — the overflow menu used to offer nothing but Delete, so the ONLY
-                  door into #1409's manipulation mode (rotate diamond, live degree/size readout,
-                  Escape-to-cancel, the non-destructive crop tool) was this row's own disclosure
-                  arrow, then the "Move / resize" button buried inside it — undiscoverable. Same
-                  handler that button already calls (`onActivate`: expands the row AND arms the
-                  map's placement handles, self-placing the plan first if it has none yet), just
-                  reachable one click sooner and from the row's most obvious control. */}
-              {/* NEW-9(b) (owner report, build 9c35724) — while active this row's card already
-                  shows "Editing on map" on its own primary button (below), so repeating the
-                  identical label here read as two copies of the same state with neither one able
-                  to end it. This is now the exit instead — a genuinely different action, in
-                  words and in effect — so there is exactly one "Editing on map" label in the
-                  card and exactly one place that stops it. */}
-              <MenuItem onClick={() => { setMenuOpen(false); isActive ? onDeactivate() : onActivate(); }} disabled={placed && o.locked && !isActive}
-                title={placed && o.locked && !isActive ? "Locked — unlock to move or resize" : undefined}>
-                {isActive ? "Stop editing" : placed ? "Edit / adjust…" : "Place on map…"}
-              </MenuItem>
-              <MenuItem onClick={() => setConfirmingDelete(true)} style={{ color: "var(--danger-text)" }}>Delete site plan…</MenuItem>
-            </>
-          ) : (
-            <div style={{ padding: "6px 10px" }}>
-              <div style={{ fontSize: FONT_SIZE.control, marginBottom: 8, color: "var(--text-primary)" }}>Delete “{o.docTitle || "this site plan"}”? Comps pinned to it keep their location but lose the link back.</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <Button size="sm" variant="danger" onClick={() => { setMenuOpen(false); setConfirmingDelete(false); onDelete(); }}>Delete</Button>
-                <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)}>Cancel</Button>
-              </div>
-            </div>
-          )}
-        </AnchoredMenu>
+        {/* B1310208/B1310209 — the ONE button that leaves the resting card: everything that used
+            to live behind the disclosure arrow, the overflow menu, and the expanded action band
+            now lives in the docked panel this opens. */}
+        <Button size="sm" variant={adjustOpen ? "primary" : "ghost"} onClick={onOpenAdjust} style={{ ...ACTION_BTN_STYLE, flex: "none" }}>
+          Adjust
+        </Button>
       </div>
 
       {!placed && <div style={{ fontSize: FONT_SIZE.label, color: "var(--warn-text)", marginTop: 4 }}>Not placed yet.</div>}
@@ -338,7 +294,7 @@ function OverlayRow({
           overlaid twice (deliberately: the schema allows several distinct overlay pages off one
           brochure, so a hard uniqueness rule would also block a legitimate reuse). Surfaced
           instead, on every row sharing the duplicate, so it's obvious and each copy is one click
-          from "Delete site plan…" to remove. */}
+          from Adjust's "Delete site plan…" to remove. */}
       {duplicateCount > 1 && (
         <div style={{ fontSize: FONT_SIZE.label, color: "var(--warn-text)", marginTop: 4 }}>
           Page {o.page} of this document is overlaid {duplicateCount} times — one of these may be a duplicate.
@@ -352,10 +308,11 @@ function OverlayRow({
       {/* B972512-HARDENING item 16 — a row that was interrupted (closed tab, lost connection)
           between being placed and its image finishing upload has no rasterKey at all (distinct
           from rasterFailed, which is a download failure of a key that DOES exist) — legible and
-          recoverable via the same "Change page…" control rather than an unexplained blank plan. */}
+          recoverable via the same "Change page…" control (now in Adjust) rather than an
+          unexplained blank plan. */}
       {placed && !rasterFailed && !o.rasterKey && (
         <div style={{ fontSize: FONT_SIZE.label, color: "var(--warn-text)", marginTop: 4 }}>
-          This plan doesn't have an image yet — try “Change page…” to add one.
+          This plan doesn't have an image yet — open Adjust and try “Change page…”.
         </div>
       )}
       {/* B850432/NEW-1 — a site plan is gated off the map below a real building-scale zoom (a
@@ -369,143 +326,191 @@ function OverlayRow({
           <Button size="sm" variant="ghost" onClick={() => onZoomToOverlay(o)}>Zoom in</Button>
         </div>
       )}
+    </div>
+  );
+}
 
-      {expanded && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border-default)" }}>
-          {/* NEW-2 (B1263073) — the sheet's own ground dimensions ("(approx) 3,000 x 3,882 ft")
-              used to sit on the resting row as its own line, answering a question nobody asked
-              ("you're giving me the dimensions of the sheet for some reason" — owner). It's real
-              information only where scale actually matters — resizing the plan — so it now rides
-              as a tooltip on Move/resize instead of a permanent line on the card. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, minWidth: 0 }}>
-            <IconButton size={26} onClick={() => onToggleVisible()} active={false} aria-label={o.visible ? "Hide on map" : "Show on map"} title={o.visible ? "Hide on map" : "Show on map"}>
-              <EyeIcon off={!o.visible} />
-            </IconButton>
-            {/* B972512-HARDENING item 17 — owner-only, matching site_plan_overlays' own UPDATE
-                policy (and sites' identical share_locked precedent). A non-owner sees the SAME
-                icon, greyed and inert with a title explaining why — never a control that looks
-                clickable but silently does nothing. */}
-            <IconButton size={26} onClick={isOwner ? () => onToggleLocked() : undefined} active={false}
-              disabled={!isOwner}
-              aria-label={o.locked ? "Unlock" : "Lock"}
-              title={isOwner ? (o.locked ? "Unlock — allow moving/resizing" : "Lock — prevent moving/resizing") : "Only the person who uploaded this can lock or unlock it"}
-              style={!isOwner ? { opacity: 0.4, cursor: "default" } : undefined}>
-              <LockIcon locked={o.locked} />
-            </IconButton>
-            {/* NEW-3 (B1263074) — `minWidth: 0` on BOTH this flex child and the range input
-                itself: a flex item's default min-width is `auto`, which for an `<input
-                type=range>` is its own intrinsic width (well over 100px in most browsers), so
-                without this the slider refused to shrink and blew 43px past the panel's own
-                right edge ("the opacity slider goes outside of the boundaries" — owner). */}
-            <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={metaText}>Opacity</span>
-              {/* NEW-8 — dragging used to write to Supabase and refetch the whole overlay list
-                  on every `onChange` tick. `onSetOpacity` is now local-only + debounced (see
-                  the parent's `setOpacityLive`); `onOpacityCommit` flushes the pending value the
-                  instant the drag ends instead of waiting out the debounce window. */}
-              <input type="range" min={0.2} max={1} step={0.05} value={o.opacity}
-                onChange={(e) => onSetOpacity(Number(e.target.value))}
-                onMouseUp={onOpacityCommit} onTouchEnd={onOpacityCommit} onKeyUp={onOpacityCommit}
-                style={{ flex: 1, minWidth: 0 }} />
-              <span style={{ ...metaText, width: 32, flex: "none", textAlign: "right" }}>{Math.round(o.opacity * 100)}%</span>
-            </div>
+/** The docked "Adjust" panel (B1310209, NEW-2, owner decision 2026-09-07 — "if it's like a small
+ * panel, then that's fine by me"). Every editing control for the plan currently focused in the
+ * Comps rail, opened by OverlayRow's "Adjust" button and portaled straight onto the map (docked
+ * bottom-right, MAP_CHROME_Z.panel — mapChromeStack.js's own header has the corner reasoning and
+ * the measured scale-bar clearance). Same surface/border/radius/shadow as the Layers panel, so it
+ * reads as the fourth instance of the app's existing floating-map-panel system, not a new one —
+ * it DOCKS, it never hovers or drags.
+ * NEW-3 — the old overflow menu's two items land here: Move/resize's own label already doubles
+ * as its exit (click again to stop editing), and Delete gets its own separated footer slot next
+ * to Done, rather than sharing a menu with an edit action. Pin comp here and Change page… join
+ * Move/resize and Crop in the body — all four are the same class of thing (an occasional,
+ * deliberate edit to an already-placed plan), so they get one shared action row.
+ * NEW-4 — opacity (dragged constantly, judged on the map) is its own prominent, full-width block;
+ * rotation (set once, and read-only while locked per B1154369) is a visibly quieter, compact one
+ * right below it — the two no longer compete for the same weight.
+ * ⛔ Found live during this item's own headless verification: the global help/report FAB
+ * (`app/HelpReportControl.jsx`) is ALSO fixed bottom-right and measures the real DOM to decide
+ * its own clearance (`shared/ui/cornerClearance.js`) — but it only clears Leaflet's own
+ * `.leaflet-bottom.leaflet-right` container and anything carrying `data-canvas-corner`. A new
+ * bottom-right occupant that doesn't declare itself is invisible to that math, and this panel's
+ * footer (Delete / Done) sat right where the FAB was measured to land. Declaring
+ * `data-canvas-corner="site-plan-adjust"` is the whole fix — no coordinate math of our own,
+ * the FAB reads our rendered box and floats clear of it, per that module's own contract. */
+function SitePlanAdjustPanel({
+  o, isActive, onActivate, onDeactivate, pinning, onStartPin, onStopPin,
+  onSetOpacity, onOpacityCommit, onSetRotation, onToggleVisible, onToggleLocked, onStartCrop,
+  onConfirmChangePage, onDelete, teams, onShareTeam, isOwner, onClose,
+}) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingChangePage, setConfirmingChangePage] = useState(false);
+  // B1134753 NEW-20 — "rotation needs a way to type an exact value." `null` = not editing (show
+  // the live stored value); a string while the field has focus, so a half-typed "12." isn't
+  // clobbered by the next map-driven re-render mid-keystroke.
+  const [rotDraft, setRotDraft] = useState(null);
+  const rotCancelingRef = useRef(false); // Escape sets this so the resulting blur doesn't ALSO commit
+
+  const commitRotation = () => {
+    if (rotCancelingRef.current) { rotCancelingRef.current = false; setRotDraft(null); return; }
+    const v = parseFloat(rotDraft);
+    setRotDraft(null);
+    if (Number.isFinite(v)) onSetRotation(((v % 360) + 360) % 360);
+  };
+
+  const placed = overlayPlaced(o);
+  const sizeFt = placed ? `≈ ${Math.round(o.imgW * o.ftPerPx).toLocaleString()} × ${Math.round(o.imgH * o.ftPerPx).toLocaleString()} ft` : null;
+
+  return (
+    <div data-testid="site-plan-adjust-panel" data-canvas-corner="site-plan-adjust" style={{
+      position: "absolute", bottom: SCALE_BAR_CLEARANCE_PX, right: 10, zIndex: MAP_CHROME_Z.panel,
+      width: 258, maxHeight: panelMaxHeight({ topPx: 70, bottomPx: SCALE_BAR_CLEARANCE_PX, minPx: 160 }),
+      display: "flex", flexDirection: "column",
+      background: "var(--surface-overlay)", border: "1px solid var(--border-default)", borderRadius: RADIUS.lg,
+      boxShadow: "0 2px 8px rgba(0,0,0,0.12)", overflow: "hidden", // design-exempt: matches the Layers panel's own boxShadow verbatim (MapFinder.jsx) — no shadow-color token exists repo-wide yet
+    }}>
+      <div style={{ flex: "none", padding: "7px 10px 5px", fontSize: FONT_SIZE.control, fontWeight: 700, color: "var(--text-primary)", borderBottom: "1px solid var(--border-default)" }}>
+        Adjust site plan
+      </div>
+      <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", padding: "8px 10px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <IconButton size={26} onClick={() => onToggleVisible()} active={false} aria-label={o.visible ? "Hide on map" : "Show on map"} title={o.visible ? "Hide on map" : "Show on map"}>
+            <EyeIcon off={!o.visible} />
+          </IconButton>
+          {/* B972512-HARDENING item 17 — owner-only, matching site_plan_overlays' own UPDATE
+              policy (and sites' identical share_locked precedent). A non-owner sees the SAME
+              icon, greyed and inert with a title explaining why — never a control that looks
+              clickable but silently does nothing. */}
+          <IconButton size={26} onClick={isOwner ? () => onToggleLocked() : undefined} active={false}
+            disabled={!isOwner}
+            aria-label={o.locked ? "Unlock" : "Lock"}
+            title={isOwner ? (o.locked ? "Unlock — allow moving/resizing" : "Lock — prevent moving/resizing") : "Only the person who uploaded this can lock or unlock it"}
+            style={!isOwner ? { opacity: 0.4, cursor: "default" } : undefined}>
+            <LockIcon locked={o.locked} />
+          </IconButton>
+          <span style={metaText}>{o.visible ? "Visible" : "Hidden"}{o.locked ? " · locked" : ""}</span>
+        </div>
+
+        {/* NEW-4 — the prominent, full-width block: opacity is dragged constantly and its result
+            is judged on the map, so it gets the room. */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+            <span style={{ fontSize: FONT_SIZE.control, fontWeight: 600, color: "var(--text-primary)" }}>Opacity</span>
+            <span style={{ ...metaText, fontWeight: 600 }}>{Math.round(o.opacity * 100)}%</span>
           </div>
+          {/* NEW-8 — dragging used to write to Supabase and refetch the whole overlay list on
+              every `onChange` tick. `onSetOpacity` is now local-only + debounced (see the
+              parent's `setOpacityLive`); `onOpacityCommit` flushes the pending value the instant
+              the drag ends instead of waiting out the debounce window. */}
+          <input type="range" min={0.2} max={1} step={0.05} value={o.opacity}
+            onChange={(e) => onSetOpacity(Number(e.target.value))}
+            onMouseUp={onOpacityCommit} onTouchEnd={onOpacityCommit} onKeyUp={onOpacityCommit}
+            style={{ width: "100%" }} />
+        </div>
 
-          {/* B1134753 NEW-20 — an exact-value alternative to eyeballing the rotate handle on the
-              map. Committed the SAME way a drag is (SitePlansSection's commitPlacement), so a
-              pinned comp on this plan still recomputes and the version guard still applies.
-              NEW-2 (B1263073) — a LOCKED plan used to render this as a permanently greyed,
-              disabled box with no explanation ("give me a rotation option that's grayed out" —
-              owner, as a complaint). The field only renders when it's actually usable; locked
-              shows the REASON instead — matching the Move/resize button's own locked message. */}
-          {placed && (o.locked ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <span style={metaText}>Rotation</span>
+        {/* NEW-4 — the quieter, compact block right below it: rotation is set once, so it reads
+            smaller and lighter than Opacity above rather than sharing its weight. Read-only while
+            locked (B1154369 — do NOT undo: this already presents as "0° · locked — unlock to
+            rotate", which shipped and is right). */}
+        {placed && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <span style={metaText}>Rotation</span>
+            {o.locked ? (
               <span style={metaText}>{Math.round((o.rotationDeg || 0) * 10) / 10}° · locked — unlock to rotate</span>
-            </div>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <span style={metaText}>Rotation</span>
-              <input type="number" step={0.1}
-                value={rotDraft != null ? rotDraft : Math.round((o.rotationDeg || 0) * 10) / 10}
-                onChange={(e) => setRotDraft(e.target.value)}
-                onFocus={() => setRotDraft(String(Math.round((o.rotationDeg || 0) * 10) / 10))}
-                onBlur={commitRotation}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") { e.currentTarget.blur(); }
-                  if (e.key === "Escape") { rotCancelingRef.current = true; e.currentTarget.blur(); }
-                }}
-                style={{ ...inputStyle, width: 72 }} />
-              <span style={metaText}>°</span>
-            </div>
-          ))}
-
-          {/* B972512-HARDENING item 8 — sharing is a deliberate, POST-placement action, gated on
-              `placed` so a half-set-up plan (still at its auto-suggested default position) can
-              never appear on a teammate's map before its owner has actually positioned it. */}
-          {placed && teams?.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <span style={metaText}>Share with</span>
-              <select value={o.teamId || ""} onChange={(e) => onShareTeam(e.target.value || null)} style={{ ...inputStyle, flex: 1 }}>
-                <option value="">Just me</option>
-                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* NEW-3 (B1263074) — one action band, one height. These four controls used to render
-              at three different heights (24/26/28px) and land 1px apart where two shared a row,
-              because a Button's height is only as tall as its own content's line-box (an icon
-              inline with text raises it) and ToggleChip's own padding differs from Button's — an
-              unaligned pile ("the buttons... they're not organized whatsoever" — owner). Every
-              control below now shares ACTION_BTN_STYLE (fixed height, centered content), so the
-              height is a design decision instead of an accident of what happens to be inside. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            {/* B972512-HARDENING item 14 — an unplaced overlay has no map layer at all (the
-                render-sync effect skips anything overlayPlaced() calls false), so "Move / resize"
-                used to arm editing on a layer that didn't exist — a dead click with nothing to
-                grab. It now places the overlay first (the same suggestPlacement a fresh upload
-                gets), THEN arms editing, so the button always does something real.
-                Item 17 — the map's own drag-handle controller shows handles for whichever
-                overlay is "active" with no `locked` check of its own (locked only gates
-                *clicking the image on the map* to select it) — so this button is the other half
-                of making the lock mean something: disabled while locked, for owner and everyone
-                else alike, since the point of locking is protection from an ACCIDENTAL drag,
-                including the locker's own.
-                NEW-2 (B1263073) — the sheet's ground dimensions (`sizeFt`) ride here as a tooltip
-                now, reachable exactly where scale actually matters, instead of a permanent line
-                on the resting row. */}
-            <Button size="sm" variant={isActive ? "primary" : "ghost"} disabled={placed && o.locked}
-              onClick={() => onActivate()} style={ACTION_BTN_STYLE}
-              title={placed && o.locked ? "Locked — unlock to move or resize" : (sizeFt || undefined)}>
-              <MoveIcon />{isActive ? "Editing on map" : placed ? "Move / resize" : "Place on map"}
-            </Button>
-            {/* B1134754 NEW-21 — crop is available whether or not the overlay has been placed
-                yet ("crop should be available BEFORE placement as well as after… avoids fighting
-                the alignment twice"); disabled only while there's no raster to crop at all.
-                NEW-2 (B1263073) — "Cropped ✓" read as a STATUS wearing a button's clothes ("it
-                shows that it is cropped, but the buttons... they're not organized" — owner). It IS
-                re-editable (clicking reopens the crop tool), so the label now names the ACTION —
-                "Edit crop" once a crop exists, "Crop…" before one does — while the ToggleChip's
-                own filled styling still carries the fact that a crop is already applied. */}
-            <ToggleChip active={hasCrop(o)} disabled={!o.rasterKey}
-              onClick={onStartCrop} style={{ ...ACTION_BTN_STYLE, opacity: !o.rasterKey ? 0.5 : 1, cursor: !o.rasterKey ? "not-allowed" : "pointer" }}
-              title={!o.rasterKey ? "This plan doesn't have an image yet" : hasCrop(o) ? "Already cropped — edit or reset it" : undefined}>
-              <CropIcon />{hasCrop(o) ? "Edit crop" : "Crop…"}
-            </ToggleChip>
-            {placed && (pinning ? (
-              <Button size="sm" variant="danger" onClick={onStopPin} style={ACTION_BTN_STYLE}>Cancel pin</Button>
             ) : (
-              <Button size="sm" variant="ghost" onClick={onStartPin} style={ACTION_BTN_STYLE}><PinIcon />Pin comp here</Button>
-            ))}
-            {confirmingChangePage ? (
-              <Button size="sm" variant="danger" onClick={() => { setConfirmingChangePage(false); onConfirmChangePage(); }} style={ACTION_BTN_STYLE}>Confirm — this clears its position</Button>
-            ) : (
-              <Button size="sm" variant="ghost" onClick={() => setConfirmingChangePage(true)} style={ACTION_BTN_STYLE}>Change page…</Button>
+              <>
+                <input type="number" step={0.1}
+                  value={rotDraft != null ? rotDraft : Math.round((o.rotationDeg || 0) * 10) / 10}
+                  onChange={(e) => setRotDraft(e.target.value)}
+                  onFocus={() => setRotDraft(String(Math.round((o.rotationDeg || 0) * 10) / 10))}
+                  onBlur={commitRotation}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.currentTarget.blur(); }
+                    if (e.key === "Escape") { rotCancelingRef.current = true; e.currentTarget.blur(); }
+                  }}
+                  style={{ ...inputStyle, width: 56, fontSize: FONT_SIZE.label, padding: "3px 5px" }} />
+                <span style={metaText}>°</span>
+              </>
             )}
           </div>
+        )}
+
+        {/* B972512-HARDENING item 8 — sharing is a deliberate, POST-placement action, gated on
+            `placed` so a half-set-up plan (still at its auto-suggested default position) can
+            never appear on a teammate's map before its owner has actually positioned it. */}
+        {placed && teams?.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <span style={metaText}>Share with</span>
+            <select value={o.teamId || ""} onChange={(e) => onShareTeam(e.target.value || null)} style={{ ...inputStyle, flex: 1 }}>
+              <option value="">Just me</option>
+              {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        {/* NEW-3 — Move/resize, Crop, Pin comp here and Change page… are the same class of
+            action (an occasional, deliberate edit to an already-placed plan), so they share one
+            row here rather than splitting across a resting-card action band and an overflow
+            menu the way they used to. One shared height (ACTION_BTN_STYLE, NEW-3/B1263074). */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", paddingTop: 6, borderTop: "1px solid var(--border-default)" }}>
+          {/* Move/resize's own label now doubles as its exit — clicking it again while active
+              stops editing, which is what the old overflow menu's "Stop editing" row did. */}
+          <Button size="sm" variant={isActive ? "primary" : "ghost"} disabled={placed && o.locked}
+            onClick={() => (isActive ? onDeactivate() : onActivate())} style={ACTION_BTN_STYLE}
+            title={placed && o.locked ? "Locked — unlock to move or resize" : (sizeFt || undefined)}>
+            <MoveIcon />{isActive ? "Editing on map" : placed ? "Move / resize" : "Place on map"}
+          </Button>
+          <ToggleChip active={hasCrop(o)} disabled={!o.rasterKey}
+            onClick={onStartCrop} style={{ ...ACTION_BTN_STYLE, opacity: !o.rasterKey ? 0.5 : 1, cursor: !o.rasterKey ? "not-allowed" : "pointer" }}
+            title={!o.rasterKey ? "This plan doesn't have an image yet" : hasCrop(o) ? "Already cropped — edit or reset it" : undefined}>
+            <CropIcon />{hasCrop(o) ? "Edit crop" : "Crop…"}
+          </ToggleChip>
+          {placed && (pinning ? (
+            <Button size="sm" variant="danger" onClick={onStopPin} style={ACTION_BTN_STYLE}>Cancel pin</Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={onStartPin} style={ACTION_BTN_STYLE}><PinIcon />Pin comp here</Button>
+          ))}
+          {confirmingChangePage ? (
+            <Button size="sm" variant="danger" onClick={() => { setConfirmingChangePage(false); onConfirmChangePage(); }} style={ACTION_BTN_STYLE}>Confirm — this clears its position</Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={() => setConfirmingChangePage(true)} style={ACTION_BTN_STYLE}>Change page…</Button>
+          )}
         </div>
-      )}
+      </div>
+
+      {/* NEW-3 — Delete gets a deliberately separated home: the panel's own footer, beside Done,
+          where a destructive action is predictable and isn't sharing a menu with an edit action. */}
+      <div style={{ flex: "none", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "7px 10px", borderTop: "1px solid var(--border-default)", background: "var(--surface-raised)" }}>
+        {confirmingDelete ? (
+          <>
+            <span style={{ fontSize: FONT_SIZE.label, color: "var(--danger-text)" }}>Delete “{o.docTitle || "this site plan"}”? Comps pinned to it keep their location but lose the link back.</span>
+            <span style={{ display: "flex", gap: 6, flex: "none" }}>
+              <Button size="sm" variant="danger" onClick={() => { setConfirmingDelete(false); onDelete(); }}>Delete</Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)}>Cancel</Button>
+            </span>
+          </>
+        ) : (
+          <>
+            <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(true)} style={{ color: "var(--danger-text)" }}>Delete site plan…</Button>
+            <Button size="sm" onClick={onClose}>Done</Button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -527,13 +532,21 @@ export default function SitePlansSection({
   // Comps list's own "+ Site plan" button (no comp open yet — order (a), upload-first) trigger the
   // same upload flow this component owns.
   focusedProjectId = null, focusedCompId = null, onStartPinExistingComp, startUploadRef,
+  // B1310209 (NEW-2) — a ref to the map's own relatively-positioned host element (the box the
+  // Comps rail and the Layers panel are already children of in MapFinder.jsx), so the docked
+  // Adjust panel can portal straight onto the map instead of rendering wherever this component
+  // happens to sit in the tree (deep inside the rail's own scroll region).
+  mapHostRef,
 }) {
   const [overlays, setOverlays] = useState([]);
   const [loading, setLoading] = useState(false);
   const [teams, setTeams] = useState([]);
   const [panelError, setPanelError] = useState(null);
   const [flow, setFlow] = useState(null);
-  const [expandedId, setExpandedId] = useState(null);
+  // B1310208/B1310209 (NEW-1/NEW-2, owner decision 2026-09-07) — only ONE overlay ever renders
+  // here at a time (`focusedOverlay`, below — the standalone multi-row list is gone per
+  // B1167712), so "is the Adjust panel open" is a plain boolean rather than an id-keyed map.
+  const [adjustOpen, setAdjustOpen] = useState(false);
   // B972512-HARDENING item 6 — "Recently deleted": deleting a site plan is now RECOVERABLE
   // (soft delete) rather than permanent, matching sites/doc_reviews' own trash pattern. Fetched
   // lazily, only once the disclosure is opened — empty in the common case, costs nothing until
@@ -546,14 +559,17 @@ export default function SitePlansSection({
   // below, so this hook still runs unconditionally on every render even while the panel is closed.
   const [cropTarget, setCropTarget] = useState(null); // { overlay, src } while the crop tool is open
 
-  // B849840/NEW-1 — arming an overlay for editing via ANY path must reveal the same row
-  // controls (opacity slider, rotation field, the "Editing on map" state) with no second step.
-  // Before this, only this panel's OWN "Move / resize" button expanded its row (it calls
-  // setExpandedId itself, see onActivate below) — clicking the plan directly on the map
+  // B849840/NEW-1 — arming an overlay for editing via ANY path must reveal the same controls
+  // (opacity slider, rotation field, the "Editing on map" state) with no second step. Before
+  // this, only this panel's OWN "Move / resize" button opened the Adjust panel (it calls
+  // setAdjustOpen itself, see onActivate below) — clicking the plan directly on the map
   // (MapFinder's onSelect → selectOverlay → activeOverlayId) armed the SAME map handles but
-  // never touched this component's local expand state, so the row stayed collapsed and looked
+  // never touched this component's local panel state, so the panel stayed closed and looked
   // like the click had done nothing.
-  useEffect(() => { if (activeOverlayId) setExpandedId(activeOverlayId); }, [activeOverlayId]);
+  useEffect(() => { if (activeOverlayId) setAdjustOpen(true); }, [activeOverlayId]);
+  // B1310208 — switching to a different comp (a different plan) must never leave the PREVIOUS
+  // plan's Adjust panel standing open over the map with nothing in the rail pointing at it.
+  useEffect(() => { setAdjustOpen(false); }, [focusedProjectId]);
   const notifiedRef = useRef(onOverlaysChange);
   notifiedRef.current = onOverlaysChange;
   const overlaysRef = useRef(overlays);
@@ -756,7 +772,7 @@ export default function SitePlansSection({
   // hands MapFinder `commitPlacementRef`/`dropIntakeRef`: a ref this effect assigns, that button calls.
   useEffect(() => {
     if (!startUploadRef) return undefined;
-    startUploadRef.current = (presetProjectId) => { setExpandedId(null); startNewUpload(presetProjectId); };
+    startUploadRef.current = (presetProjectId) => { setAdjustOpen(false); startNewUpload(presetProjectId); };
     return () => { if (startUploadRef) startUploadRef.current = null; };
   }, [startUploadRef]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -806,7 +822,7 @@ export default function SitePlansSection({
       for (const f of list) (isAcceptedFile(f) ? accepted : rejected).push(f);
       for (const f of rejected) onRejectFile && onRejectFile(f.name || "that file", unsupportedImageReason(f) || "only PDF or image files can become a site plan");
       if (!accepted.length) return;
-      setExpandedId(null);
+      setAdjustOpen(false);
       pickFile(accepted[0], { dropPlacement: dropPlacement || null, queue: accepted.slice(1) });
     };
     return () => { if (dropIntakeRef) dropIntakeRef.current = null; };
@@ -893,7 +909,7 @@ export default function SitePlansSection({
         overlay = data || overlay;
       }
       await reload();
-      setExpandedId(overlay.id);
+      setAdjustOpen(true);
       // NEW-17 — only arm "Editing on map" when the overlay actually has a full, drawable
       // placement (overlayPlaced requires center + a non-null scale); arming it on anything less
       // used to leave the panel reading "Not placed yet" and "Editing on map" at once, with
@@ -1103,6 +1119,34 @@ export default function SitePlansSection({
     return [...byGroup.values()];
   })();
 
+  // B1310208/B1310209 (NEW-1/NEW-2) — the ONE thing the resting card's "Adjust" button does.
+  // An unplaced plan has nothing for the panel to show (no position, no rotation, nothing on the
+  // map to move), so pressing Adjust places it first — the same default-placement-then-arm a
+  // fresh upload already gets (confirmPage, above) — and arms Move/resize immediately so the
+  // owner can reposition it right away, exactly as the old "Place on map" button did. An
+  // already-placed plan just toggles the panel open/closed — opening it no longer also arms map
+  // handles (that's now the panel's own explicit "Move / resize" button), so checking opacity or
+  // rotation doesn't summon drag handles nobody asked for.
+  const openAdjust = async () => {
+    if (!focusedOverlay) return;
+    if (!overlayPlaced(focusedOverlay)) {
+      const placement = suggestPlacement ? suggestPlacement(focusedOverlay.imgW, focusedOverlay.imgH) : null;
+      if (!placement) { setPanelError("Couldn't place this site plan — the map isn't ready yet. Try again in a moment."); return; }
+      await patchAndReload(focusedOverlay, placement);
+      setAdjustOpen(true);
+      onActivateOverlay && onActivateOverlay(focusedOverlay.id);
+      return;
+    }
+    setAdjustOpen((was) => !was);
+  };
+  // Done (and re-pressing Adjust to close) also stands down any map handles / pin-drop mode this
+  // plan armed — leaving the panel with no map handles left dangling behind it.
+  const closeAdjust = () => {
+    setAdjustOpen(false);
+    if (focusedOverlay && activeOverlayId === focusedOverlay.id) onActivateOverlay && onActivateOverlay(null);
+    if (focusedOverlay && pinningOverlayId === focusedOverlay.id) onStopPinOnOverlay?.();
+  };
+
   const errorBanner = panelError && (
     <div style={{
       display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8, padding: "6px 8px",
@@ -1163,47 +1207,10 @@ export default function SitePlansSection({
           </div>
           <OverlayRow o={focusedOverlay}
             duplicateCount={1}
-            expanded={expandedId === focusedOverlay.id}
-            onToggleExpand={() => setExpandedId((id) => (id === focusedOverlay.id ? null : focusedOverlay.id))}
-            // NEW-17 — "Editing on map" must never render for a row with nothing on the map to
-            // edit (overlayPlaced requires a real center + scale) — belt-and-suspenders against
-            // the panel showing "Not placed yet" and "Editing on map" at the same time, whatever
-            // path got `activeOverlayId` here. The map's own handles controller already refuses to
-            // arm on an unplaced overlay (useSitePlanOverlayLayers/syncHandles); this keeps the
-            // row's own label from disagreeing with that.
-            isActive={activeOverlayId === focusedOverlay.id && overlayPlaced(focusedOverlay)}
-            onActivate={async () => {
-              setExpandedId(focusedOverlay.id);
-              if (!overlayPlaced(focusedOverlay)) {
-                const placement = suggestPlacement ? suggestPlacement(focusedOverlay.imgW, focusedOverlay.imgH) : null;
-                if (!placement) { setPanelError("Couldn't place this site plan — the map isn't ready yet. Try again in a moment."); return; }
-                await patchAndReload(focusedOverlay, placement);
-              }
-              onActivateOverlay && onActivateOverlay(focusedOverlay.id);
-            }}
-            // NEW-9(b) (owner report, build 9c35724) — the only way out of "Editing on map" used
-            // to be an Escape press or a click on empty map (MapFinder.jsx), neither reachable
-            // from the panel itself. This is the in-panel exit, wired into the kebab menu item.
-            onDeactivate={() => onActivateOverlay && onActivateOverlay(null)}
-            pinning={pinningOverlayId === focusedOverlay.id}
-            // B1167713 (NEW-2) — the ONLY thing that changed about pinning: the target is always
-            // the comp already open here, never a brand-new one (the map's own "Place comp → on a
-            // site plan" menu still creates new comps, unchanged, via onPlaceComp elsewhere).
-            onStartPin={() => onStartPinExistingComp?.(focusedCompId, focusedOverlay.id)}
-            onStopPin={() => onStopPinOnOverlay?.()}
-            onSetOpacity={(v) => setOpacityLive(focusedOverlay, v)}
-            onOpacityCommit={() => flushOpacityWrite(focusedOverlay)}
-            onSetRotation={(deg) => setRotation(focusedOverlay, deg)}
-            onStartCrop={() => startCrop(focusedOverlay)}
-            onToggleVisible={() => toggleVisible(focusedOverlay)}
+            adjustOpen={adjustOpen}
+            onOpenAdjust={openAdjust}
             onRename={(name) => rename(focusedOverlay, name)}
-            onConfirmChangePage={() => startChangePage(focusedOverlay)}
-            onDelete={() => remove(focusedOverlay)}
             rasterFailed={!!rasterFailedIds?.has(focusedOverlay.id)}
-            teams={teams}
-            onShareTeam={(teamId) => shareOverlay(focusedOverlay, teamId)}
-            isOwner={focusedOverlay.userId === currentUserId}
-            onToggleLocked={() => toggleLocked(focusedOverlay)}
             zoomBelowGate={zoomBelowGate}
             onZoomToOverlay={onZoomToOverlay}
           />
@@ -1357,6 +1364,48 @@ export default function SitePlansSection({
           />
         </div>
       </div>
+    )}
+
+    {/* B1310209 (NEW-2, owner decision 2026-09-07) — the Adjust panel is DOCKED to the map, not
+        floated over wherever the rail happens to sit, so it portals straight into the map's own
+        host element (the same relatively-positioned box the Comps rail and the Layers panel are
+        already children of, one level up in MapFinder.jsx) rather than rendering in this
+        component's own place in the tree, deep inside the rail's scroll region. `mapHostRef` is a
+        plain ref MapFinder attaches to that element — by the time a user can press "Adjust" the
+        map has long since mounted, so reading `.current` at render time (rather than mirroring it
+        into state) is safe. */}
+    {adjustOpen && focusedOverlay && mapHostRef?.current && createPortal(
+      <SitePlanAdjustPanel o={focusedOverlay}
+        isActive={activeOverlayId === focusedOverlay.id && overlayPlaced(focusedOverlay)}
+        onActivate={async () => {
+          if (!overlayPlaced(focusedOverlay)) {
+            const placement = suggestPlacement ? suggestPlacement(focusedOverlay.imgW, focusedOverlay.imgH) : null;
+            if (!placement) { setPanelError("Couldn't place this site plan — the map isn't ready yet. Try again in a moment."); return; }
+            await patchAndReload(focusedOverlay, placement);
+          }
+          onActivateOverlay && onActivateOverlay(focusedOverlay.id);
+        }}
+        onDeactivate={() => onActivateOverlay && onActivateOverlay(null)}
+        pinning={pinningOverlayId === focusedOverlay.id}
+        // B1167713 (NEW-2) — the ONLY thing that changed about pinning: the target is always
+        // the comp already open here, never a brand-new one (the map's own "Place comp → on a
+        // site plan" menu still creates new comps, unchanged, via onPlaceComp elsewhere).
+        onStartPin={() => onStartPinExistingComp?.(focusedCompId, focusedOverlay.id)}
+        onStopPin={() => onStopPinOnOverlay?.()}
+        onSetOpacity={(v) => setOpacityLive(focusedOverlay, v)}
+        onOpacityCommit={() => flushOpacityWrite(focusedOverlay)}
+        onSetRotation={(deg) => setRotation(focusedOverlay, deg)}
+        onStartCrop={() => startCrop(focusedOverlay)}
+        onToggleVisible={() => toggleVisible(focusedOverlay)}
+        onToggleLocked={() => toggleLocked(focusedOverlay)}
+        onConfirmChangePage={() => startChangePage(focusedOverlay)}
+        onDelete={() => { closeAdjust(); remove(focusedOverlay); }}
+        teams={teams}
+        onShareTeam={(teamId) => shareOverlay(focusedOverlay, teamId)}
+        isOwner={focusedOverlay.userId === currentUserId}
+        onClose={closeAdjust}
+      />,
+      mapHostRef.current,
     )}
     </>
   );

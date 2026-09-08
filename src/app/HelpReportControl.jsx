@@ -136,6 +136,7 @@ import { FONT_SIZE } from "../shared/ui/designTokens.js";
 import { cornerClearanceFromBottom } from "../shared/ui/cornerClearance.js";
 import { safeAreaInsets } from "../shared/ui/safeAreaInsets.js";
 import { activeChromeDock } from "../shared/ui/chromeDock.js";
+import { useBottomSheetHeight } from "../shared/ui/bottomSheetTracker.js";
 import { requestPerfCapture, perfCaptureDelivery, perfRecorderArmed } from "../shared/telemetry/perfRecorderHandle.js";
 import { SUPPRESSED_AUTOMATED } from "../shared/telemetry/clientErrors.js";
 import { buildReportContext, submitReport, queuedReportCount } from "../shared/reports/reportsStore.js";
@@ -188,6 +189,11 @@ export default function HelpReportControl({ user }) {
   // fixed-corner placement every other route still gets. Re-checked on the SAME poll/resize
   // cadence as the corner math below (one measurement pass, not two intervals).
   const [dockEl, setDockEl] = useState(null);
+  // B1215682/NEW-3 — a mobile bottom sheet (Food's own, or the Site Planner's phone Properties
+  // sheet) covers this control's usual corner; see bottomSheetTracker.js's own header for why
+  // this is a module-scope signal rather than a prop (this control mounts once in the app Shell
+  // and has no path down into whichever workspace's sheet is open).
+  const sheetHeight = useBottomSheetHeight();
 
   useEffect(() => { setQueued(queuedReportCount()); }, [open]);
 
@@ -302,6 +308,15 @@ export default function HelpReportControl({ user }) {
     : slowNote === "undelivered" ? "Recorded, couldn't reach the server yet"
     : slowNote === "fail" ? "Couldn't record — try again in a moment"
     : null;
+
+  // B1215682/NEW-3 — hide outright rather than reposition: this control's fixed bottom-right
+  // corner is exactly where a mobile bottom sheet's own top-right corner (its collapse/close
+  // row) sits, and the only alternative tried — rising above the sheet — collided with unrelated
+  // map chrome (the "View"/"Layers" pills) at the sheet's own taller drag detent. Checked
+  // BEFORE the dock/fixed placement below — a docked control (map/planner) can still be under a
+  // phone bottom sheet (the Site Planner's own Properties sheet), so this must win regardless of
+  // dockEl.
+  if (sheetHeight > 0) return null;
 
   const fab = (
     <button

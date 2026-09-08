@@ -226,6 +226,7 @@ export default function Shell() {
   const [authOpen,  setAuthOpen]  = useState(false);
   const [recovery,  setRecovery]  = useState(false);
   const [authTab,   setAuthTab]   = useState("profile"); // which tab the account modal opens on
+  const [authMode,  setAuthMode]  = useState("signin");  // which AuthPanel tab (signin|signup) it opens on
   // The account pill/dropdown + "Cloud off" popover now live in AccountControl, which owns its
   // own anchor ref + open state per mounted header instance (B734) — Shell only drives the modal.
   // Cross-workspace navigation (B191–B193, now URL-driven for project context). The
@@ -338,6 +339,36 @@ export default function Shell() {
       setAuthKnown(true);
       if (event === "PASSWORD_RECOVERY") { setRecovery(true); setAuthOpen(true); }
     });
+  }, []);
+
+  // Landing-page deep link (B1315632): "?auth=signin" / "?auth=signup" opens the auth
+  // panel straight on that tab, so /landing/'s "Sign in" and "Create an account" links
+  // (which both boot the app via the existing "?app" front-door bypass, see index.html)
+  // land somewhere real instead of a boot with no visible next step. One-time — the
+  // param is stripped via replaceState so a reload doesn't reopen the panel forever.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let want;
+    try { want = new URLSearchParams(window.location.search).get("auth"); } catch (_) { return; }
+    if (want !== "signin" && want !== "signup") return;
+    setRecovery(false);
+    setAuthMode(want);
+    setAuthOpen(true);
+    try {
+      // A plain regex splice on the raw string, not URLSearchParams.delete() + toString() —
+      // URLSearchParams always re-serializes a bare valueless key like "app" as "app=", which
+      // is harmless (the front door's own "?app" bypass regex still matches it) but needlessly
+      // ugly in the address bar. This keeps "?app" exactly as the "Open Planyr"/"Sign in" links
+      // wrote it.
+      const search = window.location.search
+        .replace(/([?&])auth=[^&]*/, (_, sep) => (sep === "?" ? "?" : ""))
+        .replace(/^\?&/, "?")
+        .replace(/^[?&]$/, "")
+        .replace(/&&/g, "&")
+        .replace(/[?&]$/, "");
+      const url = window.location.pathname + search + window.location.hash;
+      window.history.replaceState(window.history.state, "", url);
+    } catch (_) { /* history unavailable — the param just stays in the bar */ }
   }, []);
 
   // NEW-9 — the B223 boot-time idle warm of scheduler/doc-review/library was REMOVED.
@@ -700,6 +731,7 @@ export default function Shell() {
           recovery={recovery}
           profileApi={profileApi}
           initialTab={authTab}
+          initialMode={authMode}
           onClose={() => { setAuthOpen(false); setRecovery(false); }}
         />
       )}
