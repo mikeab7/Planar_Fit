@@ -5,13 +5,14 @@
  *
  * B831777/B831776 (2026-08-28, merged into main the same day this spec's own owner-chat block
  * arrived) moved Comps from a floating right-side "Leasing Comps" panel with a "＋ Comp" button
- * into a left-rail TAB ("Sites"/"Comps") driven by a shared Site/Comp mode, with the add actions
- * renamed to "Drop a pin"/"Comp from parcel". Every locator below targets that shape — there is
+ * into a left-rail TAB ("Sites"/"Comps"). Every locator below targets that shape — there is
  * no more "Leasing Comps" title or "＋ Comp" button anywhere in the app.
  *
- * ⛔ B848304 (2026-09-02) touched only the ONE assumption this file's `openCompCreateForm` made
- * about the map's ENTRY POINT — the resting "Drop a pin" button is now the "Place comp" split
- * button's primary segment (same arm, same default anchor) — and is fixed below. Everything past
+ * ⛔ B848304 (2026-09-02) then NEW-1 (2026-09-08) each touched only the ONE assumption this file's
+ * `openCompCreateForm` makes about the map's ENTRY POINT. NEW-1 took that toolbar GROUND-FIRST:
+ * there is no "Place comp" button and no Site/Comp mode any more — you point at ground (Drop a
+ * pin), and the decide bar that follows is where you say it is a comp. Same anchor, same
+ * downstream flow, one more click; fixed below. Everything past
  * that click (a "Type" field + a "Save comp" button opening directly) predates B849232/B849233
  * (2026-09-01), which replaced that single-comp create form with the CompEntryGrid paste sheet as
  * the one create surface; a map pick now opens that grid pre-seeded with one row, not a field
@@ -28,8 +29,9 @@
 import { test, expect } from "@playwright/test";
 import { openModule } from "./helpers.js";
 
-// The left rail's "Comps" tab switches the shared Site/Comp mode AND opens the rail if it was
-// collapsed — one click reaches the Comps list/create-form surface (RailTab, MapFinder.jsx).
+// The left rail's "Comps" tab opens the rail if it was collapsed — one click reaches the Comps
+// list/create-form surface (RailTab, MapFinder.jsx). NEW-1 (2026-09-08): it is its own state and
+// no longer moves anything on the centre toolbar (there is no centre mode left to move).
 async function openCompsTab(page) {
   await page.goto("/");
   await openModule(page, "site-planner");
@@ -38,18 +40,20 @@ async function openCompsTab(page) {
 
 async function openCompCreateForm(page) {
   await openCompsTab(page);
-  // B848304 — "Drop a pin" is now "Place comp" (its primary click defaults to the same map-pin
-  // anchor on a fresh session).
-  await page.getByRole("button", { name: "Place comp", exact: true }).click();
-  // Armed: the map shows the "click to place" prompt instead of the action buttons.
-  await expect(page.getByText("Click the map to place a comp…")).toBeVisible();
+  // NEW-1 (2026-09-08) — GROUND FIRST. "Drop a pin" marks a point; it does not decide what the
+  // point is. The decide bar that follows is where "Log a comp" lives.
+  await page.getByTestId("map-toolbar-drop-pin").click();
+  // Armed: the map says it is waiting for a point, and says nothing about what it will become.
+  await expect(page.getByText("Click the map to mark a point…")).toBeVisible();
   const mapBox = await page.locator(".leaflet-container").first().boundingBox();
   await page.mouse.click(mapBox.x + mapBox.width / 2, mapBox.y + mapBox.height / 2);
+  // The armed prompt is gone — the pin consumed it — and the decide bar is asking.
+  await expect(page.getByText("Click the map to mark a point…")).toHaveCount(0);
+  await expect(page.getByTestId("map-decide-summary")).toBeVisible();
+  await page.getByTestId("map-decide-verb-comp").click();
   // The comp create form opens, pre-filled from that click (the Type field is the tell — it's
   // unique to the form, unlike the list/detail views).
   await expect(page.getByText("Type", { exact: true })).toBeVisible({ timeout: 10_000 });
-  // The armed prompt is gone — placing mode consumed itself.
-  await expect(page.getByText("Click the map to place a comp…")).toHaveCount(0);
 }
 
 test("the Drop-a-pin flow arms, opens the create form pre-filled, and a signed-out save fails loudly", async ({ page }) => {
@@ -71,8 +75,8 @@ test("the Drop-a-pin flow arms, opens the create form pre-filled, and a signed-o
 
 test("the Comps tab opens an honest empty list when signed out", async ({ page }) => {
   await openCompsTab(page);
-  // B848304 — the empty-state copy now names the collapsed toolbar entry point.
-  await expect(page.getByText("No comps yet. Paste a few from a broker email with “＋ Paste comps” above, or use “Place comp” on the map.")).toBeVisible({ timeout: 10_000 });
+  // NEW-1 — the empty-state copy names the ground-first entry point.
+  await expect(page.getByText("No comps yet. Paste a few from a broker email with “＋ Paste comps” above, or point at the map and choose “Log a comp”.")).toBeVisible({ timeout: 10_000 });
 });
 
 test("lease rate + period render inline on one row, as a compact labelled MO/YR control — no separate Period row", async ({ page }) => {

@@ -34,9 +34,11 @@ was never clicked" quietly ships broken.
 > - **Logged-out only:** that proxy also CORS-blocks the Supabase auth handshake, so self-tests run in
 >   **this-device (logged-out) mode** — full coverage for the planner/drawing tools, but anything that
 >   *requires* sign-in (cloud save/sync) still needs a signed-in check elsewhere.
-> - Enter the planner via the map toolbar's **"Select parcels ▾"** caret → **"Start blank"** (NEW-1,
->   2026-08-29 — "Start blank" is no longer its own button; `getByTestId("map-start-blank-menu-btn")`
->   then `getByTestId("map-start-blank-menu-item")` is the reliable two-step click); drive the SVG
+> - Enter the planner via the map toolbar's **"Draw"** button — `getByTestId("map-toolbar-draw")`,
+>   ONE click (⚠ CORRECTED 2026-09-08, B1368144: this used to be a two-step
+>   `map-start-blank-menu-btn` → `map-start-blank-menu-item` caret click, and "Start blank" is now
+>   the first-class "Draw" button on a ground-first toolbar. The old testids no longer exist —
+>   58 such pairs across 80 harness files were collapsed in that item's own commit); drive the SVG
 >   canvas with `page.mouse` (CDP mouse events fire React's pointer handlers); `page.screenshot({clip})`
 >   then read the PNG back to eyeball it.
 > - **⛔ WEBKIT INSTALLS ON DEMAND HERE (amended 2026-09-05, B1168128 fourth pass) — USE IT for any
@@ -185,6 +187,92 @@ was never clicked" quietly ships broken.
 
 **Result:** ⏳ pending — needs a real browser with live GIS egress; not reachable from this sandbox. `Cadence: once`.
 
+### V991408 — B1368144: the ground-first map toolbar on a real parcel selection — three verbs, an acreage chip on the shape, and a search that finds instead of creating `Blocker: live-GIS` `Blocker: auth`
+
+**Why this needs a live pass at all, given 54/54 headless checks passed.** The PIN flavour of the decide bar needs no parcel service, so it is fully driven here (see below) at both of the owner's widths. Two things are NOT reachable from this sandbox and neither is a code-reading claim:
+- **The PARCEL flavour.** Selecting a real lot requires a live county parcel identify. This environment's egress proxy 403s the county/statewide ArcGIS hosts at the CONNECT tunnel — a fast refusal, not a timeout, so no amount of waiting bridges it. Everything downstream of that selection — the acreage chip painting ON the parcels, "Plan a site" opening a plan from them, "Log a comp" writing a multi-parcel anchor — is unexercised by construction.
+- **"Log a comp" LANDING.** A comp needs a signed-in session; Supabase auth is CORS-blocked here.
+
+**What WAS verified here (this session, sandbox + a headless signed-out pass on the real built app).**
+1. **`node ui-audit/verify-map-toolbar-ground-first.mjs` — 54/54**, real Chromium, real built bundle, at **1600×465 and 1191×465**. At rest: Select parcels · Draw · Drop a pin all render; NO Site/Comp tablist and NO "Place comp" button exist anywhere on the page; no decide bar before ground is pointed at. On a dropped pin: the bar appears with its summary, its ✕, the pin drawn on the map, and all three verbs live at once; the first reads **"Plan a site"**; the status dot is neutral (not the comp accent). Sticky answer end to end: choosing "Log a comp" writes `planarfit:mapDecideVerb:v1` to **sessionStorage** (and NOT to localStorage), and the next decide bar leads with it while still offering all three. ✕ removes the bar and the pin and restores the at-rest row.
+2. **Layout measured as rects at both widths, never eyeballed.** Bar does not wrap (all children share one row centre, spread 0px), does not overflow (`scrollWidth === clientWidth`: 671/671 at 1600, 596/596 at 1191), and does not intersect the comps rail on the left (bar 464.5→1135.5 vs rail 10→242 at 1600; 297.8→893.3 vs 10→242 at 1191) or the Imagery-and-layers panel on the right (layers left edge 1322 and 913 respectively). The bar's height is identical at rest and while deciding (42 both), so the decide state adds no row.
+3. **`test/decideBar.test.js` — 15 tests** over the pure decisions, because a bar that silently stops being sticky renders identically to one that works.
+4. `npm run ci-parity` green on dummy Supabase secrets (the script says so itself); `npm run build` clean; `node ui-audit/ui-inventory.mjs --budget-only` green with the crawl's map surface re-driven ground-first.
+5. The harness carries a **known-good arm** (the address field must still be found) and **refuses to report a score** if its own tab is not measurable (`assertMeasurable`), so a broken probe fails as a probe.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner. Use a THROWAWAY duplicate for anything that writes; never a real plan or comp.**
+1. Read the served chunk hash in the SAME observation as every check below (`document.querySelectorAll('script[src]')`) and confirm it names a build after this PR merged. A reload does not guarantee a fresh bundle.
+2. Open the map with nothing selected. **Expect:** the address field, then Select parcels · Draw · Drop a pin. **Expect NOT:** any Site/Comp toggle, and no "Place comp" button.
+3. Click **Select parcels** and click one real lot. **Expect:** the toolbar reads `1 parcel · N.NN AC` with a NEUTRAL dot, three verbs beside it — Plan a site · Log a comp · Place a site plan — and **a small acreage chip painted on the selected lot itself**, reading the same acreage.
+4. Add two more adjoining lots. **Expect:** the count and both acreages track together, and the first verb now reads **"Plan N parcels"** (the plural wording), not "Plan a site".
+5. Press the acreage chip on the map. **Expect:** it does not swallow the press — the lot under it deselects exactly as a click on that lot would (the chip is not a hit target).
+6. Click **Plan a site**. **Expect:** the plan opens on those lots, exactly as "Plan N parcels →" did before.
+7. Back on the map, select one lot and click **Log a comp**. **Expect:** the comps entry sheet opens pre-seeded with ONE row carrying that lot's location — never an extra orphan row.
+8. Now select a different lot. **Expect:** the decide bar leads with **Log a comp** this time (the sticky answer). Open a NEW TAB on planyr.io and select a lot there. **Expect:** that tab leads with **Plan a site** again — the answer is per-session, never remembered across tabs.
+9. Type a real address into the search field and commit it. **Expect:** the map flies there, the parcel under the point is SELECTED, and the decide bar asks what it is. **Expect NOT:** anything created automatically, and no "Plan this site →" / "Add as comp →" button on the parcel info card.
+10. Search an address with no lot under it (a road or right-of-way). **Expect:** the "drop a pin here" offer; taking it marks a point and shows the same decide bar.
+11. Click **Drop a pin**, then a point on the map, then **Place a site plan**. **Expect:** the left rail switches to Comps and the site-plan upload flow opens — the same one the Comps list's "＋ Site plan" button opens.
+12. Confirm all three retired comp anchors are still reachable: pin → Log a comp · Select parcels → Log a comp · a site plan card's three-dot menu → "Pin comp here".
+13. Click the left rail's Comps tab and then the Sites tab. **Expect:** nothing on the centre toolbar changes at all (B850016's decoupling, which this item must not have re-coupled).
+
+**Result:** ⏳ pending — needs a signed-in browser with live county parcel service, on production. `Cadence: once`.
+
+### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back `Blocker: real-data`
+
+**Why this needs its own real pass.** Everything below is measured here on a seeded page in a headless browser, and it all passes — but the report was made on his own Goose Creek → Platting note, whose real content (a long title, a metadata line, real body text, several boxes at once, a window he sized himself) is what the growth budget is computed against. Zoom-/data-density-dependent rendering is a mandatory LIVE-VERIFY class, and a seeded fixture is exactly the thing that can make a real defect unreachable.
+
+**What was verified here (this session, real headless Chromium, real mouse, logged out).**
+1. `ui-audit/verify-notes-free-placement.mjs` §1–§5 — all eight directions (left · right · above · below · four diagonals) drive a box 420px, store the exact asked-for coordinate, grow the page to hold it, and return the same coordinate after a reload. Grow-then-return shrinks the page back to its natural 580 on left, right and above. Two boxes on opposite sides render on one grown page and both survive a reload. Far-left to far-right in one gesture: -300 → 600, on the page, persisted. Phone-width window with a box at x -500: kept and reached.
+2. Unit tests: `anchorExtentLeft`/`anchorExtentTop` (`test/notesAnchorZoom.test.js`), the retired floors in `moveAnchorPoint`/`placeAnchor`/`resizeBox` (`test/notesBoxResize.test.js`, `test/notesAnchorZoom.test.js`), the unclamped group drag (`test/notesMarquee.test.js`). Full repo suite green; `npm run ci-parity` PASS.
+3. `ui-audit/verify-notes-page-growth.mjs` — every check green after its §1 was re-pointed at the new rule (a negative coordinate is KEPT, and opening the note no longer rewrites the stored document).
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, on a THROWAWAY DUPLICATE of a real note (never one of his own plans — owner constraint 7):**
+1. Read the loaded chunk hash in the same observation as everything below (`document.querySelectorAll('script[src]')`), and confirm it names a build after this PR merged. A stale tab will reproduce the OLD behaviour perfectly.
+2. Place a note in the right margin and drag it well past the page's LEFT edge. **Expect:** it follows the pointer the whole way; the page extends leftward to contain it; the title and the body text do NOT jump sideways as it grows.
+3. Drag the same note above the title. **Expect:** it follows; the page extends upward; nothing is cut off at the top.
+4. Drag it back inside the column. **Expect:** the page shrinks back to its ordinary width and height.
+5. Repeat 2–4 diagonally (up-left and down-left). **Expect:** the same on both axes at once.
+6. Put one note far left and a second far right at the same time. **Expect:** one page holds both.
+7. Reload the note. **Expect:** every box is exactly where it was left, and the page is the same size.
+8. Confirm on his ACTUAL Platting note that the old scratch anchor at `y: -21` renders where it says it is and is no longer dragged back onto the page on load.
+
+**Result:** ⏳ pending — needs his own signed-in browser and his own note. Sandbox measurements above are complete and green.
+
+### V993809 — B1370545: something can actually be placed and kept level with the page title `Blocker: real-data`
+
+**Why this needs its own real pass.** The room a box has above the body's origin is the sheet's top padding plus the TITLE BAND's own height — and that band's height depends on the title's length, whether the note carries a project badge, and the phone breakpoint. A seeded page has a short title and one metadata line; his real notes do not.
+
+**What was verified here (this session, real headless Chromium, logged out).** `ui-audit/verify-notes-free-placement.mjs` §6: a box stored at `y: -60` renders overlapping the title's own bounding rect (title top 151, box top 177) and is fully inside the sheet, which grew upward to hold it. `ui-audit/verify-notes-print-free-placement.mjs` §1 confirms the same negative `y` reaches the printed document verbatim.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, on a throwaway duplicate note:**
+1. Read the served chunk hash in the same observation as the steps below.
+2. Press in the grey margin to the LEFT of the page, level with the page's title. **Expect:** a note is created there, beside the title, not below the metadata line.
+3. Type into it, click away, reload. **Expect:** it is still beside the title.
+4. Drag an existing note from the body up until it is level with the title. **Expect:** it goes there and stays; the page grows upward rather than stopping it.
+5. Do 2–4 again on a note with a LONG title that wraps, and on a note filed in a project (so the badge row is present). **Expect:** the same, with the page reaching further up as the band is taller.
+6. Repeat step 2 on a phone-width window. **Expect:** the same behaviour at the phone's own title size.
+
+**Result:** ⏳ pending — needs his own signed-in browser and a note with a real title and metadata line.
+
+### V993810 — B1370548: printing a note that carries placed content, from a real browser's own print dialogue `Blocker: real-data`
+
+**Why this needs its own real pass.** PDF/export parity is a mandatory LIVE-VERIFY class, and headless Chromium's `window.print()` is a documented no-op — this sandbox can build and render the printed document but cannot drive the dialogue that produces his actual paper or PDF. It is also the specific thing he refused to have closed on a code reading.
+
+**What was verified here (this session, real headless Chromium).**
+1. `ui-audit/verify-notes-print-free-placement.mjs` §1 drives the REAL toolbar Print button (`nt-print`) and reads the sheet it wrote: `max-width: max(190mm, 1152px); padding-left: calc(8mm + 276px); padding-top: calc(10mm + 156px)`, all four boxes present, their negative coordinates serialised verbatim.
+2. §2 lays the same document out at full size and confirms all four boxes are inside the printed sheet (left 46px in, right 46px in, above 139px down, below 919px down), then renders a real PDF — `artifacts/notes-free-placement-print.pdf`, attached to the PR with a PNG of the same sheet.
+3. The scaled-vs-clipped question was settled by decompressing a control PDF's own content stream: a 1152px sheet's far-right marker lands at exactly 612.0pt, the Letter MediaBox's full width, on one page. **The whole layout is SCALED to the paper (71% here), not clipped.** Height paginates.
+4. Unit tests for the left/top print growth in `test/notesRoundTwo.test.js`, including all four edges at once and the quiet no-growth case.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, on a throwaway duplicate note carrying notes placed left, right, above and below:**
+1. Read the served chunk hash in the same observation as the steps below.
+2. Press Print in the note toolbar. **Expect:** the browser's own print preview opens showing the whole page, with all four placed notes visible on it.
+3. In the preview, confirm nothing is cut off at the left edge, the right edge or the top. **Expect:** the sheet is scaled down to fit the paper's width; no box is sliced.
+4. Save as PDF and open it. **Expect:** the same — four boxes, all whole, in the same relative positions they occupy on screen.
+5. Confirm a note with NOTHING placed outside its column prints exactly as it always did — normal margins, no extra white space at the left or top.
+6. Print a note whose content runs past one sheet. **Expect:** it paginates onto the next sheet as ordinary text always has; nothing is lost at the page break.
+
+**Result:** ⏳ pending — needs a real browser print dialogue. The document that dialogue will be handed is fully built, measured and rendered here.
 ### V989200 — B1365936: the Dashboard Comps card's reverse-geocoded address and its click-through both work on a real signed-in account `Blocker: live-GIS` `Blocker: auth` `Blocker: real-data`
 
 **Why this needs its own real pass.** Two genuinely network/auth-dependent legs of an otherwise fully sandbox-proven card: (1) the address headline's reverse geocode (`site-planner/lib/geocode.js`'s `reverseGeocodeLatLon`, dynamically imported) calls `geocode.arcgis.com` and `nominatim.openstreetmap.org` — both unreachable from this sandbox's egress allowlist, confirmed by the same class of block every other external-GIS item in this file already documents; (2) the card's whole-card click-through (`onOpenCompInSitePlanner` → `Shell.jsx`'s `compIntent` → `SitePlannerApp.jsx` → the existing `focusCompId` MapFinder already reads) was driven headless against a local demo plan (confirmed it navigates to the Site route and opens the map — see the session's own screenshots), but not against a real signed-in account's real comps, which this sandbox's proxy CORS-blocks the Supabase auth handshake for.
@@ -268,6 +356,30 @@ was never clicked" quietly ships broken.
 8. If reachable, confirm a genuinely empty account (or a throwaway test account with nothing placed) shows the short "Nothing placed yet…" line with no map — already proven headless/logged-out above; this step just confirms the same behavior signed in.
 
 **Result:** ⏳ pending — needs a real signed-in browser session with real located/unlocated data, and a network that can reach `server.arcgisonline.com`; neither is reachable from this sandbox. `Cadence: once`.
+### V995616 — B1372352: California's and Rhode Island's official statewide parcel layers answer, and the app renders/selects a parcel from each `Blocker: live-GIS`
+
+**Why this needs its own live pass, and why the two halves are NOT symmetric.** GIS endpoint behaviour is a mandatory LIVE-VERIFY class, so the app-level render/select check is live for both states. But their reachability standing here is different and must not be blurred:
+
+- **California is NOT sandbox-blocked.** Its endpoint sits on `*.arcgis.com`, which this environment's egress allowlist permits, and it was **queried live and directly from this sandbox** — HTTP 200, 13,138,000 features, polygon geometry, the full 21-field list. The DATA is sandbox-verified; only the app-level render/select is outstanding.
+- **Rhode Island IS sandbox-blocked.** `risegis.ri.gov` is a state `.gov` host this environment 403s at the CONNECT tunnel — the same signature as AR/DE/IN/NJ/NC/HI/MD/NE/NH/VA/WV before it (V965344, V984688). Its measurement comes from **the owner's own browser, 2026-09-08**, relayed as measured fact and never re-derived here.
+
+**⛔ What this item is correcting, because it bears directly on how the live check should be read.** Both states were on record as `no-free-source` with `Candidate: none found`, and both findings were false — California's "only a static 2014 file-geodatabase, 51 of 58 counties, not a live REST service" was wrong in every operative clause, and California's real endpoint was reachable **from this very sandbox** the whole time. The cause was a resolution method that only ever searched state `.gov` hosts and never states' own official ArcGIS Online organizations (fixed under B1372353). So the useful question for a live pass here is not only "does the endpoint answer" but "does the app actually put a parcel on screen in these two states."
+
+**What was verified here (this session, sandbox).**
+1. `node ui-audit/probe-statewide-parcels.mjs` — live, today: California returns **HTTP 200, 13,138,000 features, `esriGeometryPolygon`**, `parcelId=PARCEL_APN`, `situsAddress=SITE_ADDR`, owner and appraised value correctly reported ABSENT. Rhode Island returns this sandbox's own CONNECT-tunnel policy block (`blocked-in-sandbox`), not a host error.
+2. Rhode Island's endpoint, layer id, feature count (394,167) and field list come from the owner's own direct-browser measurement — see `docs/STATEWIDE-PARCELS.md`'s Rhode Island note for the exact values.
+3. `npx vitest run` green, including a **mutation-proven** case (`test/sourceHealth.test.js`) that Rhode Island's entry survives its own circuit breaker exactly like every other statewide composite, via the real production `STATEWIDE_KEYS` list — reverting that list to the literal two-state array was checked live to turn this case and three siblings red, then reverted. Plus new routing cases (`test/counties.test.js`): a Fresno point reaches `ca_statewide`, a Providence point reaches `ri_statewide`, and a Houston point carries neither.
+4. `npm run lint` / `npm run build` / `npm run ci-parity` clean.
+
+**Steps, each with a named expected result. Steps 1-2 need only an ordinary internet connection (not this sandbox); steps 3-5 need a real browser on planyr.io. Nothing here depends on knowing anything that is only in the owner's head.**
+1. `curl "https://bz1uwWPKUInZBK94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/rest/services/CA_Statewide_Parcels_Public_view/FeatureServer/0?f=json"`. **Expect:** HTTP 200, a JSON service definition named `CA_Statewide_Parcels_Public`, `esriGeometryPolygon`, fields including `PARCEL_APN`, `COUNTYNAME`, `SITE_ADDR`. (Already confirmed from this sandbox — listed as a drift re-check, not an open question.)
+2. `curl "https://risegis.ri.gov/hosting/rest/services/RIDEM/Tax_Parcels/MapServer/0?f=json"`. **Expect:** HTTP 200, a JSON layer definition named `Tax Parcels`, polygon geometry, fields including `PlatLot`, `Acres`, `E911`, `TownCode`. **This is the one step this sandbox cannot perform at all.**
+3. On planyr.io, open (or start blank at) a site at a real **California** address — e.g. an industrial address in Fresno or Riverside County — and use "Select parcels". **Expect:** a parcel outline renders and is selectable, exactly as in any Texas/Colorado county today. **Owner and appraised value must read ABSENT — never `0`, never a blank string** (this layer carries neither field).
+4. Same at a real **Rhode Island** address — e.g. an industrial address in Providence or Warwick. **Expect:** a parcel outline renders and is selectable; owner and appraised value read ABSENT; the parcel identifier is a `PlatLot` value (a plat-and-lot string, not a county-style APN — Rhode Island has had no county government since 1842).
+5. **The size check, specific to California and the reason it is a named step.** At 13,138,000 parcels this is the largest source in `counties.js` (~21% above Florida's 10.8M). Zoom OUT over a dense California metro until the parcel layer is at its most demanding, then zoom back in. **Expect:** no hang and no blank map; if the server truncates the response, the existing truncation notice appears and SAYS SO — a silently short parcel draw with no notice is a FAILURE of this step, not a pass.
+
+**Result:** ⏳ pending — step 1 confirmed from this sandbox; steps 2-5 need a network/browser outside this build environment. `Cadence: once` (re-probe on suspicion of drift via `npm run probe:parcels`).
+
 ### V984688 — B1361424: Virginia and West Virginia's real official parcel hosts answer, and the app renders/selects a parcel from each `Blocker: live-GIS`
 
 **Why this needs its own live pass.** `ui-audit/probe-statewide-parcels.mjs` hits every candidate live from THIS sandbox, whose outbound network is an org egress allowlist (confirmed: `*.arcgis.com` reachable, most state `.gov`/`.us` domains 403-blocked at the CONNECT tunnel). `vginmaps.vdem.virginia.gov` and `services.wvgis.wvu.edu` both sit on exactly that kind of blocked domain, so neither can be probed from here — which is precisely the blind spot that produced the original wrong "third-party rehost" decline (B1332016/B1345824). What's proven without an unrestricted network reachable from this sandbox: both hosts answered directly from the owner's own real browser on 2026-09-08 (raw JSON service definitions with the field lists recorded in `docs/STATEWIDE-PARCELS.md`'s per-state notes), and the wiring (`va_statewide`/`wv_statewide` in `counties.js`) follows the exact same shape as every other `Verify: live` statewide composite already shipped and later confirmed (AR/DE/IN/NJ/NC/HI/MD/NE/NH — see V965344). What still can only be confirmed from a session with real network access: the app itself (not just the raw REST endpoint) renders and selects a parcel from each of these two states.
