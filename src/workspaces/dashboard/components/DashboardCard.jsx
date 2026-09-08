@@ -49,7 +49,7 @@ export default function DashboardCard({ title, headerRight, headerMeta, customiz
           </span>
         </span>
         {headerRight && (
-          <span style={{ flex: "none", fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" }}>
+          <span style={{ flex: "none", fontSize: 10.5, fontWeight: 600, color: "var(--text-secondary)" }}>
             {headerRight}
           </span>
         )}

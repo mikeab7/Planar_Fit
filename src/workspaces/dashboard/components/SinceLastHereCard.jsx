@@ -113,7 +113,7 @@ export function SinceLastHereCard({ feed, now = Date.now(), onOpenProject, onOpe
         </div>
       ))}
       {feed.overflowCount > 0 && (
-        <div style={{ fontSize: 11, color: "var(--text-secondary)", paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border-default)" }}>
+        <div style={{ fontSize: 10.5, color: "var(--text-secondary)", paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border-default)" }}>
           +{feed.overflowCount} more since your last visit
         </div>
       )}
