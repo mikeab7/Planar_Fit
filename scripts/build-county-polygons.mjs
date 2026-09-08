@@ -64,7 +64,20 @@ const OUT = join(ROOT, "public", "geo", "county-polygons.json");
 /* The two authoritative boundary services — the SAME rows the GIS registry already ships as
  * `county` / `countyCo`, which the owner's audit confirmed answered correctly at all six test
  * points. Using the registry's own sources is the point: the resolver and the live identify
- * must not be able to disagree about where a county line is. */
+ * must not be able to disagree about where a county line is.
+ *
+ * B1361425 — a THIRD source, `US`, covers every other state + DC from ONE national endpoint
+ * (Esri's `USA_Counties_Generalized_Boundaries`, built from Census TIGER, already generalized
+ * for national-scale drawing — measured: San Bernardino County CA, the largest county in the
+ * contiguous US, is 64 vertices at this resolution before this file's own Douglas–Peucker pass
+ * even runs). This is a MULTI-STATE source (`stateField` reads the real state per feature,
+ * `skipStates` drops TX/CO so their own higher-fidelity dedicated sources above are never
+ * overridden or duplicated) — every other source here stays single-state, keyed by its own dict
+ * key, exactly as before. The owner corrected an earlier version of this item that assumed
+ * "extending county outlines nationwide" meant 48+ separate per-state research tasks (dedupe-first
+ * against B1361425's own filed text) — it does not: ONE endpoint, measured live, covers all of
+ * them, and the real question was always payload size (see this file's own measured output size
+ * printed at the end of a run), not source discovery. */
 const SOURCES = {
   TX: {
     file: "tx-counties.geojson",
@@ -77,6 +90,14 @@ const SOURCES = {
     url: "https://services2.arcgis.com/fnCPHPvll1r80nFV/arcgis/rest/services/Colorado_Counties/FeatureServer/127",
     nameField: "NAME20",
     fipsField: "GEOID20",
+  },
+  US: {
+    file: "us-counties-generalized.geojson",
+    url: "https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_Counties_Generalized_Boundaries/FeatureServer/0",
+    nameField: "NAME",       // already carries the correct designation: "Orleans Parish", "Denali Borough", "Fairfax city"
+    fipsField: "FIPS",       // 5-digit combined state+county code, same shape as the other two sources
+    stateField: "STATE_ABBR",
+    skipStates: ["TX", "CO"], // keep the two dedicated, higher-fidelity sources above; never override them
   },
 };
 
@@ -178,17 +199,22 @@ if (!existsSync(SRC_DIR)) mkdirSync(SRC_DIR, { recursive: true });
 const counties = [];
 let rawPoints = 0, keptPoints = 0;
 
-for (const [state, cfg] of Object.entries(SOURCES)) {
+for (const [srcKey, cfg] of Object.entries(SOURCES)) {
   const path = join(SRC_DIR, cfg.file);
   if (wantFetch || !existsSync(path)) {
-    console.log(`  ${state}: fetching ${cfg.url}`);
+    console.log(`  ${srcKey}: fetching ${cfg.url}`);
     writeFileSync(path, JSON.stringify(await fetchLayer(cfg.url)));
   }
   const fc = JSON.parse(readFileSync(path, "utf8"));
-  console.log(`  ${state}: ${fc.features.length} features`);
+  console.log(`  ${srcKey}: ${fc.features.length} features`);
 
+  const skip = new Set(cfg.skipStates || []);
   for (const f of fc.features) {
     const props = f.properties || {};
+    // B1361425 — a MULTI-STATE source (`US`) reads the real state per feature via `stateField`;
+    // every other source stays single-state, keyed by its own dict key, exactly as before.
+    const state = cfg.stateField ? String(props[cfg.stateField] || "").trim().toUpperCase() : srcKey;
+    if (!state || skip.has(state)) continue;
     const name = String(props[cfg.nameField] || "").trim();
     if (!name) continue;
     const fips = String(props[cfg.fipsField] || "").trim();
