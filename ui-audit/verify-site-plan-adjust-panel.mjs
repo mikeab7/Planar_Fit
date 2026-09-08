@@ -1,13 +1,19 @@
-/* Verify the site-plan panel redesign (B1310208-B1310211, owner decision 2026-09-07) at the
- * owner's own reported window size, 1191x465.
+/* Verify the site-plan panel redesign (B1310208-B1310211, owner decision 2026-09-07; corrected by
+ * B1359492/NEW-5, owner chat 2026-09-08) at the owner's own reported window sizes.
  *
  *   B1310208 (NEW-1) — the plan card at rest shows identity only (thumbnail, name, date/page,
- *     one "Adjust" button) — every editing control leaves the resting card.
- *   B1310209 (NEW-2) — "Adjust" opens a small panel DOCKED to the map (bottom-right — see
+ *     one small control) — every editing control leaves the resting card.
+ *   B1310209 (NEW-2) — Adjust opens a small panel DOCKED to the map (bottom-right — see
  *     mapChromeStack.js's own header for why that corner and the measured scale-bar clearance),
  *     matching the Layers panel's chrome. It never floats or drags.
- *   B1310210 (NEW-3) — the overflow "⋯" menu is gone; Delete lives in the panel's own footer,
- *     separated from Done; Pin comp here / Change page… join Move/resize and Crop in the body.
+ *   ⛔ B1359492 (NEW-5, owner chat, 2026-09-08) SUPERSEDES B1310210 (NEW-3)'s "the overflow menu
+ *     is gone" — corrected, not reverted: what the owner objected to on 2026-09-07 was the menu
+ *     rendering with NO background at all (fixed at the root by B1263075, AnchoredMenu's own
+ *     default-opaque-surface fix), not the menu existing. The resting card's one control is now a
+ *     three-dot menu (Adjust / Change page… / Pin comp here / Delete site plan…) rather than a
+ *     labelled "Adjust" button; the Adjust panel itself keeps ONLY what you manipulate while
+ *     adjusting (visibility, lock, opacity, rotation, share, move/resize, crop) — Change page,
+ *     Pin comp here and Delete moved OUT to the menu.
  *   B1310211 (NEW-4) — Opacity (dragged constantly) reads visually heavier than Rotation (set
  *     once), instead of the two sharing one weight.
  *
@@ -159,15 +165,46 @@ async function runAtViewport(VIEWPORT) {
   check("comp name 'Core 5 - West Hardy' renders with a real box", !!compNameBox, JSON.stringify(compNameBox));
   if (compNameBox) check("comp name box is inside the window (not clipped below it)", compNameBox.bottom <= VIEWPORT.height + 1, JSON.stringify(compNameBox));
 
-  // ---- B1310208 (NEW-1): the resting card is identity-only ----
+  // ---- B1310208 (NEW-1) + B1359492 (NEW-5): the resting card is identity-only ----
   const restingText = await page.evaluate(() => document.body.innerText);
-  check("resting card shows an Adjust button", /\bAdjust\b/.test(restingText));
   check("resting card shows the plan's date/page", /2026-09-01/.test(restingText) && /p\.1/.test(restingText));
-  check("no 'Move / resize' visible before pressing Adjust", !/Move \/ resize/.test(restingText));
-  check("no 'Pin comp here' visible before pressing Adjust", !/Pin comp here/.test(restingText));
-  check("no 'Change page' visible before pressing Adjust", !/Change page/.test(restingText));
-  check("no overflow '⋯' (more actions) control anywhere", (await page.locator('[aria-label="More actions"]').count()) === 0);
-  check("no 'Delete site plan' visible before pressing Adjust", !/Delete site plan/.test(restingText));
+  check("no 'Move / resize' visible before opening the menu", !/Move \/ resize/.test(restingText));
+  check("no 'Pin comp here' visible before opening the menu", !/Pin comp here/.test(restingText));
+  check("no 'Change page' visible before opening the menu", !/Change page/.test(restingText));
+  check("no 'Delete site plan' visible before opening the menu", !/Delete site plan/.test(restingText));
+  // ⛔ B1359492 (NEW-5) SUPERSEDES the old assertion here (no overflow control anywhere): the
+  // resting card's one control is now this three-dot menu trigger, by owner request.
+  const kebab = page.locator('[aria-label="More actions"]').first();
+  check("resting card shows a three-dot 'More actions' menu trigger", (await kebab.count()) === 1);
+
+  // ---- the menu itself: open it, confirm all four items, and prove the opaque-surface fix
+  //      (B1263075) actually reached this specific menu — the whole reason NEW-5 could bring it
+  //      back at all. ----
+  await kebab.click();
+  await page.waitForTimeout(200);
+  const menuText0 = await page.evaluate(() => document.body.innerText);
+  check("menu lists Adjust", /\bAdjust\b/.test(menuText0));
+  check("menu lists Change page…", /Change page/.test(menuText0));
+  check("menu lists Pin comp here", /Pin comp here/.test(menuText0));
+  check("menu lists Delete site plan…", /Delete site plan/.test(menuText0));
+  const menuBg = await page.evaluate(() => {
+    const items = Array.from(document.querySelectorAll('button')).filter((b) => /Delete site plan/.test(b.textContent));
+    const panel = items[0]?.closest('div');
+    return panel ? getComputedStyle(panel).backgroundColor : null;
+  });
+  check("the menu panel has a real, non-transparent background (B1263075 reaching this menu)", menuBg && menuBg !== "rgba(0, 0, 0, 0)", menuBg);
+
+  // Delete via the menu — an inline confirm swapped in, never a native dialog.
+  page.on("dialog", async (d) => { console.log("  [DIALOG — should never appear]", d.message()); fail++; await d.accept().catch(() => {}); });
+  await page.locator("button", { hasText: "Delete site plan…" }).click();
+  await page.waitForTimeout(200);
+  const confirmMenuText = await page.evaluate(() => document.body.innerText);
+  check("delete shows an inline confirm inside the menu (no native dialog)", /Delete/.test(confirmMenuText) && /Cancel/.test(confirmMenuText));
+  await page.locator("button", { hasText: "Cancel" }).first().click();
+  await page.waitForTimeout(200);
+  // Close the menu (Escape) before moving on to Adjust.
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
 
   // NEW-1 (this item) — the Layers panel BEFORE Adjust opens, so the "it collapsed because of
   // Adjust" claim below has a real before/after rather than assuming its resting state.
@@ -175,10 +212,13 @@ async function runAtViewport(VIEWPORT) {
   const layersOpenBefore = layersBefore ? layersBefore.height > 60 : null; // collapsed chip is ~30px tall
   check("Layers panel is open by default on this desktop-width window (regression precondition)", layersOpenBefore === true, JSON.stringify(layersBefore));
 
-  // ---- B1310209 (NEW-2): press Adjust, the panel docks bottom-right ----
-  const adjustBtn = page.locator("button", { hasText: /^Adjust$/ }).first();
-  await adjustBtn.waitFor({ state: "visible", timeout: 8000 });
-  await adjustBtn.click();
+  // ---- B1310209 (NEW-2) + B1359492 (NEW-5): open the menu, click Adjust, the panel docks
+  //      bottom-right ----
+  await kebab.click();
+  await page.waitForTimeout(200);
+  const adjustItem = page.locator("button", { hasText: /^Adjust$/ }).first();
+  await adjustItem.waitFor({ state: "visible", timeout: 8000 });
+  await adjustItem.click();
   await page.waitForTimeout(500);
   await page.screenshot({ path: OUT + `site-plan-02-adjust-panel-open-${label}.png` });
 
@@ -219,9 +259,13 @@ async function runAtViewport(VIEWPORT) {
     check("panel body has Rotation", /Rotation/.test(panelText));
     check("panel body has Move / resize", /Move \/ resize|Editing on map/.test(panelText));
     check("panel body has Crop", /Crop|Edit crop/.test(panelText));
-    check("panel body has Pin comp here", /Pin comp here/.test(panelText));
-    check("panel body has Change page", /Change page/.test(panelText));
-    check("panel footer has Delete site plan and Done", /Delete site plan/.test(panelText) && /\bDone\b/.test(panelText));
+    // ⛔ B1359492 (NEW-5) SUPERSEDES the old assertions here (panel body/footer used to carry
+    // Pin comp here / Change page / Delete) — those three moved OUT to the resting card's own
+    // three-dot menu, already proven above; the panel keeps only what's manipulated while
+    // adjusting.
+    check("panel body no longer has Pin comp here (moved to the three-dot menu)", !/Pin comp here/.test(panelText));
+    check("panel body no longer has Change page (moved to the three-dot menu)", !/Change page/.test(panelText));
+    check("panel footer no longer has Delete site plan (moved to the three-dot menu) — just Done", !/Delete site plan/.test(panelText) && /\bDone\b/.test(panelText));
 
     // B1310211 (NEW-4) — opacity's label reads visually heavier than rotation's.
     const weights = await page.evaluate(() => {
@@ -233,15 +277,6 @@ async function runAtViewport(VIEWPORT) {
     });
     check("opacity label is bold — the prominent block", weights.opacityWeight === "600", JSON.stringify(weights));
     check("rotation label is a visibly different (quieter) weight than opacity's", weights.rotationWeight !== weights.opacityWeight, JSON.stringify(weights));
-
-    // B1310210 (NEW-3) — Delete is an inline confirm, never a native dialog.
-    page.on("dialog", async (d) => { console.log("  [DIALOG — should never appear]", d.message()); fail++; await d.accept().catch(() => {}); });
-    await panel.locator("button", { hasText: "Delete site plan…" }).click();
-    await page.waitForTimeout(300);
-    const confirmText = await panel.evaluate((el) => el.innerText);
-    check("delete shows an inline confirm (no native dialog)", /Delete/.test(confirmText) && /Cancel/.test(confirmText));
-    await panel.locator("button", { hasText: "Cancel" }).click();
-    await page.waitForTimeout(200);
 
     // The Done click is the teeth of the cornerClearance fix: before `data-canvas-corner` was
     // added, the global help/report FAB sat exactly here and intercepted the click.
