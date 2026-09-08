@@ -40,6 +40,7 @@ import { prefetchExtents, computeCoverage, boundsFromLeaflet, getNearbyRadiusMil
  * actually the one on screen, not merely mounted. The outer card (width/padding) is owned by
  * the wrapping `<div>` at the render site, not by this component, so the box itself never
  * resizes when the chunk arrives. */
+const MapNoteEditor = lazy(() => import("../../shared/mapNotes/components/MapNoteEditor.jsx"));
 const LayerPanel = lazy(() => import("./components/LayerPanel.jsx"));
 // B831777 (NEW-2) — the Comps tab's content. Loaded on demand, same reasoning as LayerPanel
 // above: it renders inside the left rail, not on the map's own critical path.
@@ -97,7 +98,7 @@ import { makeParcelDisplayLayer, makeSnapshotLayer, PARCEL_MINZOOM, ADD_CURSOR, 
 import { responseWasTruncated, featureCountOf, parcelTruncationNotice } from "./lib/parcelTruncation.js";
 import { siteBoundaryInfo, siteDrawParcels } from "./lib/siteBoundary.js";
 import { geocodeAddress } from "./lib/geocode.js";
-import { compAnchorFromSelection } from "./lib/compParcelAnchor.js";
+import { parcelAnchorFromSelection } from "./lib/compParcelAnchor.js";
 import { statusToken, darken } from "../../shared/ui/statusTokens.js";
 /* lib/sharing.js is loaded ON DEMAND, and the reason is a budget one. This module is the
    ONLY importer of it, and both of its functions are already reached through an `await`
@@ -117,6 +118,13 @@ import { loadUserPrefs, saveUserPrefs, readMirror, setSitesPanelPref } from "./l
 import { adminBoundariesVisible, attachAdminBoundaries } from "./lib/adminBoundaryGate.js";
 import { compHeadline } from "../../shared/comps/lib/comps.js";
 import { compMarkerSvg, compMarkerSize } from "../../shared/comps/lib/compMarkerIcon.js";
+// NEW-1 (map notes) — a note reuses the comp's ANCHOR machinery wholesale (see placePinAt /
+// armAnchor below, both renamed from their comp-specific names for exactly this reason); only the
+// payload, the marker and the editor are its own. It is NOT the Notes WORKSPACE
+// (src/workspaces/notes) — see shared/mapNotes/db/map_notes.sql's header for why that split holds.
+import { mapNoteMarkerSvg, mapNoteMarkerSize } from "../../shared/mapNotes/lib/mapNoteMarkerIcon.js";
+import { emptyMapNote, mapNoteHeadline } from "../../shared/mapNotes/lib/mapNotes.js";
+import { fetchAllMapNotes, insertMapNote, updateMapNote, deleteMapNote } from "../../shared/mapNotes/lib/mapNotesStore.js";
 // B834580 — the SAME time-sliced-paint primitive B802400 round 5 built for the contour layer
 // (terrainLayers.js). REUSED, not reimplemented: this module owns only the pure "where to split a
 // list of paint ops so no batch exceeds budget" decision; the scheduling policy (a MessageChannel
@@ -597,6 +605,8 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // `sitesLayerRef.current`.
   const sitesPaintEpochRef = useRef(0);
   const compsLayerRef = useRef(null); // leasing-comp markers (NEW-COMPS)
+  const notesLayerRef = useRef(null); // map-note markers (NEW-1)
+  const pendingNotesRebuildRef = useRef(null); // deferred notes-layer rebuild, same as the comps one
   const onCompClickRef = useRef(onCompClick);
   useEffect(() => { onCompClickRef.current = onCompClick; }, [onCompClick]);
   const pressedRef = useRef(false);        // a pointer is currently down on the map (B64)
@@ -644,7 +654,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   const imageryRef = useRef(null);
   const labelsRef = useRef(null);
   const selectModeRef = useRef(false); // read by the once-bound map handlers
-  const placingCompPinRef = useRef(false); // NEW-COMPS: armed by "+ Comp", read by the once-bound click handler
+  const placingPinRef = useRef(false); // NEW-COMPS: armed by "+ Comp", read by the once-bound click handler
   const activeOverlayIdRef = useRef(null); // NEW-2 (B848496): read by the once-bound click handler, to deselect on a background click
   const selectedRef = useRef([]);
   const draggingRef = useRef(false);
@@ -689,8 +699,66 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // second, independent one-shot mode alongside `selectMode` (mutually exclusive in the UI,
   // never both true at once) rather than folded into it, because it needs none of selectMode's
   // parcel-identify machinery — just a raw point.
-  const [placingCompPin, setPlacingCompPin] = useState(false);
-  useEffect(() => { placingCompPinRef.current = placingCompPin; }, [placingCompPin]);
+  const [placingPin, setPlacingPin] = useState(false);
+  useEffect(() => { placingPinRef.current = placingPin; }, [placingPin]);
+  /* NEW-1 (map notes) — WHICH THING the armed pin drop is FOR. The pin-drop mechanism itself
+   * (`placingPin` above, `placePinAt` below, `armAnchor`) is anchor plumbing and knows nothing
+   * about comps: it was named for them only because a comp was its first consumer. A note is its
+   * second, so the names were generalised rather than a second parallel mechanism cloned beside
+   * them — the two comp-anchor paths getting out of step is exactly the failure HARDENING-12
+   * (CompsPanel.jsx's pendingAnchor effect) records, and two would have been three. */
+  const [pinIntent, setPinIntent] = useState("comp"); // "comp" | "note"
+  const pinIntentRef = useRef("comp");
+  useEffect(() => { pinIntentRef.current = pinIntent; }, [pinIntent]);
+
+  /* ── NEW-1: MAP NOTES ─────────────────────────────────────────────────────────────────────────
+   * A short piece of text pinned to a place. Self-contained data owner (the same shape CompsPanel
+   * uses for comps): this component fetches the list, renders it as its own map layer, and owns
+   * the little editor card. LOUD-FAILURE — a failed load shows a named banner, and a failed
+   * save/delete is surfaced inside the editor by the editor itself; nothing here reports a
+   * success it did not get.
+   *
+   * ⛔ A NOTE NEVER CREATES A SITE (see shared/mapNotes/db/map_notes.sql). Nothing in this block
+   * calls the comp path's site-materialization; `projectId` is only ever a site the user picked
+   * by hand from the dropdown, and null is a real, permanent answer. */
+  const [mapNotes, setMapNotes] = useState([]);
+  const [mapNotesErr, setMapNotesErr] = useState("");
+  const [editingNote, setEditingNote] = useState(null); // the note in the editor card, or null
+  const [showNotesLayer, setShowNotesLayer] = useState(() => {
+    try { return localStorage.getItem("planarfit:mapShowNotes:v1") !== "0"; } catch (_) { return true; }
+  });
+  const toggleShowNotesLayer = (v) => { setShowNotesLayer(v); try { localStorage.setItem("planarfit:mapShowNotes:v1", v ? "1" : "0"); } catch (_) {} };
+
+  const reloadMapNotes = async () => {
+    const { data, error } = await fetchAllMapNotes();
+    if (error) { setMapNotesErr(error.message || String(error)); return; }
+    setMapNotesErr(""); setMapNotes(data);
+  };
+  useEffect(() => { if (visible) reloadMapNotes(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [visible]);
+
+  // Placement handoff: an anchor (from a dropped pin OR a parcel selection) opens the editor on a
+  // brand-new, UNSAVED note. Nothing is written until the user actually saves — a placed pin the
+  // user cancels leaves no row behind. Held in a ref so the once-bound map click handler can reach
+  // the current version (the same pattern placePinAtRef already uses).
+  const beginNoteAt = (anchor) => { if (anchor) setEditingNote(emptyMapNote(anchor)); };
+  const beginNoteAtRef = useRef(beginNoteAt);
+  useEffect(() => { beginNoteAtRef.current = beginNoteAt; });
+
+  const saveMapNote = async (draft) => {
+    const res = draft.id ? await updateMapNote(draft.id, draft) : await insertMapNote(draft);
+    if (res.error) return res;
+    setMapNotes((prev) => {
+      const rest = prev.filter((n) => n.id !== res.data.id);
+      return [res.data, ...rest];
+    });
+    return res;
+  };
+  const removeMapNote = async (id) => {
+    const res = await deleteMapNote(id);          // SOFT — stamps deleted_at, never a hard delete
+    if (res.error) return res;
+    setMapNotes((prev) => prev.filter((n) => n.id !== id));
+    return res;
+  };
   // B848304 (map toolbar "Place comp" split button) — which anchor kind the primary click uses,
   // STICKY FOR THE SESSION (sessionStorage, not localStorage — a fresh tab starts over, matching
   // the owner's spec: "first use of the session defaults to On the map"). Null until the user's
@@ -708,13 +776,13 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   const placeCompMenuBtnRef = useRef(null);
   useEffect(() => {
     if (!mapRef.current) return;
-    if (placingCompPin) mapRef.current.getContainer().style.cursor = ADD_CURSOR;
+    if (placingPin) mapRef.current.getContainer().style.cursor = ADD_CURSOR;
     else if (!selectMode) mapRef.current.getContainer().style.cursor = "";
     // selectMode's OWN cursor is owned by its own effect elsewhere in this file; this effect only
-    // needs to react to placingCompPin toggling, reading selectMode's current value to avoid
+    // needs to react to placingPin toggling, reading selectMode's current value to avoid
     // stomping on that other effect's cursor when comp-placing mode turns off.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placingCompPin]);
+  }, [placingPin]);
 
   /* ⛔ B850016 (NEW-11) — B831776's original design ("the Site/Comp switch and the left-rail tab
    * are ONE piece of state, never two") is SUPERSEDED. Owner, verbatim: "when i click comp in the
@@ -735,7 +803,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     // Leaving a mode cancels whatever that mode had armed, so switching Site<->Comp never leaves
     // a stale one-shot click-handler live under the other mode's toolbar (NEW-6's armed state is
     // keyed on `mode`, so this keeps the visual and the actual armed handler from disagreeing).
-    if (m !== "comp") { setPlacingCompPin(false); }
+    if (m !== "comp") { setPlacingPin(false); }
     setSelectMode(false);
   };
   // B850016 (NEW-11) — the rail tab's OWN state, independent of `mode` above. A plain setter, no
@@ -1618,7 +1686,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     L.control.scale({ imperial: true, metric: false, position: "bottomright", maxWidth: 130 }).addTo(map); // graphic scale (B96b)
     setZoom(map.getZoom());
     const onClick = (e) => {
-      if (placingCompPinRef.current) { placeCompPinAtRef.current(e.latlng); return; }
+      if (placingPinRef.current) { placePinAtRef.current(e.latlng); return; }
       if (selectModeRef.current) { handleClick(e.latlng); return; }
       // A background click (nothing else claimed it) deselects a site plan armed for editing —
       // its own image click already stops propagation before this ever runs (B848496 NEW-2).
@@ -1694,7 +1762,9 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       if (oe && oe.target && oe.target.closest && oe.target.closest(".leaflet-interactive, .leaflet-marker-pane")) return;
       if (oe) { oe.preventDefault(); oe.stopPropagation(); }
       setStatusMenu(null);
-      setMapMenu({ x: (oe && oe.clientX) || 0, y: (oe && oe.clientY) || 0 });
+      // NEW-1 — the clicked GROUND POINT rides along, so "Add a note here" can anchor exactly
+      // where the menu was opened rather than at the map centre.
+      setMapMenu({ x: (oe && oe.clientX) || 0, y: (oe && oe.clientY) || 0, latlng: e.latlng });
     };
     map.on("click", onClick);
     map.on("zoomend", onZoom);
@@ -1715,10 +1785,25 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       pressedRef.current = false;
       if (pendingRebuildRef.current) { const fn = pendingRebuildRef.current; pendingRebuildRef.current = null; setTimeout(fn, 0); }
       if (pendingCompsRebuildRef.current) { const fn = pendingCompsRebuildRef.current; pendingCompsRebuildRef.current = null; setTimeout(fn, 0); }
+      if (pendingNotesRebuildRef.current) { const fn = pendingNotesRebuildRef.current; pendingNotesRebuildRef.current = null; setTimeout(fn, 0); }
     };
     containerEl.addEventListener("pointerdown", onPress);
     containerEl.addEventListener("pointerup", onRelease);
     containerEl.addEventListener("pointercancel", onRelease);
+    /* ⛔ NEW-1 — AND ON THE WINDOW TOO, because a press can legitimately END OUTSIDE THE MAP and
+     * this flag is a LATCH: nothing else ever clears it. Measured while building the map-notes
+     * layer, and it is NOT notes-specific — it strands the sites and comps rebuilds identically.
+     * The case: right-click the map (pointerdown on the container → pressed = true), the context
+     * menu mounts UNDER THE CURSOR, and the matching `pointerup` targets the menu, which is not a
+     * descendant of the Leaflet container — so the container's release listener never fires. Every
+     * subsequent layer rebuild is then deferred FOREVER, and the next map click flushes the whole
+     * backlog at once. Symptom (real, reproduced): a note saved straight after a right-click was
+     * written, counted in the panel — "Notes (2)" — and PAINTED NOWHERE until the user happened to
+     * click the map again. A layer that silently stops repainting is exactly the class of silent
+     * failure LOUD-FAILURE exists to prevent, so the release is bound where a press always ends.
+     * A pointerup inside the container reaches both listeners; the second is then a no-op. */
+    window.addEventListener("pointerup", onRelease);
+    window.addEventListener("pointercancel", onRelease);
     containerEl.addEventListener("wheel", markUserMoved, { passive: true }); // NEW-1 — a scroll-zoom is the user driving too
     map.on("dragstart", markUserMoved);
     /* NEW-2 — hover/click identify for the RASTER-painted overlays. Bound once with the map;
@@ -1732,7 +1817,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       // vector boundary identify reads. Panning is gated inside attachRasterIdentify.
       identifyOk: () => !selectModeRef.current,
     });
-    return () => { cancelled = true; detachRasterIdentify(); detachPermWatch(); if (locateWatchdogRef.current) { clearTimeout(locateWatchdogRef.current); locateWatchdogRef.current = null; } map.off("click", onClick); map.off("zoomend", onZoom); map.off("moveend", onMove); map.off("mousemove", onMouseMove); map.off("mousemove", onCoordMove); map.off("mouseout", onCoordOut); map.off("contextmenu", onMapCtx); map.off("dragstart", onDragStart); map.off("dragend", onDragEnd); map.off("dragstart", markUserMoved); map.off("locationfound"); map.off("locationerror"); containerEl.removeEventListener("pointerdown", onPress); containerEl.removeEventListener("pointerup", onRelease); containerEl.removeEventListener("pointercancel", onRelease); containerEl.removeEventListener("wheel", markUserMoved); map.remove(); mapRef.current = null; };
+    return () => { cancelled = true; detachRasterIdentify(); detachPermWatch(); if (locateWatchdogRef.current) { clearTimeout(locateWatchdogRef.current); locateWatchdogRef.current = null; } map.off("click", onClick); map.off("zoomend", onZoom); map.off("moveend", onMove); map.off("mousemove", onMouseMove); map.off("mousemove", onCoordMove); map.off("mouseout", onCoordOut); map.off("contextmenu", onMapCtx); map.off("dragstart", onDragStart); map.off("dragend", onDragEnd); map.off("dragstart", markUserMoved); map.off("locationfound"); map.off("locationerror"); containerEl.removeEventListener("pointerdown", onPress); containerEl.removeEventListener("pointerup", onRelease); containerEl.removeEventListener("pointercancel", onRelease); window.removeEventListener("pointerup", onRelease); window.removeEventListener("pointercancel", onRelease); containerEl.removeEventListener("wheel", markUserMoved); map.remove(); mapRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1993,7 +2078,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
      Deliberately keyed on `visible` (the map↔plan MODE flip) only — NOT `isActive` —
      so peeking at another module tab and coming back never wipes a parcel selection. */
   useEffect(() => {
-    if (visible) { clearHilites(); setSelected([]); setSelectMode(false); setParcelInfo(null); setPlacingCompPin(false); }
+    if (visible) { clearHilites(); setSelected([]); setSelectMode(false); setParcelInfo(null); setPlacingPin(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
@@ -2179,9 +2264,9 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
         if (!c?.anchor || typeof c.anchor.lat !== "number" || typeof c.anchor.lon !== "number") return;
         const { size, anchor } = compMarkerSize(false);
         const icon = L.divIcon({ className: "map-comp-feature", html: compMarkerSvg(c.compType), iconSize: size, iconAnchor: anchor });
-        const marker = L.marker([c.anchor.lat, c.anchor.lon], { icon, interactive: !selectMode && !placingCompPin, keyboard: false, riseOnHover: true });
+        const marker = L.marker([c.anchor.lat, c.anchor.lon], { icon, interactive: !selectMode && !placingPin, keyboard: false, riseOnHover: true });
         const tip = `${c.title || compHeadline(c)} · ${c.compDate || ""}`;
-        if (!selectMode && !placingCompPin) {
+        if (!selectMode && !placingPin) {
           marker.on("click", () => onCompClickRef.current && onCompClickRef.current(c.id)).bindTooltip(tip, { direction: "top" });
         }
         marker.addTo(group);
@@ -2192,7 +2277,47 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     if (pressedRef.current) { pendingCompsRebuildRef.current = build; return; }
     build();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [comps, selectMode, placingCompPin, showCompsLayer]);
+  }, [comps, selectMode, placingPin, showCompsLayer]);
+
+  /* NEW-1 — the MAP NOTES layer. Same construction as the comps layer above and gated the same
+   * way: ONLY on its own "Notes" checkbox (B831778's decoupling rule — what is PAINTED is never a
+   * function of which tab or mode is active), plus the same "don't rebuild mid-press" deferral so
+   * a rebuild landing during a gesture can't swallow the click. The marker is a third silhouette
+   * (a bubble, in the Notes accent) so a note can never be read as a comp or a site — see
+   * shared/mapNotes/lib/mapNoteMarkerIcon.js. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const build = () => {
+      if (!mapRef.current) return;
+      if (notesLayerRef.current) { map.removeLayer(notesLayerRef.current); notesLayerRef.current = null; }
+      const group = L.layerGroup();
+      (showNotesLayer ? mapNotes : []).forEach((n) => {
+        if (!n?.anchor || typeof n.anchor.lat !== "number" || typeof n.anchor.lon !== "number") return;
+        const { size, anchor: iconAnchor } = mapNoteMarkerSize(false);
+        // The marker carries its own note id, so a check (or a future "focus this note" path) can
+        // address ONE note rather than guessing from marker order — the gap that made a harness
+        // reopen the wrong note while reporting it as the right one. Deliberately `data-note-id`
+        // and NOT the canvas census's `data-feature` vocabulary: that names drawn PLAN features on
+        // the planner SVG, and a Leaflet map marker is not one of them (COUNT-EVERY-KIND).
+        const icon = L.divIcon({
+          className: "map-note-feature",
+          html: `<span data-note-id="${String(n.id).replace(/"/g, "")}">${mapNoteMarkerSvg()}</span>`,
+          iconSize: size, iconAnchor,
+        });
+        const marker = L.marker([n.anchor.lat, n.anchor.lon], { icon, interactive: !selectMode && !placingPin, keyboard: false, riseOnHover: true });
+        if (!selectMode && !placingPin) {
+          marker.on("click", () => setEditingNote(n)).bindTooltip(mapNoteHeadline(n), { direction: "top" });
+        }
+        marker.addTo(group);
+      });
+      group.addTo(map);
+      notesLayerRef.current = group;
+    };
+    if (pressedRef.current) { pendingNotesRebuildRef.current = build; return; }
+    build();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapNotes, selectMode, placingPin, showNotesLayer]);
 
   const flyToSite = (site) => {
     if (site.origin && mapRef.current) mapRef.current.flyTo([site.origin.lat, site.origin.lon], 17, { duration: 0.7 });
@@ -2807,7 +2932,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // click on the map WOULD do differs by mode (a Site pin starts a blank plan; a Comp pin anchors
   // a leasing comp) — the same branch the toolbar's own "Start blank"/"Drop a pin" buttons take.
   const dropPinFromSearch = () => {
-    if (mode === "comp") { const c = mapRef.current && mapRef.current.getCenter(); if (c) placeCompPinAt(c); return; }
+    if (mode === "comp") { const c = mapRef.current && mapRef.current.getCenter(); if (c) placePinAt(c); return; }
     startBlankHere();
   };
 
@@ -2838,13 +2963,32 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
 
   // NEW-COMPS: drop a leasing comp pin at a raw clicked point — no parcel resolution needed,
   // handing off to `onPlaceComp` instead of creating a site.
-  const placeCompPinAt = async (latlng) => {
-    setPlacingCompPin(false);
-    const county = await resolveCompCounty(latlng.lat, latlng.lng, "pin");
-    onPlaceComp && onPlaceComp({ kind: "pin", lat: latlng.lat, lon: latlng.lng, county });
+  // NEW-1 (map notes) — ONE pin-drop path, routed by `pinIntent`, rather than a second copy of
+  // this function for notes. `resolveCompCounty` is shared as-is: the best-effort county race is a
+  // property of a dropped point, not of what the point is for.
+  const placePinAt = async (latlng) => {
+    setPlacingPin(false);
+    const intent = pinIntentRef.current;
+    const county = await resolveCompCounty(latlng.lat, latlng.lng, intent === "note" ? "note pin" : "pin");
+    const anchor = { kind: "pin", lat: latlng.lat, lon: latlng.lng, county };
+    if (intent === "note") { beginNoteAtRef.current(anchor); return; }
+    onPlaceComp && onPlaceComp(anchor);
   };
-  const placeCompPinAtRef = useRef(placeCompPinAt);
-  useEffect(() => { placeCompPinAtRef.current = placeCompPinAt; });
+  // NEW-1 — a note dropped at a known ground point (the right-click menu's "Add a note here").
+  // The editor opens IMMEDIATELY on the point rather than waiting up to three seconds for the
+  // best-effort county race; the county is folded into the same open draft when (and only when) it
+  // resolves. Same helper `placePinAt` uses, so a note pin and a comp pin derive county identically.
+  const beginNoteAtPoint = async (latlng) => {
+    const anchor = { kind: "pin", lat: latlng.lat, lon: latlng.lng, county: null };
+    beginNoteAt(anchor);
+    const county = await resolveCompCounty(latlng.lat, latlng.lng, "note pin");
+    if (!county) return;
+    setEditingNote((cur) => (cur && !cur.id && cur.anchor?.lat === anchor.lat && cur.anchor?.lon === anchor.lon
+      ? { ...cur, anchor: { ...cur.anchor, county } } : cur));
+  };
+
+  const placePinAtRef = useRef(placePinAt);
+  useEffect(() => { placePinAtRef.current = placePinAt; });
 
   // NEW-COMPS: anchor a comp to the currently-selected real parcel(s) (selectMode's own
   // selection), instead of planning a new site with it. `selected` items already carry lon/lat
@@ -2860,7 +3004,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // site would open on), carrying the toolbar's own already-computed acreage so it survives into
   // the comp instead of forcing Michael to re-type 66.17 by hand.
   const placeCompOnSelectedParcel = () => {
-    const anchor = compAnchorFromSelection(selected, asm);
+    const anchor = parcelAnchorFromSelection(selected, asm);
     if (!anchor) return;
     onPlaceComp && onPlaceComp(anchor);
     clearSel();
@@ -2872,15 +3016,21 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // kind). "site_plan" resolves to a real overlay itself — the ACTIVE one if there is one, else
   // the first uploaded — and falls back to "map" if none exists, so a stale sticky choice (an
   // overlay deleted since it was last used) can never arm a dead menu action from the primary click.
-  const armCompAnchor = (kind) => {
+  // NEW-1 (map notes) — `intent` says what the armed pick is FOR ("comp" | "note"); it defaults to
+  // "comp" so every existing call site (and the toolbar's own split button) is unchanged. A note
+  // has no site-plan anchor kind in this cut, so "site_plan" is comp-only by construction.
+  const armAnchor = (kind, intent = "comp") => {
+    setPinIntent(intent);
     if (kind === "site_plan") {
       const target = (activeOverlayId && overlaysById[activeOverlayId]) ? activeOverlayId : sitePlanOverlays[0]?.id;
-      if (!target) { armCompAnchor("map"); return; }
+      if (!target) { armAnchor("map"); return; }
       startPinOnOverlay(target); // also records the "site_plan" stickiness itself
       return;
     }
-    setLastCompAnchorKind(kind);
-    if (kind === "parcel") setSelectMode(true); else setPlacingCompPin(true);
+    // Stickiness belongs to the COMP toolbar's own split button — a note arming a pin must not
+    // silently re-point that button (NEW-1).
+    if (intent === "comp") setLastCompAnchorKind(kind);
+    if (kind === "parcel") setSelectMode(true); else setPlacingPin(true);
   };
 
   // B941152 — Enter mirrors the "Comp here" button that appears the moment a parcel is selected
@@ -3145,7 +3295,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
 
         {/* B831781 (NEW-6) — A PERSISTENT MODE NEEDS A VISIBLE ARMED STATE. With Comp mode active
             and an add-action armed (a raw click is about to either drop a comp pin or pick a
-            parcel to anchor one — placingCompPin / selectMode), the map itself says so: a soft
+            parcel to anchor one — placingPin / selectMode), the map itself says so: a soft
             blue ring around the whole viewport (map-edge tint). COMP_ACCENT is the same hue the
             switch and every comp action already use, so "blue" reads as "comp" everywhere in
             this cluster — the toolbar's own status text (below) is what NAMES the action; this
@@ -3155,7 +3305,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             read) because a full-viewport ring is PERIPHERAL — visible in the same glance as
             wherever the pointer is about to click, wherever on the map that is.
             `pointer-events: none`, so it never steals the click it's warning about. */}
-        {mode === "comp" && (placingCompPin || selectMode) && (
+        {mode === "comp" && (placingPin || selectMode) && (
           <div aria-hidden="true" data-testid="map-comp-armed" style={{
             position: "absolute", inset: 0, zIndex: MAP_CHROME_Z.control, pointerEvents: "none",
             boxShadow: `inset 0 0 0 3px ${COMP_ACCENT}, inset 0 0 26px -8px ${COMP_ACCENT}`,
@@ -3206,6 +3356,34 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
           color: "rgba(255,255,255,0.9)", background: "rgba(0,0,0,0.5)", padding: "3px 9px",
         }} />
 
+        {/* NEW-1 (map notes) — the note editor card. Floats over the map, bottom-centre, clear of
+            the two side panels and above the cursor readout; the map keeps working behind it (it is
+            a card, never a modal — nothing is blocked while it is open). Lazy, like every other
+            panel here, so a user who never places a note downloads none of it. */}
+        {editingNote && (
+          <div style={{ position: "absolute", left: "50%", bottom: 44, transform: "translateX(-50%)", zIndex: MAP_CHROME_Z.alert }}>
+            <Suspense fallback={null}>
+              <MapNoteEditor
+                note={editingNote}
+                sites={sites}
+                onSave={saveMapNote}
+                onDelete={removeMapNote}
+                onClose={() => setEditingNote(null)}
+              />
+            </Suspense>
+          </div>
+        )}
+
+        {/* NEW-1 — LOUD-FAILURE: if the notes list could not be read, say so on the map rather than
+            silently drawing none of them (an empty notes layer and a failed fetch look identical). */}
+        {mapNotesErr && (
+          <div role="alert" data-testid="map-notes-error" style={{
+            position: "absolute", left: "50%", bottom: 30, transform: "translateX(-50%)", zIndex: MAP_CHROME_Z.alert,
+            background: "var(--surface-raised)", color: "var(--danger-text)", border: "1px solid var(--border-default)",
+            borderRadius: RADIUS.sm, padding: "4px 10px", fontSize: FONT_SIZE.control, maxWidth: "min(420px, 90%)",
+          }}>Notes couldn't load — {mapNotesErr}</div>
+        )}
+
         {/* Right-click-on-empty-map menu → export the map's sites to Google Earth (B684).
             Shared viewport-aware ContextMenu (B915) — flips/clamps at any edge. */}
         {mapMenu && (
@@ -3215,6 +3393,14 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             <div style={{ fontSize: 10, color: PAL.muted, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, padding: "6px 10px 4px" }}>Map</div>
             <button onClick={() => exportSitesKmz(false)} style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: PAL.ink, padding: "7px 10px", borderRadius: RADIUS.sm }}
               onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-overlay)")} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>Export to Google Earth (KMZ)</button>
+            {/* NEW-1 (map notes) — the pin-anchored entry point. A right-click already means "do
+                something at this exact spot", and it is mode-independent, so a note can be added
+                whether the toolbar is set to Site or Comp. This routes through the SAME
+                `beginNoteAt` handoff the armed pin drop and the parcel button use — one path. */}
+            <button onClick={() => { const ll = mapMenu.latlng; setMapMenu(null); if (ll) beginNoteAtPoint(ll); }}
+              data-testid="map-add-note-here"
+              style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: PAL.ink, padding: "7px 10px", borderRadius: RADIUS.sm }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-overlay)")} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>Add a note here</button>
             <button onClick={() => exportSitesKmz(true)} style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: PAL.ink, padding: "7px 10px", borderRadius: RADIUS.sm }}
               onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-overlay)")} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>Export with 3D buildings</button>
           </ContextMenu>
@@ -3273,7 +3459,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               action UNDER the Layers panel's corner instead of just shortening its own label.
               Only Cancel and the small ✕ clear button stay fixed-width — short enough to never
               need it, and always reachable is what matters most for those two. */}
-          {mode === "site" && !selectMode && !placingCompPin && selected.length === 0 && (
+          {mode === "site" && !selectMode && !placingPin && selected.length === 0 && (
             /* NEW-1 (map "Start blank" consolidation, owner report 2026-08-29) — ONE entry point
                for starting a plan here, not two of equal weight. "Select parcels" is the PRIMARY
                action (almost every new plan starts from a real parcel) — filled with the accent,
@@ -3333,11 +3519,11 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               button. Primary click uses the LAST-USED anchor (defaulting to "On the map" the
               first time this session); the caret opens the three named ways to anchor a comp,
               each a prepositional phrase completing "Place comp / …". */}
-          {mode === "comp" && !selectMode && !placingCompPin && selected.length === 0 && onPlaceComp && (
+          {mode === "comp" && !selectMode && !placingPin && selected.length === 0 && onPlaceComp && (
             <div style={{ display: "flex", flex: "0 1 auto", minWidth: 54 }}>
               <Button
                 variant="primary"
-                onClick={() => armCompAnchor(lastCompAnchorKind || "map")}
+                onClick={() => armAnchor(lastCompAnchorKind || "map")}
                 title={`Click the map to place a comp ${COMP_ANCHOR_PHRASE[lastCompAnchorKind || "map"]}`}
                 data-testid="map-place-comp-btn"
                 style={{
@@ -3374,7 +3560,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               </Button>
             </div>
           )}
-          {placingCompPin && (
+          {placingPin && (
             <>
               <span style={{ flex: "1 1 auto", minWidth: 0, color: PAL.chromeMuted, fontSize: 12.5, padding: "0 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 Click the map to place a comp…
@@ -3382,7 +3568,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               {/* B986096 (NEW-2) — arming a row's Location cell only ever arms PIN mode
                   (CompsPanel's `armRow` calls `onArmMapPin`, never anything parcel-related), which
                   used to make "Comp from parcel" vanish from this toolbar entirely (it rendered only
-                  when `!placingCompPin`) — directly contradicting the entry grid's own banner, which
+                  when `!placingPin`) — directly contradicting the entry grid's own banner, which
                   promises the parcel option "stays a real alternative … reached the same way it
                   always was, from the map's own toolbar." A row armed this way had NO reachable path
                   to a parcel anchor at all. Switching modes here leaves the armed row untouched, so
@@ -3391,7 +3577,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               {mode === "comp" && onPlaceComp && (
                 <Button
                   variant="ghost"
-                  onClick={() => { setPlacingCompPin(false); setSelectMode(true); setLastCompAnchorKind("parcel"); }}
+                  onClick={() => { setPlacingPin(false); setSelectMode(true); setLastCompAnchorKind("parcel"); }}
                   title="Anchor to a parcel instead of a raw pin"
                   style={{ ...NESTED_ACTION_SIZE, flex: "0 1 auto", minWidth: 44, overflow: "hidden", color: PAL.chromeInk, background: "var(--chrome-bg-elev)", border: "1px solid var(--chrome-divider)", boxShadow: "none" }}
                 >
@@ -3400,7 +3586,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               )}
               <Button
                 variant="ghost"
-                onClick={() => setPlacingCompPin(false)}
+                onClick={() => setPlacingPin(false)}
                 style={{ ...NESTED_ACTION_SIZE, flex: "none", color: PAL.chromeInk, background: "var(--chrome-bg-elev)", border: "1px solid var(--chrome-divider)", boxShadow: "none" }}
               >
                 Cancel
@@ -3419,7 +3605,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               {mode === "comp" && onPlaceComp && (
                 <Button
                   variant="ghost"
-                  onClick={() => { setSelectMode(false); setPlacingCompPin(true); setLastCompAnchorKind("map"); }}
+                  onClick={() => { setSelectMode(false); setPlacingPin(true); setLastCompAnchorKind("map"); }}
                   title="Drop a pin instead of anchoring to a parcel"
                   style={{ ...NESTED_ACTION_SIZE, flex: "0 1 auto", minWidth: 40, overflow: "hidden", color: PAL.chromeInk, background: "var(--chrome-bg-elev)", border: "1px solid var(--chrome-divider)", boxShadow: "none" }}
                 >
@@ -3456,6 +3642,21 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               >
                 ✕
               </button>
+              {/* NEW-1 (map notes) — the PARCEL-anchored entry point, and deliberately
+                  mode-independent: a note is neither a plan nor a deal, so it is offered on any
+                  selection rather than behind the Site/Comp switch. Secondary (ghost) so it never
+                  competes with the mode's own primary action. Reuses `parcelAnchorFromSelection`
+                  — the SAME pure derivation the comp path uses, multipart-safe and multi-parcel
+                  safe (B941152), not a second reading of `selected`. */}
+              <Button
+                variant="ghost"
+                onClick={() => { const a = parcelAnchorFromSelection(selected, asm); if (!a) return; beginNoteAt(a); clearSel(); }}
+                title="Pin a note to the selected parcel"
+                data-testid="map-note-from-parcel"
+                style={{ ...NESTED_ACTION_SIZE, flex: "0 1 auto", minWidth: 40, overflow: "hidden", color: PAL.chromeInk, background: "var(--chrome-bg-elev)", border: "1px solid var(--chrome-divider)", boxShadow: "none" }}
+              >
+                <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Note</span>
+              </Button>
               {/* B831776 (NEW-1) — one action, chosen by mode: Site mode plans the parcel(s);
                   Comp mode anchors a comp to the one selected parcel. Never both at once — that
                   was the old design's own confusion (two unrelated actions on one selection). */}
@@ -3531,19 +3732,19 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
           zIndex={MAP_CHROME_Z.panel} panelStyle={menuPanelStyle}>
           <MenuItem data-testid="map-place-comp-menu-item-map"
             title="Place a comp anywhere you click on the map"
-            onClick={() => { setPlaceCompMenuOpen(false); armCompAnchor("map"); }}>
+            onClick={() => { setPlaceCompMenuOpen(false); armAnchor("map"); }}>
             On the map
           </MenuItem>
           <MenuItem data-testid="map-place-comp-menu-item-parcel"
             title="Anchor the comp to a real parcel you select on the map"
-            onClick={() => { setPlaceCompMenuOpen(false); armCompAnchor("parcel"); }}>
+            onClick={() => { setPlaceCompMenuOpen(false); armAnchor("parcel"); }}>
             On a parcel
           </MenuItem>
           <MenuItem data-testid="map-place-comp-menu-item-site-plan"
             aria-disabled={hasSitePlanOverlay ? undefined : "true"}
             title={hasSitePlanOverlay ? "Anchor the comp to a point on an uploaded site plan" : "Upload a site plan first (Site plans panel below) — then this anchors a comp to it"}
             style={hasSitePlanOverlay ? undefined : { opacity: 0.45, cursor: "not-allowed" }}
-            onClick={() => { if (!hasSitePlanOverlay) return; setPlaceCompMenuOpen(false); armCompAnchor("site_plan"); }}>
+            onClick={() => { if (!hasSitePlanOverlay) return; setPlaceCompMenuOpen(false); armAnchor("site_plan"); }}>
             On a site plan
           </MenuItem>
         </AnchoredMenu>
@@ -3795,12 +3996,12 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                     m.flyTo([anchor.lat, anchor.lon], Math.max(m.getZoom(), 17));
                   }}
                   // ⛔ HARDENING-13 (B986096, owner P0 live-test) — arming a row's Location cell
-                  // used to leave `placingCompPin` (this component's own "is the next map click a
+                  // used to leave `placingPin` (this component's own "is the next map click a
                   // pin drop" switch) untouched, so "click Location, then click the map" did
                   // nothing until the user ALSO separately clicked the toolbar's "Drop a pin" —
                   // a third, undocumented step. Clicking Location now engages this directly.
-                  onArmMapPin={() => setPlacingCompPin(true)}
-                  onDisarmMapPin={() => setPlacingCompPin(false)}
+                  onArmMapPin={() => setPlacingPin(true)}
+                  onDisarmMapPin={() => setPlacingPin(false)}
                   // B1167712-B1167714 (NEW-1/2/3) — which comp's site plan (if any) SitePlansSection
                   // should show right now (bubbled up whenever a saved comp's detail/edit form is
                   // open); the repin-completion hook "Pin this on the plan" (rendered by
@@ -3940,6 +4141,12 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: PAL.ink, cursor: "pointer", padding: "2px 0" }}>
               <input type="checkbox" checked={showCompsLayer} onChange={(e) => toggleShowCompsLayer(e.target.checked)} data-testid="map-show-comps" />
               <span>Comps{comps.length ? ` (${comps.length})` : ""}</span>
+            </label>
+            {/* NEW-1 — map notes, the third drawn thing on this map, hidden and shown by exactly
+                the same rule as its two neighbours. */}
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: PAL.ink, cursor: "pointer", padding: "2px 0" }}>
+              <input type="checkbox" checked={showNotesLayer} onChange={(e) => toggleShowNotesLayer(e.target.checked)} data-testid="map-show-notes" />
+              <span>Notes{mapNotes.length ? ` (${mapNotes.length})` : ""}</span>
             </label>
           </div>
           {/* NEW-3 — the list takes whatever height the card has left instead of a flat 260px

@@ -39,7 +39,7 @@ Add a new tag to this legend **in the same commit** you first use it (this preve
 `#persistence` `#gis` `#gantt` `#export` `#site-planner` `#doc-review` `#scheduler` `#selection` `#pond` `#drive` `#testing` `#ui` `#markup` `#infra` `#auth` `#perf` `#files` `#compare` `#stitching` `#yield` `#filing` `#library` `#road` `#sync` `#coordinates` `#thoroughfare` `#entitlements` `#floodplain` `#grading` `#notes` `#parcel` `#geometry` `#food`
 `#persistence` `#gis` `#gantt` `#export` `#site-planner` `#doc-review` `#scheduler` `#selection` `#pond` `#drive` `#testing` `#ui` `#markup` `#infra` `#auth` `#perf` `#files` `#compare` `#stitching` `#yield` `#filing` `#library` `#road` `#sync` `#coordinates` `#thoroughfare` `#entitlements` `#floodplain` `#grading` `#notes` `#parcel` `#geometry` `#keyboard` `#view` `#food`
 `#persistence` `#gis` `#gantt` `#export` `#site-planner` `#doc-review` `#scheduler` `#selection` `#pond` `#drive` `#testing` `#ui` `#markup` `#infra` `#auth` `#perf` `#files` `#compare` `#stitching` `#yield` `#filing` `#library` `#road` `#sync` `#coordinates` `#thoroughfare` `#entitlements` `#floodplain` `#grading` `#notes` `#parcel` `#geometry`
-`#persistence` `#gis` `#gantt` `#export` `#site-planner` `#doc-review` `#scheduler` `#selection` `#pond` `#drive` `#testing` `#ui` `#markup` `#infra` `#auth` `#perf` `#files` `#compare` `#stitching` `#yield` `#filing` `#library` `#road` `#sync` `#coordinates` `#thoroughfare` `#entitlements` `#floodplain` `#grading` `#notes` `#parcel` `#geometry` `#keyboard` `#view` `#a11y` `#admin` `#comps` `#mobile` `#telemetry` `#model` `#formula` `#security` `#dashboard` `#process`
+`#persistence` `#gis` `#gantt` `#export` `#site-planner` `#doc-review` `#scheduler` `#selection` `#pond` `#drive` `#testing` `#ui` `#markup` `#infra` `#auth` `#perf` `#files` `#compare` `#stitching` `#yield` `#filing` `#library` `#road` `#sync` `#coordinates` `#thoroughfare` `#entitlements` `#floodplain` `#grading` `#notes` `#parcel` `#geometry` `#keyboard` `#view` `#a11y` `#admin` `#comps` `#mobile` `#telemetry` `#model` `#formula` `#security` `#dashboard` `#process` `#map-notes`
 
 ### Item template
 
@@ -4186,6 +4186,63 @@ physical row is a later polish," so **B104** is that remaining polish for the *m
 ---
 
 ## ⏳ Verify — awaiting live confirmation
+### B1372144 — You cannot put a note on the map `[Site Planner / map-notes]` (feature) #site-planner #map-notes #comps #persistence  *(owner chat block 2026-09-08, NEW-1, verbatim: "i should be able to add a note, we need this as a feature, but its not something greatly new, it should be able to take the same form code wise as placing a comp but just with different data." Minted **B1372144 / V995408** from this branch's reserved block B1372144–B1372159 · V995408–V995423 against freshly-fetched `origin/main` 268f1f1. DEDUPE-FIRST — searched Open / ⏳ Verify / Done for `map note`, `note pin`, `annotation`, `anchor_kind`, `map_notes`, `B1318`, `B1156865`, `B1156868`: **B1318** ("Link a note to a site, a plan element, or a Library file") is the Notes WORKSPACE gaining outward links from a document — the opposite direction and a different entity; **B1156865** merges a site's plans/deals/notes into one site-centric VIEW and presupposes the entity this item creates; **B1156868** is a COMP TYPE for an unclosed asking rate, which lives in `comps` and is excluded from comp averages — not a piece of text pinned to the ground. Nothing owns "put a note on the map". Net-new.)*
+
+**What shipped.** A map note is a short piece of text pinned to a place — `public.map_notes`, mirroring
+`comps.sql`'s anchor, ownership, team-READ/owner-WRITE sharing and soft-delete shape verbatim, with the
+three comp types and every deal column replaced by one payload (`body` plus an optional `title`).
+Placement, marker, editor and layer toggle all reuse the comp machinery rather than cloning it.
+- **Table + RLS** — `src/shared/mapNotes/db/map_notes.sql`, idempotent, beside the others. Four policies:
+  team members READ a shared note, only its author may change or delete it (comps' deliberate departure
+  from `team_sharing.sql`, kept). Applied to production 2026-09-08 and verified (`relrowsecurity` true,
+  4 policies present) — nothing owner-side to run.
+- **⛔ A NOTE NEVER CREATES A SITE.** B843792 made every comp acquire an owning site, materializing a
+  tracked one when nothing matched; a note must not, or the sites list fills with junk. `project_id` is an
+  optional link to an EXISTING site, "No site" is the default and a permanent answer, and this is asserted
+  on the real source (`test/mapNotes.test.js`) rather than left to a comment.
+- **ONE placement mechanism, generalised — not a second copy.** `placeCompPinAt` → `placePinAt` routed by
+  a new `pinIntent`; `armCompAnchor` → `armAnchor(kind, intent = "comp")` (every existing call site
+  unchanged); `compAnchorFromSelection` → `parcelAnchorFromSelection`, old name kept as an alias so an
+  in-flight branch importing it still resolves. Arming a NOTE pin no longer re-points the comp toolbar's
+  sticky anchor kind.
+- **Both anchor kinds.** Pin: right-click the map → "Add a note here", anchored on the clicked ground
+  point with the same best-effort county race a comp pin uses. Parcel: a "Note" action in the
+  parcels-selected row, mode-independent (a note is neither a plan nor a deal), off the SAME multi-parcel
+  derivation comps use. **A site-plan-anchored note (comps' third kind) is deliberately NOT in this cut** —
+  adding it later is one `anchor_kind` value plus two nullable columns, exactly as it was for comps.
+- **Marker + editor.** A third silhouette — a bubble in the Notes accent, anchored at its tail tip — so a
+  note can never be read as a comp's rotated tag or a site's precision pin; asserted against the real comp
+  marker. The editor is an inline card (never a dialog box), refuses to save an empty note in a sentence,
+  and confirms Delete on a second click of the same control.
+- **Notes (N) toggle** in Imagery & layers beside Sites (N) and Comps (N), remembered across reloads and
+  gated ONLY on its own checkbox — B831778's decoupling rule.
+- **Soft delete only**, keyed on (owner, id) by RLS's owner-only UPDATE policy. `MapFinder` cannot reach
+  the purge path at all (asserted).
+
+**A REAL BUG FOUND AND FIXED ON THE WAY, and it was never notes-specific.** MapFinder's "don't rebuild a
+map layer mid-press" flag (`pressedRef`, B64) is a LATCH released only by a `pointerup` on the Leaflet
+container — but a press can END OUTSIDE it: right-click the map and the context menu mounts under the
+cursor, so the release targets the menu and the flag stays set forever. Every subsequent layer rebuild —
+**sites and comps as much as notes** — is then deferred until the next map click. Reproduced: a note saved
+straight after a right-click was written, counted in the panel ("Notes (2)"), and painted nowhere. The
+release is now also bound to the window. A layer that silently stops repainting is exactly LOUD-FAILURE's
+class, and the regression arm is in `ui-audit/verify-map-notes-writes.mjs` (a later map click must change
+nothing).
+
+**⛔ THE DECIDE-BAR VERB IS STILL OWED — LOUDLY, per the brief.** "Add a note" is meant to be the fourth
+verb in the parcel-first decide bar being built in `session_016bAcDAEbuLLJ19cbabPxG3`. That work had **not
+landed on `origin/main` at 268f1f1** (checked after merging main into this branch: no decide bar, the
+Site/Comp switch is still in place), so placement here is wired through the existing toolbar path as the
+brief instructed, and this session deliberately did not touch that bar. **Whoever lands the parcel-first
+PR adds the fourth verb**, calling `armAnchor("map", "note")` / `armAnchor("parcel", "note")` — the intent
+parameter exists for exactly that and needs no further plumbing.
+
+Verify: **live** — see **V995408** (the signed-in write legs on the owner's own account). Sandbox evidence:
+lint clean · full suite 15,875 green · build green · design-drift ceiling held · `ui-audit/verify-map-notes.mjs`
+23/23 at 1600×465 (the owner's window, logged out) · `ui-audit/verify-map-notes-writes.mjs` 24/24 (real app
+code, server stubbed — proves the client half of place/edit/soft-delete end to end, and explicitly does NOT
+claim RLS or a real reload).
+
 
 ### B1368064 — Dashboard "Recent plans" card: real-render thumbnails of the four most recently edited plans `[Dashboard / Site Planner]` (feature) #dashboard #site-planner #ui #persistence  *(owner-dispatched, verbatim: "the only card that would make Planyr read as a design tool rather than a list app... he recognizes his own site plans by their shape faster than by their name." Minted **B1368064 / V991328** from this branch's reserved block B1368064–B1368079 · V991328–V991343 against freshly-fetched `origin/main` 8335503.)*
 

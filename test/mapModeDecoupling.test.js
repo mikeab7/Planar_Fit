@@ -104,7 +104,7 @@ describe("MapFinder map-layer effects never read `mode` (B831778/NEW-3)", () => 
     const i = src.indexOf("const [panelTab, setPanelTab] = useState(");
     expect(i, "panelTab state not found").toBeGreaterThan(-1);
     // setPanelTab must be the raw useState setter, not a wrapper with side effects like `setMode`
-    // (which cancels `placingCompPin`/`selectMode` on leaving comp mode) — there must be no
+    // (which cancels `placingPin`/`selectMode` on leaving comp mode) — there must be no
     // `const setPanelTab = (...)` function definition anywhere in the file.
     expect(src).not.toMatch(/const setPanelTab = /);
   });

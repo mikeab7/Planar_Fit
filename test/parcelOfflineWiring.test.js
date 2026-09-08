@@ -258,7 +258,7 @@ describe("NEW-1 — one entry point for starting a plan, not two of equal weight
      skin logic fills `accent`/`onAccent`, which default to `var(--accent)`/`var(--on-accent)` —
      unchanged from what this test asserted before). */
   it("'Select parcels' is the PRIMARY action, and 'Start blank' is secondary behind a caret", () => {
-    const block = finder.slice(finder.indexOf('mode === "site" && !selectMode && !placingCompPin && selected.length === 0'), finder.indexOf('mode === "comp" && !selectMode'));
+    const block = finder.slice(finder.indexOf('mode === "site" && !selectMode && !placingPin && selected.length === 0'), finder.indexOf('mode === "comp" && !selectMode'));
     // one primary button, filled with the accent
     expect(block).toMatch(/<Button\s+variant="primary"/);
     expect(block).toContain(">Select parcels</span>");

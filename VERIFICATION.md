@@ -164,6 +164,38 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V995408 — B1372144: place, edit and soft-delete a map note on the owner's own signed-in account `Blocker: auth` `Blocker: real-data`
+**Why this is walled:** every write path needs a signed-in Supabase session, and this sandbox's proxy
+CORS-blocks the auth handshake. The parcel leg additionally needs a live county parcel service, which the
+egress blocks (`Blocker: live-GIS`). **What was already driven here and is NOT pending** (logged out, at the
+owner's real 1600×465): the Notes toggle exists beside Sites and Comps with a count and is remembered;
+right-click → "Add a note here" opens the editor on the clicked point with nothing painting over the row;
+the editor fits the short window, offers an optional site link defaulting to "No site", refuses to save an
+empty note, and leaves nothing behind on cancel (`ui-audit/verify-map-notes.mjs`, 23/23). The client half of
+the write paths was then driven against a STUBBED server with the real app code
+(`ui-audit/verify-map-notes-writes.mjs`, 24/24) — that proves the requests, the marker layer, the editor and
+the soft-delete shape, and proves NOTHING about RLS, the real schema or a genuine reload, which is what the
+steps below are for.
+
+**All steps on THROWAWAY notes created during the check — do not touch site-plan row
+`aa2d8163-7d45-4929-8a05-dad94ba2528d` or comp `ddb5a9e5-76c5-49e6-88b0-4a842f1b0a46` (Core 5 - West Hardy).**
+Signed in, at 1600×465, on the Site Planner map:
+1. **Place by pin** — right-click empty map → "Add a note here", type a body, Save.
+   *Expected:* the card closes and a magenta bubble marker appears at that exact point immediately, with no
+   further clicking. The Notes count goes up by one.
+2. **Place by parcel** — select a parcel, press "Note" in the selection row, type, Save.
+   *Expected:* the note saves anchored to the parcel (the card says "On a parcel"), and the selection clears.
+3. **Reopen and edit** — click the pin-anchored marker, change the text, Save, then click it again.
+   *Expected:* it opens showing the text you saved, and the edit is still there on the second open.
+4. **Reload the page.** *Expected:* both notes are still on the map with their edited text — this is the leg
+   the stubbed run cannot prove.
+5. **Toggle the layer** — untick Notes in Imagery & layers, then re-tick it.
+   *Expected:* both markers disappear and come back; site pins and comp markers never move either time.
+6. **Soft-delete one** — open it, click Delete, click it again to confirm.
+   *Expected:* the marker leaves the map and the count drops. Then confirm the row is SOFT-deleted, not gone:
+   `select id, deleted_at from public.map_notes where deleted_at is not null;` returns the row with a stamp.
+7. **Clean up** — soft-delete the remaining throwaway notes.
+
 ### V991328 — B1368064: the Dashboard's "Recent plans" card shows real, recognizable renders of the owner's own plans and refreshes on save `Blocker: auth` `Blocker: real-data`
 
 **Why this needs its own live pass.** The whole point of this card is that the owner recognizes his own site plans by their SHAPE — that can only be judged against his real, signed-in plans, never a sandbox fixture. Everything else (the SVG renderer itself, the storage/sentinel model, the deletion-respecting selection, the 4-vs-2 adaptive layout, and the card's presence/wiring in the arrangeable grid) is proven headless/Node below.
