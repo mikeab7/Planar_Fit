@@ -164,6 +164,28 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V983520 — B1360256: the notes reconciler stops resurrecting his real deleted "Coordination" duplicate, and the false "these are copies" banner is gone `Blocker: auth`
+
+**Why this needs its own real pass.** The bug is entirely about signed-in cloud sync state (the server's `deleted_at`/`purged_at` on a real `notes_pages` row, and the account's real `notes_trees` blob) — this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can drive a real sign-in or a real seed against production. Everything short of that IS verified here: a live, read-only SQL sweep of the actual account confirmed the mechanism (see `BACKLOG.md` → **B1360256** for the full trace), and the fix itself is proven against a fake Supabase client shaped like the deployed schema (`test/notesTwoClientConflict.test.js`, three new cases: stays off the live list, gets a normal bin entry back inside its 30 days, completes the interrupted purge outright once the window has passed) plus pure-function coverage of every decision (`test/notesReachability.test.js`).
+
+**What was verified here (this session, read-only SQL + sandbox tests, never the live app).**
+1. Confirmed the exact reported page (`pg_ms8z7vik4vejfpp`, "Recovered — Civil Plat Resubmitted to Baytown 7/13 CP Grant …") is `deleted_at`-set, `purged_at`-null, and referenced by no live node and no bin entry anywhere in the account's real `notes_trees` row.
+2. Confirmed its near-duplicate sibling (`pg_ms9gfprm2viq50r`, "Coordination", Grand Port) is still live, at server revision 1860 — an actively-edited page, not an abandoned one.
+3. Confirmed `findCrossProjectDuplicates` reports `identical: false` for this real pair (one word differs, ~0.97 similarity) — the exact shape `test/notesProjectIntegrity.test.js` already encodes as its canonical fixture.
+4. Full repo suite green (780 files / 15,790 tests), lint 0 errors, build clean.
+
+**DO NOT REPAIR HIS DATA — nothing was hand-edited; every fact above came from a read-only query.** The live check below will very likely finish deleting `pg_ms8z7vik4vejfpp` outright (its 30-day window has already passed) — that completes a deletion already requested a month ago, not a new one; say so if it surprises him.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Open Notes, let the tree settle for a few seconds (the integrity scan runs on a delay after load). **Expect:** the "One note appears in 2 different projects" banner naming "Coordination"/"Recovered — Civil Plat…" is GONE.
+3. Check the Grand Port "Coordination" page is unchanged and still live. **Expect:** present, same content, editable.
+4. Check "Not in a project" for a page titled "Recovered — Civil Plat…". **Expect:** absent — it should have been purged outright (see the note above) or, if for some reason it is still within a 30-day window by the time this runs, moved into the Bin instead of sitting on the live page list.
+5. If it moved to the Bin: open the Bin view and confirm it is listed there, readable, and restorable — normal bin behaviour, nothing special about it.
+6. Reload once more. **Expect:** the duplicate banner does not reappear, and no other page is claimed as a duplicate of anything it was not before.
+
+**Result:** ⏳ pending — needs a real signed-in browser session on production; not reachable from this sandbox. `Cadence: once`.
+
 ### V965344 — B1332016: 9 newly-wired states' parcel sources actually answer from a real (non-sandboxed) network `Blocker: live-GIS`
 
 **Why this needs its own live pass.** `ui-audit/probe-statewide-parcels.mjs` hit every candidate live from THIS sandbox, whose outbound network is an org egress allowlist (confirmed: `*.arcgis.com` reachable, most state `.gov` domains 403-blocked at the CONNECT tunnel). Nine of the 25 newly-wired states sit on hosts this sandbox can't reach at all — five (AR/DE/IN/NJ/NC) were shipped anyway on the strength of an official ArcGIS Online item's own cached schema/feature-count (the same evidence bar `countiesProvenance.js` already accepts for Chambers/Larimer County), never a guessed URL; four more (HI/MD/NE/NH, added the same day in a second pass) were measured **directly from the owner's own browser on a real, unrestricted network** rather than from an ArcGIS-item mirror. What's proven without an unrestricted network reachable from THIS repo's own sessions: every one of these nine layers is the state's own official service (not a third-party rehost — checked and rejected for Virginia/West Virginia specifically because their only reachable copy WASN'T official), and its field list came from a real, independently-fetched schema, not prose — for HI/MD/NE/NH that fetch was the owner's own, relayed here as measured fact, not re-derived by this sandbox. What still can only be confirmed from a session with real network access: the app itself (not just the raw REST endpoint) renders and selects a parcel from each of these nine.

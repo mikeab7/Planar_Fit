@@ -195,6 +195,7 @@ export function setNotesScope(userId) {
   sync = readSyncState();
   conflicts.clear();
   cloudImagePages.clear();
+  knownBinnedDeletedAt.clear();
   setSyncState(scope === LOCAL_SCOPE ? { mode: "local" } : { mode: "idle" });
   return true;
 }
@@ -813,6 +814,13 @@ let syncState = { mode: "local", at: null, reason: null };
 let cloudClient = null;
 const conflicts = new Map();          // pageId → { serverDoc, serverRev, serverUpdatedAt, at }
 const cloudImagePages = new Map();    // imageId → pageId, from the last seed's index
+/* pageId → the server's `deleted_at` (ms), for every row the last seed's index reported as
+ * BINNED. This is what lets `unreachableNotes` (lib/notesScan.js) tell "a body with no tree
+ * node because it was never given one" from "a body with no tree node because the bin ENTRY
+ * that used to hold it went missing" — see NEW-1, the notes-reconciler-stale-index fix.
+ * Same pattern as `cloudImagePages` above: a read-only cache of the last seed's index, never
+ * persisted, never merged — it exists only to answer a question the NEXT scan asks. */
+const knownBinnedDeletedAt = new Map();
 let busy = false;
 let pushTimer = 0;
 let pollTimer = 0;
@@ -887,6 +895,14 @@ function saveSyncState() {
 const syncListeners = new Set();
 export function onNotesSyncState(fn) { syncListeners.add(fn); return () => syncListeners.delete(fn); }
 export function notesSyncState() { return { ...syncState }; }
+
+/** `pageId → the server's deleted_at (ms)`, for every page the last successful seed's index
+ *  reported as BINNED (not yet purged). A snapshot, so a caller can hand it to a pure function
+ *  without handing over the live Map. Empty before the first seed completes — a fresh sign-in's
+ *  first integrity scan simply sees nothing binned yet, which is the safe default (it never
+ *  wrongly withholds a genuinely-lost note from recovery; it can only, briefly, fail to catch a
+ *  binned orphan until the next seed runs). */
+export function knownBinnedPages() { return new Map(knownBinnedDeletedAt); }
 
 function setSyncState(next) {
   syncState = { at: syncState.at, ...next };
@@ -1336,6 +1352,13 @@ async function seed({ full }) {
     /* ---- page bodies ---------------------------------------------------------------- */
     const idx = await c.fetchPageIndex(client());
     if (!idx.ok) { saveSyncState(); return reportSyncFailure(idx.error); }
+
+    // A fresh read of the index's bin state, every seed — see `knownBinnedPages` above. A row
+    // that came back live (or purged) this time is not left behind as a stale "still binned".
+    knownBinnedDeletedAt.clear();
+    for (const row of idx.index) {
+      if (row.binned && !row.purged && Number.isFinite(row.deletedAt)) knownBinnedDeletedAt.set(row.id, row.deletedAt);
+    }
     const plan = c.planPageSeed({ index: idx.index, state: sync, localIds: listStoredPageIds() });
 
     // Purged elsewhere: clear the bytes here (body AND pictures) and remember the tombstone,

@@ -666,6 +666,19 @@ written out in the header of `lib/notesStore.js`; read it there rather than re-d
       (`duplicateKey`, remembered per account). ⛔ An unknown project list passes `null`, never
       `[]`: "the lookup failed" and "there are no projects" are opposite facts, and letting the
       first wear the second's clothes would silently suppress a real finding.
+    - **⛔ A SIMILARITY SCORE IS NOT PROOF, AND "NO NODE" IS NOT ALWAYS "LOST" (NEW-1, the
+      notes-reconciler-stale-index fix, 2026-09-08 — read `docs/NOTES-CARRY-FORWARD.md` §5.11
+      before touching either half of this).** `unreachableNotes` now takes `{ binned }`
+      (`pageId → deletedAt`, from `notesStore.knownBinnedPages()`) so a body the SERVER already
+      marks deleted is never resurrected to the live page list — an interrupted 30-day purge
+      (`purgePages`'s cloud call is fire-and-forget) can leave exactly that shape, and the old
+      unconditional "recover to live" is what produced a real "these are the same note" finding
+      against a page that was correctly deleted. A known-binned orphan now goes through
+      `adoptDeletedOrphans` (`notesModel.js`) instead: a normal bin entry if still inside its
+      30 days, or an outright purge if the window already passed. And `IntegrityBanner.jsx`'s
+      one-click "Keep only…" buttons — which BIN a real note — now render only for a
+      byte-identical (`identical: true`) match; a near-duplicate gets the informational "not
+      confirmed" wording and no destructive button.
   - **THE BIN YOU CAN JUDGE (B350002, `collectBinFacts` in `lib/notesStore.js`).** Twenty-one
     entries, sixteen of them called "Untitled page", showing a name and a countdown and nothing
     else — so the only way to find out what one WAS, was to restore it into the live tree and
