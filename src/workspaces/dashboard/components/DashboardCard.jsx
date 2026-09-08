@@ -19,7 +19,7 @@
 import { RADIUS } from "../../../shared/ui/radius.js";
 import { IconButton } from "../../../shared/ui/controls.jsx";
 
-export default function DashboardCard({ title, headerMeta, customizing, showDragHandle = true, onRemove, children }) {
+export default function DashboardCard({ title, headerMeta, headerRight, customizing, showDragHandle = true, onRemove, children }) {
   return (
     <div
       style={{
@@ -46,9 +46,11 @@ export default function DashboardCard({ title, headerMeta, customizing, showDrag
             {title}
           </span>
         </span>
-        {headerMeta && (
-          <span style={{ fontSize: 10.5, color: "var(--text-secondary)", flex: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {headerMeta}
+        {(headerMeta || headerRight) && (
+          <span style={headerRight
+            ? { flex: "none", fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" }
+            : { fontSize: 10.5, color: "var(--text-secondary)", flex: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {headerRight || headerMeta}
           </span>
         )}
         {customizing && (

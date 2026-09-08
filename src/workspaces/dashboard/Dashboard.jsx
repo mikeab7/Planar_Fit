@@ -47,24 +47,30 @@ import CompsCard from "./components/CompsCard.jsx";
 import { NeedsAttentionCard } from "./components/NeedsAttentionCard.jsx";
 import { PursuitsCard } from "./components/PursuitsCard.jsx";
 import { RecentPlansCard } from "./components/RecentPlansCard.jsx";
+import { SinceLastHereCard } from "./components/SinceLastHereCard.jsx";
 import {
   CARD_DEFS, GRID_COLS, normalizeLayout, availableToAdd, addCard, removeCard, resetLayout,
   applyGridChange, narrowOrder, toRglItem,
 } from "./lib/dashboardLayout.js";
 import { pickRecentPlans } from "./lib/recentPlans.js";
 import { loadDashboardLayout, saveDashboardLayout } from "./lib/dashboardPrefs.js";
+import { loadSinceLastHere, saveSinceLastHere } from "./lib/dashboardSinceLastHerePrefs.js";
 import { fetchSiteSummaries } from "./lib/dashboardSitesFetch.js";
 import { fetchAllCompsForCard, fetchCompsForMap } from "./lib/dashboardCompsFetch.js";
 import { buildCompsCardData } from "./lib/compsCardModel.js";
+import { fetchRecentComps } from "./lib/dashboardCompsRecentFetch.js";
+import { fetchRecentNotePages } from "./lib/dashboardNotesRecentFetch.js";
 import { fetchLastTouchedDoc } from "./lib/dashboardDocFetch.js";
 import { fetchScheduleProjects } from "./lib/dashboardScheduleFetch.js";
 import { fetchAllElementRecency } from "./lib/dashboardElementRecencyFetch.js";
 import { fetchElementsForSites } from "./lib/dashboardYieldFetch.js";
-import { yieldBySite } from "./lib/buildingYield.js";
+import { yieldBySite, buildingCountBySite } from "./lib/buildingYield.js";
 import { groupProjectsByGroupId, pipelineCounts, goingQuiet, mostRecentProject } from "./lib/dashboardPipeline.js";
 import { summarizeScheduleHealth } from "./lib/scheduleHealth.js";
 import { needsAttentionList } from "./lib/needsAttentionList.js";
 import { pursuitsTable, quietDaysByGroupFromRows } from "./lib/pursuitsList.js";
+import { buildSinceLastHereFeed } from "./lib/sinceLastHereFeed.js";
+import { spanWords } from "./lib/dashboardDates.js";
 
 const SAVE_DEBOUNCE_MS = 900;
 const ROW_HEIGHT_PX = 32;
@@ -103,7 +109,7 @@ function useMeasuredWidth() {
   return [ref, width];
 }
 
-export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenCompInSitePlanner }) {
+export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenCompInSitePlanner, onOpenNoteInNotes }) {
   const [layout, setLayout] = useState(() => normalizeLayout(null));
   const [customizing, setCustomizing] = useState(false);
   const [saveNote, setSaveNote] = useState(null); // null | "saved" | "local" | "error"
@@ -161,6 +167,11 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   const [compsForMap, setCompsForMap] = useState([]);
   const [doc, setDoc] = useState(null);
   const [scheduleProjects, setScheduleProjects] = useState(null);
+  // B1366384 (NEW-1) — "Since you were last here". `sinceLastHere` holds the already-built feed
+  // + its header span string, computed ONCE per mount alongside everything else (see the effect
+  // below) rather than re-derived on every render, so the card's "since X" doesn't creep forward
+  // on an unrelated re-render.
+  const [sinceLastHere, setSinceLastHere] = useState(null);
   // B1161793 (NEW-2) — building elements for each open pursuit's own representative plan, for
   // the Yield column. Fetched as a genuinely SECOND round trip (not a fifth parallel branch):
   // which plans to ask for isn't known until `sites` resolves — see the effect below.
@@ -180,23 +191,55 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     let live = true;
     setDataReady(false);
     (async () => {
+      // The since-last-here mark has to be known BEFORE the recent-comps/recent-notes fetches
+      // fire — both are bounded by it (`since`), never an account-wide pull. It's one small,
+      // fast read (profiles.prefs, same row dashboardLayout already reads), not a second waterfall.
+      const nowMs = Date.now();
+      const { mark } = await loadSinceLastHere(userId);
+      if (!live) return;
+      const windowStartMs = mark.lastVisitAt != null ? Number(mark.lastVisitAt) : nowMs - 24 * 60 * 60 * 1000;
+      const sinceIso = new Date(windowStartMs).toISOString();
+
       const results = await Promise.allSettled([
         fetchSiteSummaries().then((v) => { if (live) setSites(v); return v; }),
         fetchAllCompsForCard().then((v) => { if (live) setComps(v); }),
         fetchCompsForMap().then((v) => { if (live) setCompsForMap(v); }),
         fetchLastTouchedDoc().then((v) => { if (live) setDoc(v); }),
-        fetchScheduleProjects().then((v) => { if (live) setScheduleProjects(v); }),
+        fetchScheduleProjects().then((v) => { if (live) setScheduleProjects(v); return v; }),
         fetchAllElementRecency().then((v) => v),
+        fetchRecentComps(sinceIso),
+        fetchRecentNotePages(userId, windowStartMs),
       ]);
       if (!live) return;
       const siteRows = results[0].status === "fulfilled" ? results[0].value || [] : [];
+      const scheduleProjectsValue = results[4].status === "fulfilled" ? results[4].value : null;
       const elementRecencyRows = results[5].status === "fulfilled" ? results[5].value || [] : [];
+      const recentComps = results[6].status === "fulfilled" ? results[6].value || [] : [];
+      const recentNotePages = results[7].status === "fulfilled" ? results[7].value || [] : [];
       const openPursuits = pursuitsTable(groupProjectsByGroupId(siteRows), {});
       const pursuitSiteIds = [...new Set(openPursuits.map((p) => p.siteId).filter(Boolean))];
       const elementRows = await fetchElementsForSites(pursuitSiteIds).catch(() => []);
       if (!live) return;
       setYieldRows(elementRows);
       setQuietDaysByGroup(quietDaysByGroupFromRows(elementRecencyRows, siteRows));
+
+      const feed = buildSinceLastHereFeed({
+        now: nowMs,
+        lastVisitAt: mark.lastVisitAt != null ? Number(mark.lastVisitAt) : null,
+        sites: siteRows,
+        buildingCountBySite: buildingCountBySite(elementRows),
+        sqftBySite: yieldBySite(elementRows),
+        scheduleProjects: scheduleProjectsValue,
+        comps: recentComps,
+        notePages: recentNotePages,
+        prevSnapshot: mark.snapshot,
+      });
+      setSinceLastHere({ feed, headerSpan: spanWords(feed.spanAnchorMs, nowMs), now: nowMs });
+      // Fire-and-forget: this visit's own mark for NEXT time. Never blocks dataReady — a failed
+      // cloud write here degrades to "the next visit re-derives against the local mirror (or a
+      // fresh 24h window)", not a broken dashboard.
+      saveSinceLastHere(userId, { lastVisitAt: nowMs, snapshot: feed.nextSnapshot });
+
       setDataReady(true);
     })();
     return () => { live = false; };
@@ -216,12 +259,16 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     goingQuiet: { rows: goingQuiet(projects) },
     compsSummary: { data: buildCompsCardData(comps) },
     scheduleHealth: { rows: scheduleProjects ? summarizeScheduleHealth(scheduleProjects) : [] },
-  }), [projects, sites, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap]);
+    sinceLastHere: { feed: sinceLastHere?.feed || null },
+  }), [projects, sites, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap, sinceLastHere]);
 
   const openProject = (p) => onNavigate?.({ module: "site-planner", projectId: p.groupId, cross: false, org: false });
   const openSchedule = (p) => onNavigate?.({ module: "scheduler", projectId: p.linkedSiteId, cross: false, org: false });
   const openDoc = (d) => onOpenReviewInDocReview?.({ id: d.id, project_id: d.projectId });
   const openTask = (row) => onOpenTaskInScheduler?.({ linkedSiteId: row.linkedSiteId, taskId: row.taskId });
+  // Deep-links to the comp ITSELF (main's #1564 behaviour, kept over this branch's older
+  // open-the-linked-plan route): MapFinder's `focusCompId` effect opens the Comps tab with the
+  // panel on that comp, which is strictly more specific than landing on its plan.
   const openComp = (comp) => onOpenCompInSitePlanner?.({ compId: comp.id });
   // Empty-state "add one" — there's no specific comp to deep-link into yet, so this lands the
   // owner on the map/finder view, one click from the Comps tab (MapFinder's own toolbar).
@@ -233,7 +280,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
 
   // NEW-1 — while data is still loading every slot renders the SAME stable-height skeleton
   // instead of its real (variable-height) content; see the `dataReady` effect above.
-  const SKELETON_ROWS = { jumpBackIn: 2, recentPlans: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 6, goingQuiet: 3, locationsMap: 6 };
+  const SKELETON_ROWS = { jumpBackIn: 2, recentPlans: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 6, goingQuiet: 3, sinceLastHere: 6, locationsMap: 6 };
   const CARD_RENDERERS = dataReady ? {
     jumpBackIn: () => <JumpBackInCard {...cardData.jumpBackIn} onOpenProject={openProject} onOpenDoc={openDoc} />,
     recentPlans: () => <RecentPlansCard {...cardData.recentPlans} onOpenProject={openProject} />,
@@ -243,6 +290,17 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     goingQuiet: () => <GoingQuietCard {...cardData.goingQuiet} onOpenProject={openProject} />,
     compsSummary: () => <CompsCard {...cardData.compsSummary} onOpenComp={openComp} onAddComp={addComp} />,
     scheduleHealth: () => <ScheduleHealthCard {...cardData.scheduleHealth} onOpenSchedule={openSchedule} />,
+    sinceLastHere: () => (
+      <SinceLastHereCard
+        feed={cardData.sinceLastHere.feed}
+        now={sinceLastHere?.now ?? Date.now()}
+        onOpenProject={openProject}
+        onOpenTask={openTask}
+        onOpenSchedule={openSchedule}
+        onOpenComp={openComp}
+        onOpenNote={onOpenNoteInNotes}
+      />
+    ),
     locationsMap: () => (
       <Suspense fallback={<CardSkeleton rows={SKELETON_ROWS.locationsMap} />}>
         <LocationsMapCard projects={projects} comps={compsForMap} onOpenProject={openProject} onFixLocations={fixLocations} />
@@ -266,6 +324,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
       <DashboardCard
         title={def.title}
         headerMeta={entry.key === "compsSummary" ? compsHeaderMeta : undefined}
+        headerRight={entry.key === "sinceLastHere" ? sinceLastHere?.headerSpan : null}
         customizing={customizing}
         showDragHandle={!isNarrow}
         onRemove={() => setLayout((l) => removeCard(l, entry.key))}
