@@ -1022,6 +1022,16 @@ export function loadSitesList() {
   return applyNameAuthority(models).models.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 }
 
+// NEW-1 (first-time landing, src/app/firstLanding.js) — a cheap "does the ACTIVE local store
+// (the legacy store when signed out, this device's cloud cache when signed in) hold ANY
+// record" existence check. Kept separate from loadSitesList() on purpose: that function also
+// runs the full Site Model migration + bonded heal + name-authority pass over every record,
+// which is unnecessary work just to answer "is this empty" — and this needs to be cheap because
+// it runs on every route-less boot.
+export function hasAnyLocalSites() {
+  try { return Object.keys(readSites()).length > 0; } catch (_) { return false; }
+}
+
 /* Resolve every group's authoritative name across a set of models, reporting any group with no
  * honest winner instead of guessing at one (LOUD-FAILURE). Shared by the list read and the repair
  * pass so both run exactly one rule. Returns { models, changes }. */
