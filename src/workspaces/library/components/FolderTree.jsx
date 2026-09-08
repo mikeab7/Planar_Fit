@@ -541,8 +541,9 @@ function FolderContextMenu({ menu, onClose, pinnedIds, onTogglePin, onAdd, onRen
       x={menu.x} y={menu.y} onClose={onClose} minWidth={210} zIndex={5000}
       className="" role="menu" ariaLabel="Folder actions" testId="folder-context-menu"
       panelStyle={{
-        // OPAQUE surface (not --surface-overlay, which is translucent "frosted" — folder names
-        // behind the menu would bleed through it): a context menu over a text list must be solid.
+        // Opaque surface: a context menu over a text list must be solid so folder names behind
+        // it never bleed through. `--surface-overlay` is opaque too now (NEW-1, 2026-09-08), but
+        // this menu keeps its own `--surface-raised` fill rather than switching — no need to.
         padding: 5, background: T.raised, color: T.text, border: `1px solid ${T.borderStrong}`,
         borderRadius: 10, boxShadow: "0 12px 40px rgba(0,0,0,.35)",
       }}>

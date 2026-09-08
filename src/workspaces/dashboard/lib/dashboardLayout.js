@@ -35,6 +35,9 @@ export const CARD_DEFS = {
   // B1366384 (NEW-1) — one merged feed replacing the "reconstruct it from four separate cards"
   // problem; the largest card on the board, sized accordingly.
   sinceLastHere:  { title: "Since you were last here", defaultW: 12, defaultH: 11, minW: 5, minH: 5 },
+  // NEW-1 (Locations map card, owner chat block 2026-09-08) — a real interactive map needs real
+  // room to be legible; minW/minH keep it from being crushed into an unreadable strip.
+  locationsMap:   { title: "Locations",       defaultW: 8, defaultH: 9, minW: 5, minH: 6 },
 };
 
 export const CARD_KEYS = Object.keys(CARD_DEFS);
@@ -44,7 +47,7 @@ export const CARD_KEYS = Object.keys(CARD_DEFS);
 // first-run Dashboard must never be empty); a user who wants a leaner view removes what they
 // don't need in Customize mode, rather than building one up from nothing.
 const DEFAULT_ORDER = [
-  "sinceLastHere", "jumpBackIn", "pipelineStatus", "needsAttention", "pursuitsTable",
+  "sinceLastHere", "jumpBackIn", "pipelineStatus", "locationsMap", "needsAttention", "pursuitsTable",
   "scheduleHealth", "compsSummary", "goingQuiet",
 ];
 

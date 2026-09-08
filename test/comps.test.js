@@ -354,15 +354,16 @@ describe("comps: NEW-2 free rent + NEW-3 face label + NEW-5 currency formatting"
     expect(rows.map((r) => r.key)).toContain("freeRent");
   });
 
-  it("total annual rent is labeled FACE and formatted as whole-dollar currency, never a raw float", () => {
+  // NEW-2 (owner chat, 2026-09-08) — "Total annual rent (face)" no longer renders in the comp
+  // detail list at all (Rate, Leased SF and Net effective already carry the deal); the whole-dollar
+  // currency formatting it used to demonstrate is still exercised directly on `leaseTotalAnnualRent`
+  // (see the "leaseTotalAnnualRent" describe block above) and via `CompForm`'s own rate preview.
+  it("total annual rent no longer renders as its own detail row (NEW-2)", () => {
     const rows = compFieldRows({
       compType: "lease", compDate: "2026-08-01", leaseRate: 0.65, leaseRatePeriod: "monthly",
       leaseRateExpense: "nnn", leaseSizeSf: 613208,
     });
-    const totalRow = rows.find((r) => r.key === "totalRent");
-    expect(totalRow.label).toMatch(/face/i);
-    expect(totalRow.value).toBe("$4,783,022"); // .65 * 613208 * 12 = 4,783,022.4 -> whole dollars, no trailing float
-    expect(totalRow.value).not.toMatch(/\.\d/);
+    expect(rows.map((r) => r.key)).not.toContain("totalRent");
   });
 });
 
@@ -474,7 +475,7 @@ describe("comps: empty fields never render", () => {
     expect(withTi.map((r) => r.key)).toEqual(["rate", "ti", "date"]);
   });
 
-  it("lease: leased SF and its derived total annual rent are independently optional, and never render blank", () => {
+  it("lease: leased SF is independently optional, and never renders blank (NEW-2: no longer derives a totalRent row here)", () => {
     const noSize = compFieldRows({ compType: "lease", compDate: "2026-08-01", leaseRate: 7, leaseRatePeriod: "annual", leaseRateExpense: "nnn" });
     expect(noSize.map((r) => r.key)).not.toContain("size");
     expect(noSize.map((r) => r.key)).not.toContain("totalRent");
@@ -482,13 +483,10 @@ describe("comps: empty fields never render", () => {
     const withSize = compFieldRows({ compType: "lease", compDate: "2026-08-01", leaseRate: 7, leaseRatePeriod: "annual", leaseRateExpense: "nnn", leaseSizeSf: 10000 });
     const keys = withSize.map((r) => r.key);
     expect(keys).toContain("size");
-    expect(keys).toContain("totalRent");
+    expect(keys).not.toContain("totalRent");
     const sizeRow = withSize.find((r) => r.key === "size");
     expect(sizeRow.value).toBe("10,000 SF");
-    const rentRow = withSize.find((r) => r.key === "totalRent");
-    expect(rentRow.value).toBe("$70,000");
 
-    // size with no usable rate: still shows the size, never a total rent it can't compute.
     const sizeNoRate = compFieldRows({ compType: "lease", compDate: "2026-08-01", leaseSizeSf: 10000 });
     const keys2 = sizeNoRate.map((r) => r.key);
     expect(keys2).toContain("size");
@@ -516,7 +514,7 @@ describe("comps: empty fields never render", () => {
 
   it("no comp type at all still only shows the required date, not blank rows for anything else", () => {
     const rows = compFieldRows({ compDate: "2026-08-01" });
-    expect(rows).toEqual([{ key: "date", label: "Date", value: "08/01/26" }]);
+    expect(rows).toEqual([{ key: "date", label: "Executed", value: "08/01/26" }]);
   });
 
   // ⛔ NEW-3 (owner-adversarial review, 2026-09-05) — the Rate row used to always round to 2
@@ -530,11 +528,6 @@ describe("comps: empty fields never render", () => {
     });
     const rateRow = precise.find((r) => r.key === "rate");
     expect(rateRow.value).toBe("$0.645/SF/mo NNN"); // never rounds away the third decimal
-    const totalRow = precise.find((r) => r.key === "totalRent");
-    // 0.645 x 12 x 1,218,956 = 9,434,719.284 -> whole-dollar total. Manually checking
-    // 0.645 (the DISPLAYED rate) x 12 x 1,218,956 must land on this exact figure.
-    const expectedTotal = (0.645 * 12 * 1218956).toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-    expect(totalRow.value).toBe(expectedTotal);
 
     // A round rate still shows the familiar 2-decimal form — no regression for the common case.
     const round = compFieldRows({ compType: "lease", compDate: "2026-08-01", leaseRate: 7.5, leaseRatePeriod: "annual", leaseRateExpense: "nnn" });
@@ -1019,11 +1012,20 @@ describe("comps: NEW-5 — Executed date optional, Date entered fallback (owner 
     expect(compsSummaryBits(comps)).toEqual(["Land avg $10.00/SF (1)"]);
   });
 
-  it("compFieldRows shows 'Date unknown' for a saved comp with no Executed date, rather than hiding the row", () => {
+  // NEW-3 (owner chat, 2026-09-08) — REVERSES the 2026-09-02 decision this test used to assert.
+  // Live on the detail view, the bare "Date unknown" row sat beside two clearly-named date rows
+  // (Commencement, Date entered) and read as confusing, not informative — the row is relabeled
+  // "Executed" and now disappears entirely when the comp has no Executed date, same as any other
+  // optional field. `compDateLabel` (the list row's own compact summary) keeps "Date unknown" —
+  // see its own describe block above.
+  it("compFieldRows omits the Executed row entirely for a saved comp with no Executed date", () => {
     const rows = compFieldRows({ compType: "land", compDate: null, landPrice: 100000, landSizeValue: 1, landSizeUnit: "ac" });
-    const dateRow = rows.find((r) => r.key === "date" || r.label === "Executed");
-    expect(dateRow).toBeTruthy();
-    expect(dateRow.value).toBe("Date unknown");
+    expect(rows.find((r) => r.key === "date")).toBeUndefined();
+  });
+
+  it("compFieldRows labels the Executed row 'Executed', not a bare 'Date', when a date is present", () => {
+    const rows = compFieldRows({ compType: "land", compDate: "2026-08-01", landPrice: 100000, landSizeValue: 1, landSizeUnit: "ac" });
+    expect(rows.find((r) => r.key === "date").label).toBe("Executed");
   });
 
   it("compFieldRows shows a separate 'Date entered' row from createdAt — metadata, never editable, distinct from Executed", () => {

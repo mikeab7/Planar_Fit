@@ -7,89 +7,89 @@
     "map-landing": {
       "light": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "dark": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "light--phone": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "dark--phone": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       }
     },
     "site-planner-header": {
       "light": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "dark": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "light--phone": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "dark--phone": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       }
     },
     "site-planner-left-rail": {
       "light": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "dark": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "light--phone": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "dark--phone": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       }
     },
     "library": {
       "light": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "dark": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "light--phone": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       },
       "dark--phone": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "7deb4ca5",
-        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
+        "approvedCommit": "ee8dc57c",
+        "note": "B1359488 (NEW-1): --surface-overlay and --canvas-plate-fill are now fully opaque in both themes (were rgba .93/.94, deliberately translucent) -- every floating map panel/control that reads that token (Sites/Comps rail, zoom +/-, locate, help/report FAB) now renders solid instead of letting the map bleed through. Reproduced locally (mismatched sandbox Chromium) at ~1.0-1.8% pixel diff on the affected corners/panels only, matching CI's own numbers closely, but this repo's own docs/VISUAL-REGRESSION.md says a local approval can't be trusted to byte-match the real runner -- letting CI author the baseline instead. [CI-authored by run 34268486795 on ee8dc57c14ab772d4fa06f75fb183a73943c9bd2]"
       }
     }
   }
