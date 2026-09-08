@@ -1221,7 +1221,10 @@ export function deleteSiteGroup(groupId) {
     const failed = results.find((r) => r && r.ok === false);
     // signed-in delete that matched zero rows = an ownership/RLS mismatch the row survived (the
     // cloud call "succeeded" but removed nothing) — treat it as a real failure, not a clean delete.
-    const zeroMatch = results.find((r) => r && r.ok && !r.skipped && r.removed === 0);
+    /* B1361683 — `serverHadNoRow` is the one honest zero: `deleteSite` asked the server and it
+     * confirmed there is no such row (a plan that only ever lived on this device). That is a
+     * completed delete, not an ownership mismatch, and must not be reported as a failure. */
+    const zeroMatch = results.find((r) => r && r.ok && !r.skipped && !r.serverHadNoRow && r.removed === 0);
     const removed = results.filter((r) => r && r.ok !== false).length;
     if (failed) return { ok: false, error: failed.error || "Cloud delete failed", removed };
     if (zeroMatch) return { ok: false, error: "The cloud copy could not be removed (it may belong to another account). It may reappear when you reload.", removed };
@@ -1746,45 +1749,110 @@ export function saveSite(partial, { skipHistory = false } = {}) {
 // live: a brand-new project, opened straight into Notes (never touched in Site Planner), got its
 // `public.sites` row poisoned the instant the user switched away from the Site Planner tab, before
 // Notes ever tried to create anything. See `persistOrDrop` in SitePlanner.jsx for the call site.
+/* ⛔ B1361683 — THE LOCAL LIST DOES NOT DROP A PROJECT UNTIL THE SERVER HAS CONFIRMED THE DELETE.
+ *
+ * This used to remove the record and `writeSites()` FIRST, then fire the cloud delete and hand the
+ * caller its promise. That ordering is a second, independent way to produce the exact lie
+ * B1358128 (×2) produced by a different route, and it survives that fix completely: once the id
+ * arrives the write goes out, but if the write is REJECTED — offline, an RLS/ownership mismatch, a
+ * team member deleting a teammate's shared project, a 5xx — the project is already gone from
+ * `planarfit:sites:cloud:<uid>`. It then stays gone across a full reload (the picker reads that
+ * cache), while the row is untouched in Postgres, so it comes back days later on another device or
+ * after a cache clear. That is the frightening half of the report, and it is a data-integrity
+ * property, not a latency preference: a delete that never reached the cloud is not a delete, and
+ * must not be shown as one.
+ *
+ * So the order is now: tombstone → ask the server → remove locally ONLY on a confirmed removal.
+ *   • THE TOMBSTONE STILL GOES FIRST, and that is deliberate — it is what stops an in-flight
+ *     autosave from resurrecting the row during the round trip (B372/B757), and it has to be armed
+ *     before the network call, not after it.
+ *   • BUT IT IS ROLLED BACK ON A FAILED DELETE. A project that is still on screen because its
+ *     delete failed must still be editable and savable; leaving a tombstone on it would poison
+ *     `saveSite`'s resurrection guard for that id — exactly the permanent poisoning B1202176
+ *     recorded from the other direction. A failed delete must leave NOTHING behind.
+ *   • The raster eviction moved inside the confirmed path too: a delete that did not happen must
+ *     not throw away that plan's cached images.
+ *   • The logged-out / `tombstone:false` paths are UNCHANGED and still remove synchronously —
+ *     there is no server there to confirm anything, and nothing was ever pushed to it.
+ *
+ * Callers are unaffected by the reordering: every one of them (`deletePlan` and `deleteSiteGroup`
+ * in SitePlannerApp.jsx, `deleteSiteGroup` below) already awaits this promise before calling
+ * `refreshSites()`, so the list they rebuild still reflects the settled outcome.
+ * Guard: `test/deleteConfirmedBeforeLocal.test.js` (mutation-proven both ways).
+ */
 export function deleteSite(id, { tombstone = true } = {}) {
   const sites = readSites();
   const all = Object.values(sites);   // read the WHOLE list before the plan leaves it (below)
-  delete sites[id];
-  writeSites(sites);
-  /* ⛔ NEW-1 — EVICT BY REFERENCE, NEVER BY PREFIX. This evicted `raster:${id}:*` blindly, and a
-   * duplicate carries the SOURCE plan's `idbKey` (⧉ Duplicate plan copies the overlay record
-   * wholesale) — so deleting the source plan wiped the device copy for every plan copied from it.
-   * Same defect as the overlay delete, one tier down and with a bigger blast radius. Ask which of
-   * this plan's rasters no SURVIVING plan still names, and keep the rest. `all` still contains the
-   * plan being deleted, which is required: its own keys are what we are deciding about, and its
-   * reference is excluded BY ID inside the rule rather than by being absent from the list. */
-  if (id) {
-    let keep = new Set();
-    try {
-      keep = idbKeysHeldByOtherPlans(all, id);
-      const kept = idbKeysReleasableOnPlanDelete(all, id).kept;
-      if (kept.length) // LOUD-FAILURE: say that a cached image was KEPT for a sibling plan
-        reportClientEvent("plan-delete-raster-retained", "kept cached images a sibling plan still references", {
-          id, kept: kept.map((k) => ({ key: k.key, heldBy: k.heldBy })),
-        });
-    } catch (_) { /* never let cache bookkeeping change what gets swept */ }
-    // Sweep this plan's raster namespace (evicting genuine orphans, B474 #13/#24) while SPARING
-    // every key a surviving plan still names — a duplicate carries the source plan's idbKey.
-    idbDeleteByPrefix(`raster:${id}:`, { keep });
-  }
+  /* The local half, run only once the outcome is known (or immediately when there is no server to
+   * ask). Re-reads the store rather than closing over `sites`, so a write that landed during the
+   * round trip is not clobbered by a stale snapshot. */
+  const removeLocally = () => {
+    const now = readSites();
+    delete now[id];
+    writeSites(now);
+    /* ⛔ NEW-1 — EVICT BY REFERENCE, NEVER BY PREFIX. This evicted `raster:${id}:*` blindly, and a
+     * duplicate carries the SOURCE plan's `idbKey` (⧉ Duplicate plan copies the overlay record
+     * wholesale) — so deleting the source plan wiped the device copy for every plan copied from it.
+     * Same defect as the overlay delete, one tier down and with a bigger blast radius. Ask which of
+     * this plan's rasters no SURVIVING plan still names, and keep the rest. `all` still contains the
+     * plan being deleted, which is required: its own keys are what we are deciding about, and its
+     * reference is excluded BY ID inside the rule rather than by being absent from the list. */
+    if (id) {
+      let keep = new Set();
+      try {
+        keep = idbKeysHeldByOtherPlans(all, id);
+        const kept = idbKeysReleasableOnPlanDelete(all, id).kept;
+        if (kept.length) // LOUD-FAILURE: say that a cached image was KEPT for a sibling plan
+          reportClientEvent("plan-delete-raster-retained", "kept cached images a sibling plan still references", {
+            id, kept: kept.map((k) => ({ key: k.key, heldBy: k.heldBy })),
+          });
+      } catch (_) { /* never let cache bookkeeping change what gets swept */ }
+      // Sweep this plan's raster namespace (evicting genuine orphans, B474 #13/#24) while SPARING
+      // every key a surviving plan still names — a duplicate carries the source plan's idbKey.
+      idbDeleteByPrefix(`raster:${id}:`, { keep });
+    }
+    if (getCurrentSiteId() === id) setCurrentSiteId(null);
+  };
   if (tombstone) {
     recentlyDeleted.add(id); // in-tab tombstone so no in-flight flush can resurrect it this session (B372)
     if (activeUid() && id) recordSiteTombstone(activeUid(), id, Date.now()); // B757 — DURABLE tombstone: survives reload so a failed/offline cloud delete can't resurrect the plan on the next pull
   }
-  if (getCurrentSiteId() === id) setCurrentSiteId(null);
+  // A never-tombstoned drop never pushed anything to the cloud either (that's the whole premise —
+  // nothing to protect against resurrection means nothing to soft-delete), and a signed-out plan
+  // has no cloud copy at all: both remove immediately, exactly as before.
+  if (!tombstone || !activeUid()) {
+    removeLocally();
+    return Promise.resolve({ ok: true, skipped: true });
+  }
   // Return the cloud-removal result so the caller can report an honest failure / no-op (B372).
   // TEAM: cloudDelete scopes by id and lets RLS decide (owner or team-admin) — a regular member
-  // can't delete a teammate's shared project; that surfaces as removed:0, and the row re-appears
-  // on the next pull rather than being lost.
-  // A never-tombstoned drop never pushed anything to the cloud either (that's the whole premise —
-  // nothing to protect against resurrection means nothing to soft-delete), so skip the network
-  // round trip rather than issue a guaranteed-zero-rows soft delete.
-  return tombstone && activeUid() ? cloudDelete(activeUid(), id) : Promise.resolve({ ok: true, skipped: true });
+  // can't delete a teammate's shared project; that surfaces as removed:0, and the project now STAYS
+  // VISIBLE rather than vanishing locally while the row lives on server-side.
+  return cloudDelete(activeUid(), id).then(async (res) => {
+    if (res && res.ok !== false && (res.skipped || (res.removed || 0) > 0)) { removeLocally(); return res; }
+    /* ⛔ ZERO ROWS IS TWO DIFFERENT ANSWERS AND THEY MUST NOT BE CONFLATED, or this fix trades one
+     * data lie for a worse bug. `removed: 0` means the UPDATE matched nothing, which is EITHER
+     * "the server refused / cannot see this row" (RLS or ownership — a real failure, the row lives
+     * on, keep it) OR "the server has no such row at all" (a plan that only ever existed on this
+     * device and was never pushed — nothing to confirm, and refusing to delete it would strand it
+     * on screen permanently, undeletable). Ask which, on this rare path only: an already-binned row
+     * still MATCHES `.eq("id", …)` and so still counts as removed, so this branch is genuinely
+     * uncommon and never costs an ordinary delete a second round trip. An INCONCLUSIVE check
+     * (offline, a blip) keeps the project — the safe direction is always to keep. */
+    if (res && res.ok !== false && (res.removed || 0) === 0) {
+      const status = await cloudCheckDeleted(activeUid(), id).catch(() => ({ ok: false }));
+      if (status && status.ok && !status.exists) { removeLocally(); return { ...res, ok: true, serverHadNoRow: true }; }
+    }
+    /* NOT CONFIRMED — leave the project exactly where it was, and leave nothing behind that would
+     * stop the user working on it or trying again. The caller surfaces the failure (LOUD-FAILURE);
+     * silently keeping it on screen with no message would be its own lie. */
+    recentlyDeleted.delete(id);
+    if (activeUid() && id) clearSiteTombstone(activeUid(), id);
+    reportClientEvent("delete-not-confirmed", "a delete was not confirmed by the server — the project was KEPT locally", { id, removed: (res && res.removed) ?? null, error: (res && res.error) || "" });
+    if (res && res.ok !== false)
+      return { ...res, ok: false, error: res.error || "The cloud copy could not be removed (it may belong to another account), so this project is still here." };
+    return res;
+  });
 }
 export function getCurrentSiteId() { try { return localStorage.getItem(CURRENT_KEY) || null; } catch (_) { return null; } }
 export function setCurrentSiteId(id) { try { id ? localStorage.setItem(CURRENT_KEY, id) : localStorage.removeItem(CURRENT_KEY); } catch (_) {} }
