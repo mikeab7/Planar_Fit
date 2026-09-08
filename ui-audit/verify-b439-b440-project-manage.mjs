@@ -61,8 +61,16 @@ const waitNav = async (pred, tries = 24) => {
 };
 
 try {
-  await page.goto(BASE, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector('button[title^="All projects —"]', { timeout: 15000 });
+  // B1358128 — land on the Site route explicitly; a bare boot goes to the Dashboard, which
+  // carries no project crumb at all, so this harness never got past its first wait.
+  await page.goto(BASE.replace(/\/?$/, "/") + "#/site", { waitUntil: "domcontentloaded" });
+  /* B1358128 — was `button[title^="All projects —"]`, a title this crumb stopped carrying, so
+     this harness had been dying at boot with "0/0 checks passed" for some time (reproduced on
+     unmodified main). It is also, on its own, NOT enough for this surface: it drives the app
+     LOGGED OUT and asserts localStorage, which is exactly the half that still worked while the
+     signed-in delete wrote nothing to the database (WRONG-CASE). Its signed-in counterpart is
+     ui-audit/verify-signed-in-project-delete.mjs. */
+  await page.waitForSelector('[data-testid="project-crumb"]', { timeout: 15000 });
   await page.waitForTimeout(700);
 
   // ───────────────────── SITE (uncontrolled — drives the store) ─────────────────────
