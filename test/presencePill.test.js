@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { presenceParties, presenceInitials, presenceDisplayName, presenceChipContent, PRESENCE_INITIALS_CAP } from "../src/workspaces/site-planner/lib/presencePill.js";
+import { presenceParties, presenceInitials, presenceDisplayName, presenceChipContent, presenceLastOpLabel, relativeAgo, PRESENCE_INITIALS_CAP } from "../src/workspaces/site-planner/lib/presencePill.js";
 
 // NEW-1 (presence chip rebuild) — owner report, verbatim: he saw "4 people here" (and separately
 // "2 here") with only his own account open across several tabs. `presenceChipContent` is what
@@ -49,7 +49,7 @@ describe("presenceParties — own tabs split from other real people", () => {
       u2: [{ name: "Sam Alvarez", email: "sam@example.com" }],
     }, "me");
     expect(p.selfWindows).toBe(1);
-    expect(p.others).toEqual([{ uid: "u2", name: "Sam Alvarez", email: "sam@example.com", windows: 1 }]);
+    expect(p.others).toEqual([{ uid: "u2", name: "Sam Alvarez", email: "sam@example.com", windows: 1, lastOp: null }]);
   });
 
   it("him (3 tabs) plus one teammate — both facts survive, never merged", () => {
@@ -58,7 +58,7 @@ describe("presenceParties — own tabs split from other real people", () => {
       u2: [{ name: "Sam" }],
     }, "me");
     expect(p.selfWindows).toBe(3);
-    expect(p.others).toEqual([{ uid: "u2", name: "Sam", email: null, windows: 1 }]);
+    expect(p.others).toEqual([{ uid: "u2", name: "Sam", email: null, windows: 1, lastOp: null }]);
     expect(p.totalSessions).toBe(4);
   });
 
@@ -76,7 +76,7 @@ describe("presenceParties — own tabs split from other real people", () => {
       me: [{ name: "Michael" }],
       u2: [{ name: "Zoe" }, { name: "Zoe" }],
     }, "me");
-    expect(p.others).toEqual([{ uid: "u2", name: "Zoe", email: null, windows: 2 }]);
+    expect(p.others).toEqual([{ uid: "u2", name: "Zoe", email: null, windows: 2, lastOp: null }]);
   });
 
   it("a teammate with no display name set → name null, email preserved for the initials fallback", () => {
@@ -84,12 +84,12 @@ describe("presenceParties — own tabs split from other real people", () => {
       me: [{ name: "Michael" }],
       u2: [{ name: "", email: "jordan@example.com" }],
     }, "me");
-    expect(p.others[0]).toEqual({ uid: "u2", name: null, email: "jordan@example.com", windows: 1 });
+    expect(p.others[0]).toEqual({ uid: "u2", name: null, email: "jordan@example.com", windows: 1, lastOp: null });
   });
 
   it("no name and no email at all → both null, never an empty string", () => {
     const p = presenceParties({ me: [{ name: "Michael" }], u2: [{}] }, "me");
-    expect(p.others[0]).toEqual({ uid: "u2", name: null, email: null, windows: 1 });
+    expect(p.others[0]).toEqual({ uid: "u2", name: null, email: null, windows: 1, lastOp: null });
   });
 
   it("someone leaving drops out of the NEXT sync's state entirely (no ghost accumulation)", () => {
@@ -99,6 +99,63 @@ describe("presenceParties — own tabs split from other real people", () => {
     expect(withThem.others).toHaveLength(1);
     const afterTheyLeave = presenceParties({ me: [{ name: "Michael" }] }, "me");
     expect(afterTheyLeave).toBeNull();
+  });
+});
+
+describe("presenceParties · NEW-7 lastOp enrichment — hovering a presence chip answers 'and what were they doing'", () => {
+  const state = { me: [{ name: "Michael" }], u2: [{ name: "Sam" }], u3: [{ name: "Amir" }] };
+
+  it("no lastOpByUid at all → every entry carries lastOp:null, no throw", () => {
+    const p = presenceParties(state, "me");
+    expect(p.others.every((o) => o.lastOp === null)).toBe(true);
+  });
+
+  it("a plain object works the same as a Map", () => {
+    const viaMap = presenceParties(state, "me", new Map([["u2", { opKind: "move", at: 1000 }]]));
+    const viaObj = presenceParties(state, "me", { u2: { opKind: "move", at: 1000 } });
+    expect(viaMap.others.find((o) => o.uid === "u2").lastOp).toEqual({ opKind: "move", at: 1000 });
+    expect(viaObj.others.find((o) => o.uid === "u2").lastOp).toEqual({ opKind: "move", at: 1000 });
+  });
+
+  it("a person with no tracked op yet stays lastOp:null even when OTHERS have one", () => {
+    const p = presenceParties(state, "me", { u2: { opKind: "merge", at: 500 } });
+    expect(p.others.find((o) => o.uid === "u2").lastOp).toEqual({ opKind: "merge", at: 500 });
+    expect(p.others.find((o) => o.uid === "u3").lastOp).toBeNull();
+  });
+});
+
+describe("relativeAgo — shared by the presence hover AND the plan-activity feed", () => {
+  it("not a finite time → null", () => {
+    expect(relativeAgo(NaN)).toBeNull();
+    expect(relativeAgo(undefined)).toBeNull();
+  });
+  it("buckets: just now, minutes, hours, a while ago", () => {
+    expect(relativeAgo(1000, 1000 + 30 * 1000)).toBe("just now");
+    expect(relativeAgo(0, 4 * 60 * 1000)).toBe("4m ago");
+    expect(relativeAgo(0, 3 * 3600 * 1000)).toBe("3h ago");
+    expect(relativeAgo(0, 30 * 3600 * 1000)).toBe("a while ago");
+  });
+});
+
+describe("presenceLastOpLabel — the hover line, coarse and never blank when there's something to say", () => {
+  it("nothing tracked yet → null (the caller renders nothing, not a placeholder)", () => {
+    expect(presenceLastOpLabel(null)).toBeNull();
+    expect(presenceLastOpLabel({ opKind: "move", at: NaN })).toBeNull();
+  });
+
+  it("just under the just-now floor still reads 'just now', never '0m ago'", () => {
+    expect(presenceLastOpLabel({ opKind: "move", at: 1000 }, 1000 + 30 * 1000)).toBe("moved · just now");
+  });
+
+  it("minutes, then hours, then a coarse floor beyond a day", () => {
+    expect(presenceLastOpLabel({ opKind: "merge", at: 0 }, 4 * 60 * 1000)).toBe("merged · 4m ago");
+    expect(presenceLastOpLabel({ opKind: "split", at: 0 }, 3 * 3600 * 1000)).toBe("split · 3h ago");
+    expect(presenceLastOpLabel({ opKind: "resize", at: 0 }, 30 * 3600 * 1000)).toBe("resized · a while ago");
+  });
+
+  it("an op_kind outside the closed vocabulary falls back to 'changed', never throws or blanks", () => {
+    expect(presenceLastOpLabel({ opKind: "unknown", at: 0 }, 60 * 1000)).toBe("changed · 1m ago");
+    expect(presenceLastOpLabel({ opKind: "not-a-real-kind", at: 0 }, 60 * 1000)).toBe("changed · 1m ago");
   });
 });
 

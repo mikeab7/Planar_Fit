@@ -13,7 +13,7 @@ import { notePerfEdit } from "../../shared/telemetry/perfSampling.js";
 import { notePlanContext, noteViewScale } from "../../shared/telemetry/perfRecorderHandle.js";
 import { recordPinchGesture } from "../../shared/telemetry/gestureTelemetry.js";
 import { createElementSync, stableStringify } from "./lib/elementSync.js";
-import { createOperationTracker } from "./lib/operationEnvelope.js";
+import { createOperationTracker, undoOwnership, undoRiskEnvelope, groupRowsIntoOperations, describeOperation } from "./lib/operationEnvelope.js";
 import { planDelete } from "./lib/deletePlan.js";
 import { focusScope, resolveKeyEntry, keyScopeVerdict, shouldHintRefusal, SCOPE_GUARD_HINT } from "./lib/keyContract.js";
 import { touchLatch, touchFactsOf, TOUCH, isTextControl } from "../../shared/keyboard/keyScope.js";
@@ -24,7 +24,7 @@ import { createNameResolver, describeElement, SELF_ACTOR } from "./lib/editorNam
 import { toastForSyncEvent, describeCoalescedLabel } from "./lib/conflictToasts.js";
 import { listMembers, currentIdentity } from "./lib/teams.js";
 import { multiwriterEnabled } from "./lib/multiwriter.js";
-import { presenceParties } from "./lib/presencePill.js";
+import { presenceParties, presenceDisplayName, relativeAgo } from "./lib/presencePill.js";
 import { loadProfile } from "./lib/profile.js";
 import { commitElements, fetchElements, keepaliveCommit } from "./lib/elementApi.js";
 import { supabase, supabaseRest, currentAccessToken } from "./lib/supabase.js";
@@ -1875,6 +1875,18 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     undoAnchor = useRef(null), redoAnchor = useRef(null);
   const [versionsOpen, setVersionsOpen] = useState(false); // version-history (automatic backups) dialog
   const [versionList, setVersionList] = useState([]);    // [{at, buildings, sig}] snapshots for this plan
+  /* B472048 (NEW-7 · NEW-3) — PLAN ACTIVITY: a second tab in the SAME dialog (per the item's own
+   * instruction to extend the existing clock/history control rather than build a second one).
+   * Version history is a per-DEVICE ring of whole-plan snapshots with no actor; it cannot answer
+   * "who did this" by construction. Activity reads the opposite source — the site_elements ROWS
+   * themselves, which now carry an operation envelope (db/commit_elements_op_envelope.sql) — and
+   * is therefore the one surface in the app that is genuinely CROSS-SESSION: unlike the local
+   * Undo/Redo history dropdown (B648353's `describeHistoryStep`, which can only ever describe
+   * frames THIS tab pushed), it names what a DIFFERENT session did too. */
+  const [activityTab, setActivityTab] = useState("versions"); // "versions" | "activity"
+  const [activityRows, setActivityRows] = useState(null);     // null = not loaded yet; [] = loaded, empty
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityErr, setActivityErr] = useState("");
   const [leftPanel, setLeftPanel] = useState(null);      // which left-rail menu is DOCKED: parcel|yield|analysis|references|standards|null (B656: props is a companion, not a tab)
   // NEW-1 (poppable panels): panels detached over the map. { [panelId]: {x,y} } in viewport px.
   // A panel is EXACTLY one of docked (leftPanel===id), floating (id in `floating`), or closed.
@@ -4241,6 +4253,26 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   };
   // B674 — who else is on this plan right now (Supabase Realtime Presence on the element channel).
   const [peers, setPeers] = useState(null); // presenceSummary() result, or null when alone
+  /* B472048 (NEW-7 · NEW-2/NEW-4) — TWO refs, two different grains, fed from the SAME realtime rows.
+   *
+   * `lastForeignOpByUidRef` — per PERSON (account uid), the most recent operation envelope seen from
+   * a row someone ELSE wrote. This is what the presence chip's hover answers "what were they doing" —
+   * presence itself already groups by uid (two of a teammate's tabs read as one entry), so a
+   * per-session answer would be a question the chip never asks.
+   *
+   * `lastForeignOpRef` — the SINGLE most recent foreign operation across every OTHER SESSION
+   * (actor_session_id, not uid — the whole reason this item exists is that two tabs of THIS SAME
+   * ACCOUNT must be told apart). This is what Undo's ownership check reads: one timestamp is
+   * sufficient for any undo depth (see operationEnvelope.js's undoRiskEnvelope header) and the
+   * confirmation only ever needs to name the ONE most recent thing at risk.
+   *
+   * Both are refs, not state — updated on every realtime row (could be many per second during an
+   * active co-edit) and read only at the moment of a hover or an Undo press, never rendered from
+   * directly. Neither survives a reload (in-memory only) — an unattributed frame from BEFORE this
+   * session opened the plan correctly reads as `own`/no-warning rather than a guess. */
+  const lastForeignOpByUidRef = useRef(new Map());   // uid -> { opKind, at }
+  const lastForeignOpRef = useRef(null);             // { sessionId, userId, opKind, at } | null
+  const lastPushAtRef = useRef(0);                   // Date.now() of the most recent pushHistory()
   // B673 — the loud-but-non-blocking conflict surface: toast stack + name resolver + the
   // late-bound sync-event handler (assigned each render further down, once zoomToElements and
   // featBBox exist in scope).
@@ -4636,12 +4668,33 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
         // B674 — the live "who's here" roster, split into THIS account's own sessions vs other
         // real people (NEW-1, rebuilt): presence already groups by uid, so "own tabs vs other
         // people" falls out of the existing payload for free. Quiet when this window is alone.
-        try { setPeers(presenceParties(ch.presenceState(), uid)); } catch (_) {}
+        // NEW-7/NEW-2 — carry the per-person last-op map along so the hover breakdown can answer
+        // "what were they doing", enriched independently by the postgres_changes handler below.
+        try { setPeers(presenceParties(ch.presenceState(), uid, lastForeignOpByUidRef.current)); } catch (_) {}
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "site_elements", filter: "site_id=eq." + siteId }, (payload) => {
         if (elSyncRef.current !== eng) return;
         const row = payload && (payload.new && payload.new.id ? payload.new : payload.old);
         if (!row) return;
+        /* B472048 (NEW-7 · NEW-2/NEW-4) — every row now carries its operation envelope (the
+         * db/commit_elements_op_envelope.sql migration); postgres_changes payloads include every
+         * column regardless of the client's own SELECT list (CDC ships the whole row), so this
+         * needs no new query. `row.updated_by` reads for a live row and `row.deleted_by` for a
+         * tombstone (a delete's actor never re-appears as `updated_by`); only a row genuinely
+         * written by SOMEONE ELSE'S SESSION updates either tracker — this tab's own writes echo
+         * back through this same channel and must never count as "foreign" against itself. */
+        const rowSid = row.actor_session_id;
+        if (rowSid && rowSid !== journalSid) {
+          const atMs = Date.parse(row.updated_at || row.client_ts || "");
+          if (Number.isFinite(atMs)) {
+            const rowUid = row.updated_by || row.deleted_by || null;
+            const entry = { opKind: row.op_kind || null, at: atMs };
+            if (rowUid) lastForeignOpByUidRef.current.set(rowUid, entry);
+            if (!lastForeignOpRef.current || atMs > lastForeignOpRef.current.at) {
+              lastForeignOpRef.current = { sessionId: rowSid, userId: rowUid, opKind: row.op_kind || null, at: atMs };
+            }
+          }
+        }
         const instr = eng.applyRemoteRow(row);
         if (instr.action === "ignore") return;
         if (busyRef.current) pendingRemoteRef.current.push(instr); // never yank the canvas mid-gesture
@@ -4881,7 +4934,20 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   // it can be correlated by, which "edit" (a real OP_KINDS member, not the "no operation open"
   // unknown fallback) already gives it. `deleteSel` passes "delete" explicitly, `mergeParcels`
   // passes "merge" — see below.
-  const pushHistory = (kind = "edit") => { opTrackerRef.current.beginOperation(kind); histRef.current.push(stateRef.current); notePerfEdit(); touchHist(); };
+  // B472048 (NEW-7 · NEW-1) — `drag.current.mode` → the op_kind pushHistory() stamps at the ONE
+  // shared click-vs-drag arming seam (dragGate.js's `d.histOnArm` branch), so move/resize/rotate
+  // read correctly in the activity feed instead of the generic "edit" fallback. A vertex/edge drag
+  // reshapes the object, so it maps to "resize" (the closer of the two dimension-changing kinds) —
+  // there is no separate "reshape" member in the closed OP_KINDS vocabulary and adding one is a
+  // bigger change than this item's scope. A mode with no entry here still gets a full envelope via
+  // pushHistory's own "edit" default; it is just not labeled with the more specific kind.
+  const DRAG_OP_KIND = {
+    move: "move", groupMove: "move", mkMove: "move", moveSheetOverlay: "move", callout: "move", measureMove: "move",
+    resize: "resize", edgeResize: "resize", mkResize: "resize", ovScale: "resize", calloutResize: "resize",
+    vertex: "resize", elVertex: "resize", measureVertex: "resize", mkVertex: "resize", roadEnd: "resize", roadVtx: "resize", easeVertex: "resize",
+    rotate: "rotate", mkRotate: "rotate", ovRotate: "rotate",
+  };
+  const pushHistory = (kind = "edit") => { opTrackerRef.current.beginOperation(kind); lastPushAtRef.current = Date.now(); histRef.current.push(stateRef.current); notePerfEdit(); touchHist(); };
   /* ⛔ NEW-5 — "CAN I UNDO?" IS ASKED OF THE DOCUMENT, ONCE PER REAL CHANGE.
    *
    * `history.canUndo(current, {exact:true})` is the honest predicate (see that module: a plain
@@ -5130,7 +5196,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     if (!payload.items.length) return;
     const off = settings.gridSize || 10;
     const made = pasteClipboard(payload.items, { mint: uid, translate: clipTranslate(), dx: off, dy: off });
-    pushHistory();
+    pushHistory("paste"); // NEW-7 (NEW-1) — a duplicate runs through the same pasteClipboard() path
     if (made.els.length) setEls((a) => [...a, ...made.els]);
     if (made.markups.length) setMarkups((a) => [...a, ...withStackZ(a, made.markups)]);
     if (made.measures.length) setMeasures((a) => [...a, ...withStackZ(a, made.measures)]);
@@ -5324,8 +5390,45 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   // as their own act. Minting a fresh one here — "edit" is honest; there is no dedicated undo/redo
   // member in the closed OP_KINDS vocabulary — gives every undo/redo its own op id. Guard:
   // test/opEnvelopeSeedCoverage.test.js.
-  const undo = () => { const prev = histRef.current.undo(stateRef.current); if (prev) { opTrackerRef.current.beginOperation("edit"); applySnapshot(prev); touchHist(); } };
-  const redo = () => { const next = histRef.current.redo(stateRef.current); if (next) { opTrackerRef.current.beginOperation("edit"); applySnapshot(next); touchHist(); } };
+  /* ⛔ B472048 (NEW-7 · NEW-4) — UNDO/REDO MUST BE HONEST ABOUT WHOSE WORK THEY ARE ABOUT TO TOUCH.
+   *
+   * The owner pressed Undo six times on Bain while a second presence was in the plan; the geometry
+   * survived, but nothing could PROVE none of the other session's edits were reverted, because an
+   * undo restores a whole snapshot, not a diff. `riskName()` answers the one question that
+   * matters: has a session OTHER than this one written something since the frame about to be
+   * restored was captured (`undoRiskEnvelope` + `undoOwnership`, operationEnvelope.js — one
+   * timestamp is sufficient for any undo/redo depth, see that module's header). Own work always
+   * proceeds silently, exactly as before; a genuine risk requires an explicit second press, naming
+   * who — never a native confirm() (CLAUDE.md's "No dialog-box edits"), so it rides the existing
+   * non-blocking toast + action-button surface (B673's `pushToast`) already used for every other
+   * cross-session notice in this file. An un-enveloped frame (nothing foreign tracked yet, or a
+   * legacy plan predating this migration) resolves as `own` — warning on every press of a plan
+   * that predates this feature would be worse than the gap it closes. */
+  const riskName = () => {
+    let name = null;
+    undoOwnership(
+      undoRiskEnvelope(lastPushAtRef.current, lastForeignOpRef.current, journalSid),
+      journalSid,
+      { nameOf: (sessionId, userId) => {
+          const p = (peers && peers.others || []).find((o) => o.uid === userId);
+          name = p ? presenceDisplayName(p) : "someone else";
+          return name;
+        } },
+    );
+    return name; // set only when undoOwnership actually called nameOf, i.e. verdict === "foreign"
+  };
+  const applyUndo = () => { const prev = histRef.current.undo(stateRef.current); if (prev) { opTrackerRef.current.beginOperation("edit"); applySnapshot(prev); touchHist(); } };
+  const applyRedo = () => { const next = histRef.current.redo(stateRef.current); if (next) { opTrackerRef.current.beginOperation("edit"); applySnapshot(next); touchHist(); } };
+  const undo = () => {
+    const name = riskName();
+    if (name) { pushToast({ text: `The next undo would reverse ${name}'s change, not yours. Undo it anyway?`, action: { label: "Undo anyway", onClick: applyUndo } }); return; }
+    applyUndo();
+  };
+  const redo = () => {
+    const name = riskName();
+    if (name) { pushToast({ text: `The next redo would reverse ${name}'s change, not yours. Redo it anyway?`, action: { label: "Redo anyway", onClick: applyRedo } }); return; }
+    applyRedo();
+  };
 
   /* ⛔ NEW-2 (B648353) — THE HISTORY DROPDOWN: a caret beside Undo/Redo lists recent actions
    * (newest first, real names via lib/historyLabel.js's snapshot diff — see that module's header
@@ -5357,15 +5460,22 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     setRedoHover(0);
     setRedoMenuOpen(true);
   };
+  const applyUndoN = (n) => { const target = histRef.current.undoN(stateRef.current, n); if (target) { opTrackerRef.current.beginOperation("edit"); applySnapshot(target); touchHist(); } };
+  const applyRedoN = (n) => { const target = histRef.current.redoN(stateRef.current, n); if (target) { opTrackerRef.current.beginOperation("edit"); applySnapshot(target); touchHist(); } };
+  // NEW-7/NEW-4 — the multi-step dropdown gets the SAME ownership guard as a plain Undo/Redo press;
+  // a run of several steps reverts further back, so if even the top frame is at risk every deeper
+  // step in the run is too (riskName()'s single-timestamp sufficiency, see its own header above).
   const undoRun = (n) => {
-    const target = histRef.current.undoN(stateRef.current, n);
     setUndoMenuOpen(false);
-    if (target) { opTrackerRef.current.beginOperation("edit"); applySnapshot(target); touchHist(); }
+    const name = riskName();
+    if (name) { pushToast({ text: `The next undo would reverse ${name}'s change, not yours. Undo it anyway?`, action: { label: "Undo anyway", onClick: () => applyUndoN(n) } }); return; }
+    applyUndoN(n);
   };
   const redoRun = (n) => {
-    const target = histRef.current.redoN(stateRef.current, n);
     setRedoMenuOpen(false);
-    if (target) { opTrackerRef.current.beginOperation("edit"); applySnapshot(target); touchHist(); }
+    const name = riskName();
+    if (name) { pushToast({ text: `The next redo would reverse ${name}'s change, not yours. Redo it anyway?`, action: { label: "Redo anyway", onClick: () => applyRedoN(n) } }); return; }
+    applyRedoN(n);
   };
 
   /* ── NEW-1 / NEW-2 — LOCATE A PLAN + DEED PROMOTION, loaded on demand ─────────────────────────
@@ -6716,7 +6826,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     const { dx, dy } = place;
     const note = pasteNote(place, frame);
     const made = pasteClipboard(payload.items, { mint: uid, translate: clipTranslate(), dx, dy });
-    pushHistory(); // ONE frame for the whole paste, however many objects it carries
+    pushHistory("paste"); // NEW-7 (NEW-1) — ONE frame AND one op_id for the whole paste, however many objects it carries
     if (made.els.length) setEls((a) => [...a, ...made.els]);
     if (made.markups.length) setMarkups((a) => [...a, ...withStackZ(a, made.markups)]);
     if (made.measures.length) setMeasures((a) => [...a, ...withStackZ(a, made.measures)]); // NEW-2 — a pasted measurement stacks on top of the band it lands in, like a pasted markup
@@ -7472,7 +7582,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
       }
       {
         const pieces = res.pieces;
-        pushHistory();
+        pushHistory("split"); // NEW-7 (NEW-1) — parent tombstoned + children created share this ONE op_id, atomically
         // B651 — split is a REPLACEMENT, not an addition: create + activate the pieces as
         // CHILDREN (each carries parentId), and SUPERSEDE the parent in place (mark it inactive
         // so it drops out of every yield/area sum, but keep it in the list — greyed, with the
@@ -8501,7 +8611,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
       const g = stepDragGate(d.gate, { x: e.clientX, y: e.clientY }, fp);
       if (!g.armed) return;          // still a click: no geometry, no history, no row write
       if (g.justArmed) {
-        if (d.histOnArm) { pushHistory(); d.pushed = true; } // NEW-2 — ONE frame, and only for a real move
+        if (d.histOnArm) { pushHistory(DRAG_OP_KIND[d.mode]); d.pushed = true; } // NEW-2 — ONE frame, and only for a real move; NEW-7 (NEW-1) — labeled by drag mode
         d.moved = true;              // the shared "this gesture really changed something" latch (read on release)
       }
       fp = g.pt;
@@ -10196,7 +10306,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     const lon0 = slon / n, lat0 = slat / n;
     const pcs = rings.map((r) => ({ id: uid(), points: lngLatRingToFeet(r, lon0, lat0), locked: true, ...parcelDefaultStyle(settings) })).filter((pc) => pc.points.length >= 3); // B929
     if (!pcs.length) { setLookupErr("That record has no usable polygon geometry."); return; }
-    pushHistory();
+    pushHistory("import"); // NEW-7 (NEW-1) — a county-record parcel brought onto the plan
     setParcels((a) => [...a, ...pcs]);
     setSel({ kind: "parcel", id: pcs[pcs.length - 1].id });
     setLookupRes([]);
@@ -15634,7 +15744,38 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   // saved snapshots, and restore one into the canvas (which then autosaves as the newest
   // version — and the thinner state it replaces is itself snapshotted, so a restore is
   // reversible). Geometry is fully restored; any stripped backdrop image may need re-dropping.
-  const openVersionHistory = () => { setVersionList(listVersions(siteId)); setVersionsOpen(true); closeHdrMenus(); };
+  const openVersionHistory = () => { setVersionList(listVersions(siteId)); setActivityTab("versions"); setVersionsOpen(true); closeHdrMenus(); };
+  // B472048 (NEW-7 · NEW-3) — the Activity tab's data, fetched lazily on first switch (not on
+  // every dialog open) so opening "Version history" for its ordinary purpose costs nothing new.
+  // `groupRowsIntoOperations` + `describeOperation` are the ALREADY-SHIPPED, unit-tested pure
+  // model from lib/operationEnvelope.js (B472048's foundation PR) — this is the wiring, not a
+  // reimplementation. Names are resolved through the SAME roster resolver B673's conflict toasts
+  // use (`nameResolverRef`), so a teammate's name can never disagree between the two surfaces.
+  const loadPlanActivity = async () => {
+    if (!siteId || !isCloudActive()) { setActivityRows([]); return; }
+    setActivityLoading(true); setActivityErr("");
+    try {
+      const r = await fetchElements(supabase, siteId);
+      if (!r.ok) { setActivityErr("Couldn't load activity — try again."); setActivityRows([]); return; }
+      const ops = groupRowsIntoOperations(r.rows, { selfSessionId: journalSid }).slice(0, 40);
+      const uids = [...new Set(ops.filter((o) => !o.isMine && o.userId).map((o) => o.userId))];
+      const names = new Map();
+      await Promise.all(uids.map(async (u) => {
+        try { const a = await nameResolverRef.current(u); if (a && !a.self && a.name) names.set(u, a.name); } catch (_) { /* falls back to "Someone" below */ }
+      }));
+      setActivityRows(ops.map((op) => ({
+        opId: op.opId, at: op.at, rowCount: op.rowCount,
+        text: describeOperation(op, { nameOf: (sessionId, userId) => names.get(userId) || "Someone" }),
+        created: op.created, deleted: op.deleted, updated: op.updated,
+      })));
+    } catch (_) {
+      setActivityErr("Couldn't load activity — try again.");
+      setActivityRows([]);
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+  const openActivityTab = () => { setActivityTab("activity"); if (activityRows === null && !activityLoading) loadPlanActivity(); };
   const restoreVersion = (at) => {
     // B467/NEW-4 — Restore is a WRITE. A read-only tab (another tab is the active editor) must not be
     // able to overwrite the canvas; block it loudly with the way out.
@@ -27416,29 +27557,82 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               <h2 style={{ margin: 0, fontSize: 16, color: PAL.ink }}>Version history</h2>
               <button className="gbtn" onClick={() => setVersionsOpen(false)} style={{ ...chip }}>Close ✕</button>
             </div>
-            <div style={{ fontSize: 12, color: PAL.muted, lineHeight: 1.5, marginBottom: 12 }}>
-              Automatic backups of this plan, saved on this device. Restore one to bring it back — your current version is backed up too, so a restore can be undone. (Aerials / backdrop images may need re-dropping.)
+            {/* B472048 (NEW-7 · NEW-3) — Activity is a SECOND TAB in this SAME dialog, per the
+                item's own instruction to extend the existing history control rather than build a
+                second one. Versions answers "what did the plan look like"; Activity answers "who
+                did this, and what were they doing" — a different QUESTION over a different SOURCE
+                (device snapshots vs. server rows), which is why it is a tab rather than a merge of
+                the two lists. */}
+            <div style={{ display: "flex", gap: 4, marginBottom: 12, borderBottom: `1px solid ${PAL.panelLine}` }}>
+              {[["versions", "Versions"], ["activity", "Activity"]].map(([k, label]) => (
+                <button key={k} className="gbtn" onClick={() => (k === "activity" ? openActivityTab() : setActivityTab("versions"))}
+                  style={{ ...chip, border: "none", borderRadius: 0, borderBottom: activityTab === k ? `2px solid var(--accent)` : "2px solid transparent",
+                    fontWeight: activityTab === k ? 800 : 600, color: activityTab === k ? PAL.ink : PAL.muted }}>
+                  {label}
+                </button>
+              ))}
             </div>
-            {versionList.length === 0 ? (
-              <div style={{ fontSize: 12.5, color: PAL.muted, padding: "10px 0" }}>No earlier versions saved yet. As you edit, recent versions are backed up here automatically.</div>
+            {activityTab === "versions" ? (
+              <>
+                <div style={{ fontSize: 12, color: PAL.muted, lineHeight: 1.5, marginBottom: 12 }}>
+                  Automatic backups of this plan, saved on this device. Restore one to bring it back — your current version is backed up too, so a restore can be undone. (Aerials / backdrop images may need re-dropping.)
+                </div>
+                {versionList.length === 0 ? (
+                  <div style={{ fontSize: 12.5, color: PAL.muted, padding: "10px 0" }}>No earlier versions saved yet. As you edit, recent versions are backed up here automatically.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {versionList.map((v) => {
+                      const d = new Date(v.at);
+                      // Seconds included so two backups in the same minute aren't indistinguishable (B456/NEW-8).
+                      const when = isNaN(d.getTime()) ? "—" : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+                      return (
+                        <div key={v.at} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 10px", border: `1px solid ${PAL.panelLine}`, borderRadius: 9 }}>
+                          <span style={{ fontSize: 12.5, color: PAL.ink }}>
+                            <span style={{ fontWeight: 650 }}>{when}</span>
+                            {/* A real content summary (5 buildings · 1 road · …), never a misleading "0 buildings" (B456/NEW-8). */}
+                            <span style={{ color: PAL.muted }}> · {v.summary}</span>
+                          </span>
+                          <button style={{ ...chip, flex: "none" }} onClick={() => restoreVersion(v.at)} title="Replace the canvas with this saved version">Restore</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {versionList.map((v) => {
-                  const d = new Date(v.at);
-                  // Seconds included so two backups in the same minute aren't indistinguishable (B456/NEW-8).
-                  const when = isNaN(d.getTime()) ? "—" : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
-                  return (
-                    <div key={v.at} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 10px", border: `1px solid ${PAL.panelLine}`, borderRadius: 9 }}>
-                      <span style={{ fontSize: 12.5, color: PAL.ink }}>
-                        <span style={{ fontWeight: 650 }}>{when}</span>
-                        {/* A real content summary (5 buildings · 1 road · …), never a misleading "0 buildings" (B456/NEW-8). */}
-                        <span style={{ color: PAL.muted }}> · {v.summary}</span>
-                      </span>
-                      <button style={{ ...chip, flex: "none" }} onClick={() => restoreVersion(v.at)} title="Replace the canvas with this saved version">Restore</button>
-                    </div>
-                  );
-                })}
-              </div>
+              <>
+                <div style={{ fontSize: 12, color: PAL.muted, lineHeight: 1.5, marginBottom: 12 }}>
+                  Who did what on this plan, most recent first — including other people's sessions, not just yours.
+                </div>
+                {!isCloudActive() ? (
+                  <div style={{ fontSize: 12.5, color: PAL.muted, padding: "10px 0" }}>Activity needs this plan to be saved to your account.</div>
+                ) : activityLoading ? (
+                  <div style={{ fontSize: 12.5, color: PAL.muted, padding: "10px 0" }}>Loading…</div>
+                ) : activityErr ? (
+                  <div style={{ fontSize: 12.5, color: PAL.danger, padding: "10px 0" }}>{activityErr}</div>
+                ) : !activityRows || activityRows.length === 0 ? (
+                  <div style={{ fontSize: 12.5, color: PAL.muted, padding: "10px 0" }}>No activity recorded on this plan yet.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {activityRows.map((op) => {
+                      // A composite op (merge/split/replace) or anything touching more than one
+                      // row names its members explicitly — never leave "merged 2 into 1" as the
+                      // only trace of WHICH two, or the sentence reads as arithmetic again.
+                      const ids = [...op.deleted.map((r) => `−${r.id}`), ...op.created.map((r) => `+${r.id}`), ...op.updated.map((r) => r.id)];
+                      return (
+                        <div key={op.opId} style={{ padding: "8px 10px", border: `1px solid ${PAL.panelLine}`, borderRadius: 9 }}>
+                          <div style={{ fontSize: 12.5, color: PAL.ink, fontWeight: 600 }}>
+                            {op.text} <span style={{ color: PAL.muted, fontWeight: 500 }}>— {relativeAgo(Date.parse(op.at)) || "—"}</span>
+                          </div>
+                          {op.rowCount > 1 && (
+                            <div style={{ fontSize: 11, color: PAL.muted, fontFamily: MONO_FONT, marginTop: 3 }}>{ids.join(", ")}</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

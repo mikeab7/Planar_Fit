@@ -226,7 +226,9 @@ was never clicked" quietly ships broken.
 
 **Why this needs its own real pass, and why it can't run today.** All four items are a re-layout of `SitePlansSection.jsx`, driven by a real signed-in comp + a real placed `site_plan_overlays` row — this sandbox's egress proxy hard-blocks the real production Supabase project (`lyeqzkuiwngunutlkkmi.supabase.co`): confirmed directly via `curl` (`CONNECT tunnel failed, response 403`, and the agent-proxy's own status endpoint logs it as `gateway answered 403 to CONNECT`), the same wall this repo's own `e2e/auth.setup.js` hits. This is a hard proxy-level CONNECT rejection, not a TLS-handshake quirk WebKit can route around (the B1215536 note elsewhere in this file about WebKit reaching hosts Chromium can't is about a DIFFERENT failure shape — `ws_closed_mid_exchange` after the tunnel opens — and does not apply to a 403 the gateway returns before any handshake starts).
 
-**What was verified here (this session, sandbox — mocked signed-in, not the real thing).** `ui-audit/verify-site-plan-adjust-panel.mjs` (new) launches the real built app and intercepts the Supabase REST/auth endpoints at the network layer (Playwright `ctx.route`, which fires before a request leaves the browser regardless of auth state) to serve one throwaway comp ("Core 5 - West Hardy" — the same name Michael's own real comp carries, deliberately reused as the fixture name since the dispatch named it, but this is FABRICATED DATA, not his real row: `id: "throwaway-comp-1"`) and one throwaway placed site-plan overlay, at his own reported 1191×465 viewport. 24/24 checks pass:
+**⛔ UPDATE (B1327520, 2026-09-08) — a real regression was found and fixed on top of this redesign: the docked Adjust panel painted over the Imagery & layers panel at BOTH of Michael's reported window sizes (1191×465 and 1600×465).** `ui-audit/verify-site-plan-adjust-panel.mjs` (the same harness this V### item already used) now runs its FULL check pass at both viewports and adds two rect-based checks per viewport confirming the Layers panel force-collapses while Adjust is open and the two panels' boxes never intersect — 58/58 pass, teeth-proven (fails at both viewports when the fix is disabled). B1327520 shipped `Verify: sandbox` (same classification as B1423, the panel-vs-map-chrome bug this is a sibling of) and did not need its own `V###` — this note exists so the live pass below, whenever it runs, also confirms the fix on Michael's real account rather than re-discovering the same overlap. Step 3 below already covers it ("never overlapping … Imagery & layers"); when running this pass, also do it once at 1600×465 in addition to 1191×465, and additionally note whether the Imagery & layers panel visibly collapses to its small header chip the moment Adjust opens (the fix's own behavior) and re-expands the moment Adjust closes.
+
+**What was verified here (this session, sandbox — mocked signed-in, not the real thing).** `ui-audit/verify-site-plan-adjust-panel.mjs` (new) launches the real built app and intercepts the Supabase REST/auth endpoints at the network layer (Playwright `ctx.route`, which fires before a request leaves the browser regardless of auth state) to serve one throwaway comp ("Core 5 - West Hardy" — the same name Michael's own real comp carries, deliberately reused as the fixture name since the dispatch named it, but this is FABRICATED DATA, not his real row: `id: "throwaway-comp-1"`) and one throwaway placed site-plan overlay, at his own reported 1191×465 viewport. 24/24 checks pass (now 58/58 across both viewports — see the update above):
 1. The comp's own name renders in a real, unclipped box (not cut off by the scroll region).
 2. The resting plan card shows only identity (thumbnail, name, date/page, status) plus one "Adjust" button — no Move/resize, Pin comp here, Change page, Delete, or overflow "⋯" visible until Adjust is pressed.
 3. Pressing Adjust opens a panel docked within 15px of the map's true right edge, ≥30px clear of the Leaflet scale bar, never off the top of the map, never overlapping the Comps rail — `position:absolute`, `border-radius:12px`, matching the Layers panel's own chrome exactly.
@@ -238,7 +240,7 @@ was never clicked" quietly ships broken.
 **Steps, each with a named expected result — on a real signed-in account, window resized to 1191×465, using a THROWAWAY comp + plan (never `site_plan_overlays` row `aa2d8163-7d45-4929-8a05-dad94ba2528d` or comp `ddb5a9e5-76c5-49e6-88b0-4a842f1b0a46` — his real Airtex plan and Core 5 - West Hardy comp):**
 1. Create a throwaway comp with a throwaway placed site plan. Open that comp's detail view at the 1191×465 window. **Expect:** the comp's own name renders whole, not clipped by the scroll region, before the plan card.
 2. Look at the plan card at rest. **Expect:** thumbnail, name, date/page, the Site dropdown, and exactly one "Adjust" button — no visible Move/resize, Pin comp here, Change page, Delete, or "⋯" menu.
-3. Click Adjust. **Expect:** a small panel docks to the bottom-right corner of the map, matching the Layers panel's look, never overlapping the Comps rail (left) or Imagery & layers (right).
+3. Click Adjust. **Expect:** a small panel docks to the bottom-right corner of the map, matching the Layers panel's look, never overlapping the Comps rail (left) or Imagery & layers (right) — **check this at BOTH 1191×465 and 1600×465 (B1327520)**, and note that the Imagery & layers panel visibly collapses to its small header chip the instant Adjust opens, and re-expands the instant Adjust closes.
 4. In the panel, compare Opacity and Rotation. **Expect:** Opacity reads visually heavier/more prominent; Rotation reads quieter/smaller. Lock the plan (or note it's already locked) and confirm Rotation shows "N° · locked — unlock to rotate" rather than an editable field.
 5. Click "Delete site plan…" in the footer. **Expect:** an inline confirm appears next to Done, never a native browser dialog; Cancel backs out cleanly.
 6. Click Done. **Expect:** the panel closes; nothing on the map or in the rail is left in a stuck/armed state.
@@ -3532,18 +3534,34 @@ engine. Both single-column mutation checks are in the suite. Full suite 11,169 g
 
 ### V266992 — B472048: the operation envelope, end to end `Blocker: auth` `Blocker: real-data`
 
-**⛔ NOT YET VERIFIABLE — the foundation shipped, the wiring did not.** Recorded now so the pending
-steps are in the one canonical place rather than only on the item.
+**⛔ READY TO VERIFY — the foundation, the wire, presence naming, the activity view and the undo
+guard are all shipped and merged (across four sessions, the last on 2026-09-08). Every step below now
+has real code behind it; nothing is speculative. Only a real signed-in two-tab pass is missing.**
 
-**Steps, once the migration and wiring land:**
-1. Two tabs, same account, one plan. In tab A merge two parcels.
-2. In tab B without reloading: the activity view names it as ONE merge by that session, with both
-   source parcels and the result — never as net row arithmetic.
-3. Presence names both sessions and marks which is me.
-4. Undo in tab B either refuses or warns BY NAME before touching tab A's merge.
-5. Reproduce the 8 South case: `e56` + `e1454594huuiov` consumed, `e1454919qhgshe` created — and
-   confirm it reads as one merge, not as 77 − 2 + 1.
-6. A split emits `op_kind:"split"` with one parent modified, one child created, one `op_id`, atomic.
+**Steps, each with a named expected result:**
+1. Sign in on two tabs of the same account, same plan. In tab A, merge two parcels.
+   *Expected:* the header presence chip on both tabs shows "2 here"-equivalent (own-tabs glyph, since
+   both are this account); the merge completes normally in tab A.
+2. In tab B, without reloading, open the Plans ▾ menu → **Version history** → the **Activity** tab.
+   *Expected:* the top row reads *"You merged 2 parcels into 1 — just now"* (from tab B's perspective,
+   tab A is "You" only if B recognizes it as the same account's own write — verify the wording is
+   sensible either way) with a second line naming the actual ids (`−<parcelA>, −<parcelB>,
+   +<merged>`) — never a bare row-count delta.
+3. Hover the presence chip in tab A (or B, whichever shows the other as a live session).
+   *Expected:* the breakdown names the other session and, once tab B has done something, shows its
+   last operation and a relative time ("moved · just now" etc.) — this is per-PERSON, so two tabs of
+   the SAME account collapse into one entry by design; this step is best re-run with a genuine second
+   account/teammate if one is available, since the load-bearing per-SESSION check is step 4, not this.
+4. In tab A, immediately after tab B performs an edit (a move, say), press Undo in tab A.
+   *Expected:* a non-blocking toast appears — *"The next undo would reverse [name]'s change, not
+   yours. Undo it anyway?"* — and the undo does NOT apply until "Undo anyway" is clicked. Undoing
+   tab A's OWN prior edits (with no intervening foreign write) must stay silent, as always.
+5. Reproduce the real 8 South shape as closely as the test account allows: two parcels consumed by a
+   merge, one created, at effectively the same instant. *Expected:* the Activity tab reads it as ONE
+   merge operation, never as "77 − 2 + 1" arithmetic.
+6. Split a parcel into two or more pieces. *Expected:* the Activity tab shows ONE `split` operation
+   naming the parent tombstoned and the pieces created — one `op_id`, not two operations with a gap
+   between them.
 
 ### V258864 — B463920 + B463921: the status menu behaves on his own board `Blocker: auth` `Blocker: real-data`
 

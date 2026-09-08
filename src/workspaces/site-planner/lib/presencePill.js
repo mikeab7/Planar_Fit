@@ -17,18 +17,31 @@
 // B674 had already fixed the undercount half of this (two windows of one account must not disappear
 // as "alone"); this fixes the OTHER half — those extra windows must not read as OTHER PEOPLE either.
 
-// presenceParties(state, selfUid) → null (nothing to show) or:
+// B472048 (NEW-7 · NEW-2) — "who is here" answered WHO; this answers "and what were they doing".
+// Hovering a presence chip is the one moment the owner is already looking at someone else's
+// presence, so it is where "what has X been doing" belongs — rather than a second surface nobody
+// opens. `lastOpByUid` is keyed the same way presence already groups sessions (by account uid, not
+// by the finer-grained per-tab actor_session_id the write path stamps): two windows of one
+// teammate already collapse into that teammate's ONE `others` entry (`windows: 2`), so "their last
+// operation" is naturally a per-PERSON fact here, not a per-tab one — asking which of their tabs
+// did it is a question this chip was never going to answer anyway. Caller-tracked (from realtime
+// site_elements rows; see SitePlanner.jsx), because this module stays pure/DOM-free.
+//   lastOpByUid: Map|object, uid -> { opKind, at } — `at` a comparable value (epoch ms recommended)
+//
+// presenceParties(state, selfUid, lastOpByUid) → null (nothing to show) or:
 //   { selfWindows, others, totalSessions }
 //     selfWindows   — how many of THIS account's own sessions are connected right now (>=1 when
 //                     any are; the caller is one of them)
 //     others        — one entry per OTHER real person present, alphabetized by display name/email:
-//                     { uid, name, email, windows } — name/email are `null` when the session never
-//                     announced one (never an empty string, so callers don't have to re-check)
+//                     { uid, name, email, windows, lastOp } — name/email are `null` when the
+//                     session never announced one; `lastOp` is `{opKind, at}` or `null` when
+//                     nothing has been seen from them yet this page load (never a guess).
 //     totalSessions — every connected session, self's included
 // Returns null when there is only one session total (this window, alone, nothing else open) —
 // the one case with nothing to report.
-export function presenceParties(state, selfUid) {
+export function presenceParties(state, selfUid, lastOpByUid = null) {
   const entries = state instanceof Map ? state.entries() : Object.entries(state || {});
+  const lastOps = lastOpByUid instanceof Map ? lastOpByUid : new Map(Object.entries(lastOpByUid || {}));
   let selfWindows = 0;
   const others = [];
   for (const [key, metas] of entries) {
@@ -39,12 +52,42 @@ export function presenceParties(state, selfUid) {
     const m = list[0] || {};
     const name = (m.name == null ? "" : String(m.name)).trim();
     const email = (m.email == null ? "" : String(m.email)).trim();
-    others.push({ uid: key, name: name || null, email: email || null, windows });
+    others.push({ uid: key, name: name || null, email: email || null, windows, lastOp: lastOps.get(key) || null });
   }
   others.sort((a, b) => (a.name || a.email || "").localeCompare(b.name || b.email || ""));
   const totalSessions = selfWindows + others.reduce((n, o) => n + o.windows, 0);
   if (totalSessions <= 1) return null; // alone, single tab → no chip
   return { selfWindows, others, totalSessions };
+}
+
+// One-word verb for a person's last-seen operation, from the SAME closed vocabulary the activity
+// view reads (operationEnvelope.js's OP_KINDS) — so the chip and the activity feed never disagree
+// about what to call a move/merge/split. An op_kind this module doesn't recognize (a future
+// addition, or a stale build) falls back to "changed" rather than throwing or going blank.
+const OP_LABELS = {
+  create: "created", delete: "deleted", move: "moved", resize: "resized", rotate: "rotated",
+  edit: "edited", paste: "pasted", import: "imported", merge: "merged", split: "split", replace: "replaced",
+};
+
+// relativeAgo(atMs, nowMs) → "just now" | "4m ago" | "3h ago" | "a while ago". Coarse buckets on
+// purpose (never seconds) — shared by the presence hover below AND the plan-activity feed
+// (SitePlanner.jsx), so "how recent" always reads the same way everywhere the app says it.
+export function relativeAgo(atMs, nowMs = Date.now()) {
+  if (!Number.isFinite(atMs)) return null;
+  const deltaMs = nowMs - atMs;
+  if (deltaMs < 0 || deltaMs < 45 * 1000) return "just now";
+  const mins = Math.round(deltaMs / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return "a while ago";
+}
+
+// presenceLastOpLabel(lastOp, nowMs) → "moved · 3m ago" | "moved · just now" | null (nothing seen yet).
+export function presenceLastOpLabel(lastOp, nowMs = Date.now()) {
+  if (!lastOp || !Number.isFinite(lastOp.at)) return null;
+  const verb = OP_LABELS[lastOp.opKind] || "changed";
+  return `${verb} · ${relativeAgo(lastOp.at, nowMs)}`;
 }
 
 // One-or-two-letter initials for a presence badge: from the display name when there is one

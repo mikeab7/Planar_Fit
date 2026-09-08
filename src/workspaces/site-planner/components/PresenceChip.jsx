@@ -3,7 +3,7 @@ import AnchoredMenu from "../../../shared/ui/AnchoredMenu.jsx";
 import { menuPanelStyle } from "../../../shared/ui/controls.jsx";
 import { RADIUS } from "../../../shared/ui/radius.js";
 import { FONT_SIZE } from "../../../shared/ui/designTokens.js";
-import { presenceChipContent, presenceDisplayName, presenceInitials } from "../lib/presencePill.js";
+import { presenceChipContent, presenceDisplayName, presenceInitials, presenceLastOpLabel } from "../lib/presencePill.js";
 import { PeopleIcon, DuplicateIcon } from "./icons.jsx";
 
 /* PresenceChip — the header's "who's here" chip (NEW-1, rebuilt from the old plain-dot "N here"
@@ -105,12 +105,24 @@ export default function PresenceChip({ data }) {
           {content.selfWindows > 1 && (
             <div>You <span style={{ color: "var(--text-secondary)" }}>— {content.selfWindows} tabs</span></div>
           )}
-          {data.others.map((o) => (
-            <div key={o.uid}>
-              {presenceDisplayName(o)}
-              {o.windows > 1 && <span style={{ color: "var(--text-secondary)" }}> ({o.windows} windows)</span>}
-            </div>
-          ))}
+          {data.others.map((o) => {
+            // B472048 (NEW-7/NEW-2) — "who is here" is only half the question the owner asked;
+            // this line is "and what were they doing", from operation envelopes seen over
+            // realtime (SitePlanner.jsx tracks lastOpByUid) — null renders nothing rather than a
+            // placeholder, since "hasn't touched anything this page load" is a real, quiet state.
+            const opLabel = presenceLastOpLabel(o.lastOp);
+            return (
+              <div key={o.uid}>
+                <div>
+                  {presenceDisplayName(o)}
+                  {o.windows > 1 && <span style={{ color: "var(--text-secondary)" }}> ({o.windows} windows)</span>}
+                </div>
+                {opLabel && (
+                  <div data-testid="presence-last-op" style={{ color: "var(--text-secondary)", fontSize: FONT_SIZE.micro }}>{opLabel}</div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </AnchoredMenu>
     </>
