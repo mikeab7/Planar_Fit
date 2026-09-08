@@ -38,9 +38,15 @@ export function parcelCountyFromSelection(selected) {
   return last?.county || sel.find((s) => s?.county)?.county || null;
 }
 
-/** The full comp anchor payload for a real-parcel selection of any size. `asm` must be
- * `computeAssembly(selected, …)`'s result (or null, matching a caller that hasn't computed it). */
-export function compAnchorFromSelection(selected, asm) {
+/** The full anchor payload for a real-parcel selection of any size. `asm` must be
+ * `computeAssembly(selected, …)`'s result (or null, matching a caller that hasn't computed it).
+ *
+ * NEW-1 (map notes) — renamed from `compAnchorFromSelection`: a parcel anchor is not comp-specific,
+ * it is the shape BOTH a comp and a map note store (comps.sql and map_notes.sql carry the identical
+ * anchor columns), and giving notes their own copy of this derivation is exactly how the two
+ * comp-anchor paths got out of step before. `compAnchorFromSelection` stays exported below as an
+ * alias so nothing that already imports it has to change in the same breath. */
+export function parcelAnchorFromSelection(selected, asm) {
   if (!asm || !selected?.length) return null;
   return {
     kind: "parcel",
@@ -52,3 +58,7 @@ export function compAnchorFromSelection(selected, asm) {
     acreageAc: asm.totalAc,
   };
 }
+
+/** @deprecated Use `parcelAnchorFromSelection` — same function, name generalised (NEW-1). Kept so
+ * an in-flight branch importing the old name still resolves. */
+export const compAnchorFromSelection = parcelAnchorFromSelection;

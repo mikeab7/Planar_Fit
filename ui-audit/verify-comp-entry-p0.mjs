@@ -600,7 +600,7 @@ console.log("\n=== CYCLE 8 (B986096-HARDENING-18, NEW-2) — arming a row for a 
 {
   // The owner reported PARCEL anchoring never once completed across 11 live cycles. Root cause:
   // a row's Location button only ever arms PIN mode (CompsPanel's armRow -> onArmMapPin), and the
-  // map toolbar's "Comp from parcel" button rendered ONLY when `!placingCompPin` — so the instant
+  // map toolbar's "Comp from parcel" button rendered ONLY when `!placingPin` — so the instant
   // a row was armed the way the owner already knew worked for pins, the parcel entry point the
   // panel's own banner promises ("...or click Comp from parcel on the map toolbar...") vanished
   // from the toolbar entirely. This cycle proves it no longer does, and that the armed row survives

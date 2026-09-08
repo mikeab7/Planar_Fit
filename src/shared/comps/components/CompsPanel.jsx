@@ -668,11 +668,11 @@ export default function CompsPanel({
   const [gridSaveError, setGridSaveError] = useState(null);
   // ⛔ HARDENING-13 (B986096, owner P0 live-test, "clicking [Location] arms pin placement") —
   // arming a row used to only set `armedRowId`; the map's OWN "am I placing a pin right now" state
-  // (`placingCompPin`, owned entirely inside MapFinder) was a SEPARATE switch the user still had to
+  // (`placingPin`, owned entirely inside MapFinder) was a SEPARATE switch the user still had to
   // flip by hand via the toolbar's "Drop a pin" button — so "click Location, then click the map"
   // silently did nothing, because the map was never told to start listening for that click. This
   // wrapper arms BOTH in one call; disarming (id === null, the Escape/Cancel path) only clears the
-  // row side — the map's own Cancel/Escape already owns turning `placingCompPin` back off.
+  // row side — the map's own Cancel/Escape already owns turning `placingPin` back off.
   const armRow = (id) => { setArmedRowId(id); if (id) onArmMapPin?.(); else onDisarmMapPin?.(); };
   // B849233/NEW-2 — the KML-import draft staging area. `armedRowId` above is a SINGLE slot
   // shared with the grid: it names either a grid row's `_id` or a draft's real uuid, and the

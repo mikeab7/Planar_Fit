@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { decideTargetOf, orderVerbs, verbLabel } from "../src/workspaces/site-planner/lib/decideBar.js";
 
-const ALL = ["site", "comp", "siteplan"];
+const ALL = ["site", "comp", "siteplan", "note"];   // B1372144 added the fourth
 
 describe("decideTargetOf — which ground the bar is about", () => {
   it("is null with nothing pointed at, which is what shows the at-rest row instead", () => {
@@ -71,7 +71,11 @@ describe("orderVerbs — the sticky answer", () => {
   });
 
   it("ignores a stored verb that is not a real verb (a stale or hand-edited session value)", () => {
-    expect(orderVerbs(ALL, "note")[0]).toBe("site");
+    // B1372144 — this case used "note" as its example of an unreal verb; "note" is a real verb now
+    // (the fourth), so the example moved to a key nothing has ever shipped. The property under test
+    // is unchanged: an unrecognised stored verb must not lead the bar, and "site" is the fallback.
+    expect(orderVerbs(ALL, "sketch")[0]).toBe("site");
+    expect(orderVerbs(ALL, "note")[0]).toBe("note");   // and a REAL stored verb still leads
   });
 });
 
@@ -93,8 +97,21 @@ describe("verbLabel — how each verb reads", () => {
     }
   });
 
-  it("has no fourth verb — 'add a note' is a concept this app does not have yet, and inventing a label here would be the first half of inventing the feature", () => {
-    expect(verbLabel("note", 1)).toBe("");
+  /* ⛔ SUPERSEDED BY B1372144, and the original is kept in words because the reason it existed is
+     the reason it may now change. This test read: "has no fourth verb — 'add a note' is a concept
+     this app does not have yet, and inventing a label here would be the first half of inventing the
+     feature", asserting `verbLabel("note", 1) === ""`. That was right: a label with no record, no
+     marker and no editor behind it is a button that lies. B1372144 built the concept —
+     `public.map_notes`, a marker, an editor, a layer toggle — so the label is now backed by a verb
+     that does something, and the guard changes shape rather than disappearing: the FOURTH verb
+     reads correctly, and an UNKNOWN key still returns "" (which is what actually stops a label
+     being invented ahead of its feature). */
+  it("reads the fourth verb, 'Add a note', the same however much ground is selected", () => {
+    for (const n of [0, 1, 2, 9]) expect(verbLabel("note", n)).toBe("Add a note");
+  });
+
+  it("still returns '' for a verb key that has no feature behind it", () => {
+    for (const k of ["", "nonsense", "sketch", "measure", undefined]) expect(verbLabel(k, 1)).toBe("");
   });
 });
 
