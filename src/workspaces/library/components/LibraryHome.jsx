@@ -17,6 +17,7 @@ import { listPins, removePin, subscribePins } from "../../../shared/pins/pinStor
 import { listRecents } from "../../../shared/recents/recentDocs.js";
 import { listReviews } from "../../doc-review/lib/reviewStore.js";
 import { listProjects as listLocalProjects } from "../../../shared/projects/projects.js";
+import { liveProjectIds } from "../../../shared/projects/docProjectLiveness.js";
 
 const SectionHead = ({ children }) => (
   <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--text-tertiary)", margin: "18px 2px 8px" }}>{children}</div>
@@ -36,9 +37,11 @@ const starBtn = {
 
 const fmtWhen = (ms) => { try { return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""; } catch (_) { return ""; } };
 
-/* One pinned/recent FILE row-card. `doc` is the matched doc_reviews row (null = missing). */
-function FileCard({ pin, doc, projectName, when, onOpen, onUnpin }) {
-  const missing = !doc;
+/* One pinned/recent FILE row-card. `doc` is the matched doc_reviews row (null = missing).
+ * `missing` defaults to `!doc` but the caller may pass an explicit override — a pin whose doc
+ * resolves fine but is filed under a DEAD project (B1340368) is just as unopenable and gets
+ * the identical "missing" treatment, not a silent difference the caller would have to repeat. */
+function FileCard({ pin, doc, missing = !doc, projectName, when, onOpen, onUnpin }) {
   const title = doc ? (doc.title || doc.item || "Untitled drawing") : (pin?.label || "Missing drawing");
   return (
     <div style={{ ...cardBase, cursor: "default" }}>
@@ -50,7 +53,9 @@ function FileCard({ pin, doc, projectName, when, onOpen, onUnpin }) {
             {title}
           </span>
           <span style={{ display: "block", fontSize: 10.5, color: missing ? "var(--danger-text)" : "var(--text-tertiary)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {missing ? "Can't find this drawing anymore — it may have been deleted." : [projectName, doc.discipline, when].filter(Boolean).join(" · ")}
+            {missing
+              ? (doc ? "Can't open this — its project has been deleted." : "Can't find this drawing anymore — it may have been deleted.")
+              : [projectName, doc.discipline, when].filter(Boolean).join(" · ")}
           </span>
         </span>
       </button>
@@ -82,6 +87,14 @@ export default function LibraryHome({ uid = null, active = true, onOpenFile, onO
   const [recents, setRecents] = useState([]);
   const [reviews, setReviews] = useState([]);   // doc_reviews rows, for names/projects on cards
   const [loading, setLoading] = useState(true);
+  // B1340368 — a resolved doc's OWN project can be dead (soft-deleted or fully purged) even
+  // though the doc_reviews row itself is fine, exactly the "Last document" card's own bug on
+  // this workspace's own Pinned/Recent surfaces: a pin or recent whose doc resolves fine still
+  // dead-ends on click if what it's filed under is gone. `deadProjectIds` is the Set of project
+  // ids referenced here that are confirmed NOT live; empty (never marks anything dead) until
+  // the check resolves, and stays empty on a failed/inconclusive check — fail OPEN, same as the
+  // Dashboard card, never hide a pin/recent on a maybe.
+  const [deadProjectIds, setDeadProjectIds] = useState(new Set());
 
   // Local, instant; the per-user cloud cache feeds it.
   let projects = [];
@@ -117,11 +130,32 @@ export default function LibraryHome({ uid = null, active = true, onOpenFile, onO
     onOpenFile?.(doc || { id, project_id: fallbackProjectId || null });
   };
 
+  // B1340368 — check liveness for every project id this screen's pins/recents actually
+  // reference, once `reviews` has resolved them to real project ids (pins/recents alone only
+  // carry a FALLBACK id from before the doc loaded). Re-runs whenever the candidate set changes.
+  useEffect(() => {
+    if (!active) return;
+    let live = true;
+    const ids = new Set();
+    for (const p of pins) { const pid = docProject(byId.get(p.id), p.projectId); if (pid) ids.add(pid); }
+    for (const r of recents) { const pid = docProject(byId.get(r.id), r.projectId); if (pid) ids.add(pid); }
+    if (!ids.size) { setDeadProjectIds(new Set()); return; }
+    liveProjectIds([...ids])
+      .then((liveSet) => { if (live) setDeadProjectIds(new Set([...ids].filter((id) => !liveSet.has(id)))); })
+      .catch(() => { if (live) setDeadProjectIds(new Set()); }); // inconclusive → fail open
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pins, recents, reviews, active]);
+
   const pinnedFolders = pins.filter((p) => p.type === "folder");
   const pinnedFiles = pins.filter((p) => p.type === "file");
-  // Recents: skip entries that no longer resolve to a review (deleted docs age out silently
-  // here — unlike pins, recents are transient, not user-curated).
-  const recentCards = recents.map((r) => ({ ...r, doc: byId.get(r.id) })).filter((r) => r.doc).slice(0, 10);
+  const projectIsDead = (pid) => !!pid && deadProjectIds.has(pid);
+  // Recents: skip entries that no longer resolve to a review, OR whose filed project is dead
+  // (deleted docs — and now dead-project docs — age out silently here — unlike pins, recents
+  // are transient, not user-curated).
+  const recentCards = recents.map((r) => ({ ...r, doc: byId.get(r.id) }))
+    .filter((r) => r.doc && !projectIsDead(docProject(r.doc, r.projectId)))
+    .slice(0, 10);
   const nothingSaved = !pinnedFolders.length && !pinnedFiles.length && !recentCards.length;
 
   return (
@@ -152,9 +186,10 @@ export default function LibraryHome({ uid = null, active = true, onOpenFile, onO
             )}
             {pinnedFiles.map((p) => {
               const doc = byId.get(p.id) || null;
+              const pid = docProject(doc, p.projectId);
               return (
                 <div key={`file:${p.id}`} style={{ marginBottom: 6 }}>
-                  <FileCard pin={p} doc={doc} projectName={projName(docProject(doc, p.projectId))}
+                  <FileCard pin={p} doc={doc} missing={!doc || projectIsDead(pid)} projectName={projName(pid)}
                     when={doc ? fmtWhen(Date.parse(doc.updated_at || "") || 0) : ""}
                     onOpen={() => openDoc(p.id, p.projectId)}
                     onUnpin={() => removePin(uid, { type: "file", id: p.id })} />

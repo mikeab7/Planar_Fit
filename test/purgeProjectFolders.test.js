@@ -21,6 +21,9 @@ const h = vi.hoisted(() => ({
   // B1164193 — defaults to "the group is genuinely gone" (no live plans left), which is what
   // every PRE-EXISTING test below assumes; the new live-siblings tests override it per case.
   cloudCheckDeletedResult: { ok: true, exists: false, deleted: false },
+  // B1340368 — the same "genuinely gone" confirmation is also what unfiles any Doc Review
+  // documents still filed under the purged group (project_id → null).
+  unfileResult: { ok: true, unfiled: 0 },
 }));
 
 vi.mock("../src/workspaces/site-planner/lib/cloudSync.js", () => ({
@@ -39,10 +42,14 @@ vi.mock("../src/shared/telemetry/clientErrors.js", () => ({ reportClientEvent: v
 vi.mock("../src/workspaces/library/lib/folders.js", () => ({
   purgeProjectFolders: vi.fn(async () => h.purgeProjectFoldersResult),
 }));
+vi.mock("../src/workspaces/doc-review/lib/reviewStore.js", () => ({
+  unfileReviewsForDeletedProject: vi.fn(async () => h.unfileResult),
+}));
 
 import { purgeDeletedProject, purgeExpiredDeletedProjects, setActiveUser } from "../src/workspaces/site-planner/lib/storage.js";
 import { reportClientEvent } from "../src/shared/telemetry/clientErrors.js";
 import { purgeProjectFolders } from "../src/workspaces/library/lib/folders.js";
+import { unfileReviewsForDeletedProject } from "../src/workspaces/doc-review/lib/reviewStore.js";
 
 beforeEach(() => {
   const store = {};
@@ -58,6 +65,7 @@ beforeEach(() => {
   h.hardDeleteResults = {};
   h.purgeProjectFoldersResult = { ok: true, rowsDeleted: true, driveTrashed: true };
   h.cloudCheckDeletedResult = { ok: true, exists: false, deleted: false };
+  h.unfileResult = { ok: true, unfiled: 0 };
   vi.clearAllMocks();
   setActiveUser("u-owner");
 });
@@ -148,6 +156,55 @@ describe("purgeProjectFoldersFor — never purges a project's shared folders whi
     expect(r.purged).toBe(1);
     expect(purgeProjectFolders).not.toHaveBeenCalled();
     expect(reportClientEvent).toHaveBeenCalledWith("project-folder-purge-skipped", expect.any(String), expect.objectContaining({ groupId: "group-1" }));
+  });
+});
+
+/* B1340368 (found while checking whether the same stale-pointer pattern feeds any other
+ * surface than the Dashboard's Last-document card) — a project purge must clear any Doc
+ * Review documents still filed under that group, or they keep pointing at a group id nothing
+ * can ever resolve live again. Uses the SAME "genuinely gone" confirmation this file's
+ * B1164193 tests already exercise for the folder purge — never a second liveness question. */
+describe("purgeProjectFoldersFor — unfiles Doc Review documents once the group is genuinely gone (B1340368)", () => {
+  it("unfiles documents filed under a group once it has no live plans left", async () => {
+    const r = await purgeDeletedProject(["plan-a"], "group-1");
+    expect(r.purged).toBe(1);
+    expect(unfileReviewsForDeletedProject).toHaveBeenCalledWith("group-1");
+  });
+
+  it("never unfiles anything while the group still has a live plan — same guard as the folder purge", async () => {
+    h.cloudCheckDeletedResult = { ok: true, exists: true, deleted: false };
+    await purgeDeletedProject(["plan-a"], "group-1");
+    expect(unfileReviewsForDeletedProject).not.toHaveBeenCalled();
+  });
+
+  it("an inconclusive liveness check skips unfiling too — fails safe, same as the folder purge", async () => {
+    h.cloudCheckDeletedResult = { ok: false };
+    await purgeDeletedProject(["plan-a"], "group-1");
+    expect(unfileReviewsForDeletedProject).not.toHaveBeenCalled();
+  });
+
+  it("an unfiling failure is reported LOUDLY but never fails the sites purge that already happened", async () => {
+    h.unfileResult = { ok: false, error: "network down" };
+    const r = await purgeDeletedProject(["plan-a"], "group-1");
+    expect(r.ok).toBe(true);
+    expect(reportClientEvent).toHaveBeenCalledWith(
+      "doc-review-unfile-failed",
+      expect.any(String),
+      expect.objectContaining({ groupId: "group-1", error: "network down" }),
+    );
+  });
+
+  it("runs for the expiry sweep too, once per distinct group", async () => {
+    h.cloudDeletedRowsResult = {
+      ok: true, supported: true,
+      rows: [
+        { id: "plan-a", group_id: "group-1", deleted_at: new Date(Date.now() - 31 * 86400000).toISOString() },
+        { id: "plan-c", group_id: "group-2", deleted_at: new Date(Date.now() - 31 * 86400000).toISOString() },
+      ],
+    };
+    await purgeExpiredDeletedProjects();
+    expect(unfileReviewsForDeletedProject).toHaveBeenCalledTimes(2);
+    expect(unfileReviewsForDeletedProject.mock.calls.map((c) => c[0]).sort()).toEqual(["group-1", "group-2"]);
   });
 });
 

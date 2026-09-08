@@ -1433,6 +1433,22 @@ async function purgeProjectFoldersFor(groupId) {
   } catch (e) {
     reportClientEvent("project-folder-purge-failed", "folder purge threw while permanently deleting a project", { groupId, error: (e && e.message) || "" });
   }
+  // B1340368 — the SAME confirmed-fully-gone fact this function already established above
+  // is what makes it safe to clear any Doc Review documents still filed under this group
+  // (doc_reviews.project_id → null, "Unfiled"): a document that survives a fully-purged
+  // project must not stay pointed at a group id nothing can ever resolve live again, or
+  // every surface that offers it (the Dashboard's Last-document card, Library Home's Recent
+  // list) has to keep re-discovering the same dead reference. See reviewStore.js's own
+  // header for why this is NOT a foreign key and NOT run on an individual plan's delete.
+  try {
+    const { unfileReviewsForDeletedProject } = await import("../../doc-review/lib/reviewStore.js");
+    const r2 = await unfileReviewsForDeletedProject(groupId);
+    if (r2 && r2.ok === false) {
+      reportClientEvent("doc-review-unfile-failed", "documents filed under a permanently purged project couldn't be unfiled", { groupId, error: r2.error || "" });
+    }
+  } catch (e) {
+    reportClientEvent("doc-review-unfile-failed", "unfiling threw while permanently deleting a project", { groupId, error: (e && e.message) || "" });
+  }
 }
 
 // "Delete forever" — the only user-facing HARD delete. The site_elements cascade firing here is
