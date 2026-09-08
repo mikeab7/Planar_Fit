@@ -190,6 +190,38 @@ was never clicked" quietly ships broken.
 10. **Two browsers, same account, both on Schedule** — the case this document's single-row shape makes real. Create a schedule in browser A. **Expect:** browser B converges on its own reload/poll with both schedules present and neither browser's schedules lost; a blocked save surfaces the embedded app's own stale-version notice, never a silent clobber.
 11. **Phone.** Open Schedule on the phone and press New project. **Expect:** the dialog fits the screen, both the name field and the owner picker are reachable, and the page does not scroll sideways.
 12. **Flagged for HIS decision, not deleted by anyone:** **ZZ-RENAME-TEST-G** (0 tasks, a leftover from an earlier verification run) and, once step 7 is done, nothing else. **TAS Land Sale is NOT a leftover** — it has 8 tasks and is live work. Confirm he wants ZZ-RENAME-TEST-G gone before removing it.
+### V995408 — B1372144: place, edit and soft-delete a map note on the owner's own signed-in account `Blocker: auth` `Blocker: real-data`
+**Why this is walled:** every write path needs a signed-in Supabase session, and this sandbox's proxy
+CORS-blocks the auth handshake. The parcel leg additionally needs a live county parcel service, which the
+egress blocks (`Blocker: live-GIS`). **What was already driven here and is NOT pending** (logged out, at the
+owner's real 1600×465): the Notes toggle exists beside Sites and Comps with a count and is remembered;
+right-click → "Add a note here" opens the editor on the clicked point with nothing painting over the row;
+the editor fits the short window, offers an optional site link defaulting to "No site", refuses to save an
+empty note, and leaves nothing behind on cancel (`ui-audit/verify-map-notes.mjs`, 23/23). The client half of
+the write paths was then driven against a STUBBED server with the real app code
+(`ui-audit/verify-map-notes-writes.mjs`, 24/24) — that proves the requests, the marker layer, the editor and
+the soft-delete shape, and proves NOTHING about RLS, the real schema or a genuine reload, which is what the
+steps below are for.
+
+**All steps on THROWAWAY notes created during the check — do not touch site-plan row
+`aa2d8163-7d45-4929-8a05-dad94ba2528d` or comp `ddb5a9e5-76c5-49e6-88b0-4a842f1b0a46` (Core 5 - West Hardy).**
+Signed in, at 1600×465, on the Site Planner map:
+1. **Place by pin** — press **Drop a pin** on the map toolbar, click the ground, then press
+   **Add a note** on the decide bar that appears; type a body, Save.
+   *Expected:* the card closes and a magenta bubble marker appears at that exact point immediately, with no
+   further clicking. The Notes count goes up by one.
+2. **Place by parcel** — select a parcel, press **Add a note** on the same decide bar, type, Save.
+   *Expected:* the note saves anchored to the parcel (the card says "On a parcel"), and the selection clears.
+3. **Reopen and edit** — click the pin-anchored marker, change the text, Save, then click it again.
+   *Expected:* it opens showing the text you saved, and the edit is still there on the second open.
+4. **Reload the page.** *Expected:* both notes are still on the map with their edited text — this is the leg
+   the stubbed run cannot prove.
+5. **Toggle the layer** — untick Notes in Imagery & layers, then re-tick it.
+   *Expected:* both markers disappear and come back; site pins and comp markers never move either time.
+6. **Soft-delete one** — open it, click Delete, click it again to confirm.
+   *Expected:* the marker leaves the map and the count drops. Then confirm the row is SOFT-deleted, not gone:
+   `select id, deleted_at from public.map_notes where deleted_at is not null;` returns the row with a stamp.
+7. **Clean up** — soft-delete the remaining throwaway notes.
 
 ### V996800 — B1373536: on a real signed-in account, a schedule change made while away actually reaches the "Since you were last here" card, and a busy real plan's thumbnail is both small and recognisable `Blocker: auth` `Blocker: real-data`
 

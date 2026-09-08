@@ -70,7 +70,7 @@ export function validAnchor(anchor) {
 
 // B986096-HARDENING-7 (owner rule, "i dont need to input county as a default … do not just write
 // null and move on") — county is derived from the anchor at pick time (MapFinder.jsx's
-// `placeCompPinAt`/`placeCompOnOverlay`, `compParcelAnchor.js`'s `parcelCountyFromSelection`) and
+// `placePinAt`/`placeCompOnOverlay`, `compParcelAnchor.js`'s `parcelCountyFromSelection`) and
 // is NEVER a sheet input. A comp has no load-time self-heal the way a planned site does (B792
 // re-resolves a site's county from its origin on every load), so a lookup that failed silently —
 // timed out, no match, a thrown error — would leave `county: null` forever with nothing to catch
