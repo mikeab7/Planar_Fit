@@ -55,6 +55,156 @@ Add a new tag to this legend **in the same commit** you first use it (this preve
 
 ## 🔲 Open
 
+### B1382544 — The Font control reported "Default" for text that is genuinely Calibri `[Notes]` (bug) #notes #ui #a11y  *(owner report, 2026-09-08: "so the two names highlighted are the same text size? also it should tell me what font I've selected or am using." Minted B1382544 from this branch's reserved block B1382544–B1382559 against freshly-fetched `origin/main` c5c59e4. DEDUPE-FIRST — searched Open / ⏳ Verify / Done for "font", "fontFamily", "typeface", "Default", B1139216, B1371, B1411: **B1139216** made FONT SIZE mixed-aware and is the direct precedent this reuses, but it never touched font FAMILY; **B1371** moved font size onto the row. Neither asks what the Font control reads. Net-new.)*
+
+`[x]` **FIXED THIS SESSION.**
+
+- Verify: sandbox — driven for real in `ui-audit/verify-notes-font-control.mjs` §3, and RED-PROVEN against untouched `main` (see below).
+- Origin: owner chat block, 2026-09-08.
+
+**IT WAS A STRING COMPARISON, NOT A MISSING READ — and that matters, because "the control never reads the selection" was the natural diagnosis and would have been fixed in the wrong place.** The control *did* read the mark. Tiptap's `fontFamily` attribute stores the source's stack string **verbatim** (its own comment: *"Prefer the raw inline `style` attribute so unquoted or single-quoted multi-word names are preserved"*), so Word's run arrives as `"Calibri",sans-serif`. The palette's Calibri option is the different string `Calibri, Candara, sans-serif`. A native `<select>` handed a `value` matching no `<option>` **silently falls back to its first option** — which is "Default". A correct read plus an exact-string compare produced a confident wrong answer, in total silence, on every pasted run.
+
+**THE FIX.** `lib/notesFontFamily.js` compares what a person means by "what font is this": `familyKey` — the FIRST family in the stack, unquoted, lower-cased. Everything after it is a fallback chain, and two stacks that start with Calibri are the same answer to his question. The control is now a `FormatMenu` rather than a native `<select>`, which is what lets it show a blank mixed state (B1382545), show a family that is **not one of the six offered** by its real name (his explicit ask), and be driven headless at all — a native select's popup cannot be opened in headless Chromium, the same reasoning B1139216 already recorded for Font size.
+
+**MEASURED, before → after** (same fixture, rebuilt from his own note): `"Calibri",sans-serif` selected → **"Default"** → **"Calibri"**. `'Segoe UI',Tahoma,sans-serif` (off-palette) → **"Default"** → **"Segoe UI"**, and offered as a pickable row so it can be re-applied.
+
+- **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+### B1382545 — The Font control had no mixed state `[Notes]` (bug) #notes #ui #a11y  *(owner report, 2026-09-08, same chat block as B1382544. DEDUPE-FIRST: **B1139216** is the same defect on Font size / Block style and its module `lib/notesMixedSelection.js` is REUSED here rather than re-implemented, exactly as the brief directed. Net-new for font family.)*
+
+`[x]` **FIXED THIS SESSION.**
+
+- Verify: sandbox — `ui-audit/verify-notes-font-control.mjs` §3.
+- Origin: owner chat block, 2026-09-08.
+
+Selecting "Jerry Hayley Kandice Cabets" — one line spanning Calibri and the app's Inter — read **"Default"** with the plain accessible name "Font", indistinguishable from a uniform selection. `selectionFontFamilies` now sits beside the existing `selectionFontSizes` in `lib/notesMixedSelection.js`; agreement is decided on `familyKey`, so two stacks naming one typeface do not read as a disagreement. A mixed range shows **blank** and announces **"Font — mixed"**, the same shape Font size has had since #1411 — which was reused, not rebuilt, and which is this harness's **known-good arm**: if Font size ever stops reporting correctly, the instrument is on trial before the app is.
+
+- **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+### B1382546 — The toolbar put the STYLE picker where the font belongs, and hid the font two levels deep `[Notes]` (task) #notes #ui  *(owner report, 2026-09-08, and its amendment the same day: "and body text should just say font, i should be able to change the font of headers if thats why it shows like that". DEDUPE-FIRST: **B1371** moved Font SIZE onto the row for the identical reason — a control buried in "More" reads to a user as "there is no such control" — and this is that argument applied to the control B1371 left behind. Net-new.)*
+
+`[x]` **FIXED THIS SESSION.**
+
+- Verify: sandbox — laptop (1280), desktop (1400) and phone (390) widths all driven; `ui-audit/verify-notes-font-control.mjs` §5.
+- Origin: owner chat block + amendment, 2026-09-08.
+
+**THE AMENDMENT IS THE REAL FINDING, AND IT EXPLAINS THE WHOLE REPORT.** Block style held the **leading slot** on the row — the exact screen position Word gives the font NAME box — while displaying "Body text". So he read it as the font picker, and then reasonably concluded the font control must be scoped to body text only. That is a layout defect, not a misreading, and it is why he kept bumping into this: the real Font control (six options) was two levels deep inside the More popover.
+
+**THE FIX.** Font name takes the leading slot, Font size immediately right of it, Block style after them both — Word's order, and the order of every editor he compares this to. The two adjacent dropdowns are now told apart **on sight rather than by their contents**: Block style carries a standing uppercase `STYLE` caption, so a glance reads "STYLE · Body text" and never a font name. Nothing became unreachable: at phone width the row is `narrow` and Font moves into the More sheet with the rest of the Text group (measured, reachable in two taps); at 1280 the row still fits without scrolling.
+
+- **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+### B1382547 — 11pt and 11px both displayed as "11", and picking the "11" already shown shrank the text by a quarter `[Notes]` (bug) #notes #ui  *(owner report, 2026-09-08, filed with an explicit PROVE-OR-KILL instruction. DEDUPE-FIRST: `docs/NOTES-CARRY-FORWARD.md` §5.4 records **B839841** — "a point size renders as if it were a pixel size, everywhere" — as filed separately during the B831600 investigation; that number appears in NO ledger, live or archived, so it was never actually filed. **This item ADOPTS that finding rather than minting around it**, and the carry-forward's reference is corrected in the same commit.)*
+
+`[x]` **FIXED THIS SESSION. The prove-or-kill came back PROVEN — and worse than reported.**
+
+- Verify: sandbox — `ui-audit/verify-notes-font-control.mjs` §1b, RED-PROVEN against untouched `main`.
+- Origin: owner chat block, 2026-09-08.
+
+**MEASURED ON UNTOUCHED `main`, which is the half he asked for and did not assume:**
+
+| run | source declares | renders | size box reads |
+|---|---|---|---|
+| `Contacts:` | `11.0pt` | **14.67px** | **11** |
+| `713-416-5353` | `11px` | **11px** | **11** |
+
+…and then the destructive half: selecting the 11pt run and picking the **"11" the box was already showing** took it from **14.67px → 11px**. The control silently shrank his text by a quarter in order to "set" it to the value it claimed it already had. So this was not only a cosmetic mislabel — the obvious no-op gesture was a data-changing one.
+
+**ROOT CAUSE.** `num()` in `lib/notesSpacing.js` is a bare `parseFloat`, correct for a unitless line height and for a margin (this module only writes px) and **wrong for a font size**, because pasted documents do not use px — Word and Outlook emit points. `parseFloat("11pt")` is 11, the same answer as `"11px"`, and the two are a third apart. The same blindness had a second, quieter effect: `blockFontSize` derived a block strut of `11px` under 14.67px text.
+
+**THE FIX — one unit, resolved at both boundaries where a foreign one can enter.** `fontSizePx` converts every ABSOLUTE CSS unit (pt, pc, in, cm, mm, Q) to px, at the `parseHTML` that reads a pasted element **and** at the toolbar's read of what to display. A relative unit (`em`/`rem`/`%`) returns `null` — "I do not know" — because a guessed base is a wrong number that looks right. An off-list size joins the menu so it is still re-pickable rather than blanking the box (blank means *mixed* here, and a 15 is not mixed).
+
+**⛔ NOTHING ALREADY SAVED IS REWRITTEN.** The conversion runs on PARSE and on DISPLAY only. His existing notes keep the marks they hold; a repair pass over existing content is the separate decision he explicitly reserved (see B1382548).
+
+- **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+### B1382548 — A Word paste kept the font on some runs and dropped it on others, sometimes mid-line `[Notes]` (bug) #notes #ui  *(owner report, 2026-09-08, with an explicit instruction to ROOT-CAUSE between two named candidates before fixing and not to guess. DEDUPE-FIRST: **B36051** built the three paste modes and the structural sanitiser and is the file this lands in; it is about spacer paragraphs and layout tables, never about which runs keep a font. Net-new.)*
+
+`[x]` **FIXED THIS SESSION.**
+
+- Verify: **live** — V1005808. The mechanism is fixed and proven against reconstructed Word/Outlook clipboard HTML; a real clipboard payload off his own Outlook can carry shapes a reconstruction does not.
+- Origin: owner chat block, 2026-09-08.
+
+**THE ANSWER TO THE QUESTION HE ASKED IS "NEITHER", AND BOTH CANDIDATES WOULD HAVE BEEN FIXED IN THE WRONG PLACE.** The paste sanitiser does not drop marks unevenly — it never sees a mark to drop. Later editing strips nothing. Measured by pasting real Word-shaped clipboard HTML into the real editor and reading the **stored document** back:
+
+| run | declared on its OWN element | stored `fontFamily` (before) |
+|---|---|---|
+| `Contacts:` | font-family + font-size | `"Calibri",sans-serif` ✓ |
+| `Jerry Hayley` | font-family | `"Calibri",sans-serif` ✓ |
+| `Kandice Cabets` | **nothing** | `null` → falls back to Inter ✗ |
+| `713-416-5353` | font-size only | `""` → falls back to Inter ✗ |
+
+**The clipboard HTML is internally CONSISTENT.** The wrapping `<div>` declares Calibri once for everything inside it, exactly as CSS inheritance intends. **A `parseHTML` that reads `element.style` reads only what is declared on the run's own element, and inheritance is invisible to it** — so the unevenness is manufactured at parse time, by us, out of consistent input. A run whose author styled it directly keeps its font; an identical run two words later that relied on inheritance loses it. That is exactly his "sometimes mid-line".
+
+**AND A SECOND MECHANISM AN ANCESTOR WALK IN `parseHTML` CANNOT REACH, found by pointing the harness at the first fix.** A run whose element declares NOTHING never gets a `parseHTML` call to walk from: Tiptap's `textStyle` mark refuses a bare `<span>` outright (`getAttrs` returns `false` when the element has no `style` attribute at all), so no mark is created and no attribute parser runs. "Kandice Cabets" — the very run he reported — is a bare `<span>`. So the inheritance is resolved one step earlier, in `transformPastedHTML`, on the clipboard HTML itself: `pushDownInherited` writes each inherited value onto the element that actually holds the text, and the parser then reads explicit input for every run identically.
+
+**⛔ PASTE ONLY, AND THAT IS WHAT MAKES IT SAFE.** The editor also parses its OWN rendered DOM; a rule that pushed styles down there would gradually write the app's own body font into documents as though he had chosen it. The walk also stops at `.ProseMirror` for the same reason.
+
+**⛔ NO REPAIR PASS OVER EXISTING NOTES — his explicit reservation, honoured.** *"Do NOT silently rewrite formatting in notes he already has — a repair pass over existing content is a separate decision he has not made."* Nothing migrates. A note already in the patchwork state stays exactly as it is until he edits it himself; only the READ path was made unit-aware so those notes at least report themselves honestly.
+
+- **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+### B1382549 — Every toolbar control reports the selection, or reports nothing — eleven controls were guessing `[Notes]` (bug) #notes #ui #a11y #testing  *(owner scope expansion, 2026-09-08: "When I highlight multiple texts, assuming that they're one font, they should state the font… If I select multiple text types and it's got different ones, then it shouldn't say a font. And then same thing for text size and bold and underlined and italic, whatever. Everything that you can think of that it does on Word, it should do here." DEDUPE-FIRST: **B1139216** is the SAME property proved on three controls; this generalises it to the whole bar and is the reason that item's fix is being reused rather than re-implemented. Net-new as a standing rule.)*
+
+`[x]` **FIXED THIS SESSION.**
+
+- Verify: sandbox — every control driven through all three states, table below; RED-PROVEN against untouched `main`.
+- Origin: owner chat block, 2026-09-08.
+
+**THE RULE, now a standing one:** uniform selection → the real value read off the whole range · caret → what the next typed character gets · genuinely mixed → **nothing** (blank for a value control, `aria-pressed="mixed"` for a toggle). **A control that cannot answer honestly goes blank rather than guessing, and "Default" is a guess.**
+
+**WHY THE CONTROLS WERE WRONG IN A WAY THAT READS AS CORRECT.** `editor.getAttributes()` / `editor.isActive()` answer *"what is at one position"*. For a range they either read `$from` — presenting the first run's value as the whole selection's — or, for marks, return true only if the mark covers the WHOLE range, so **half-bold text reported a confident `false`, indistinguishable from text with no bold in it anywhere.** Separately, `aria-pressed={active ? "true" : undefined}` is a two-state answer to a three-state question: Bold / Italic / Underline / Strikethrough exposed **no state at all** when off, which is what he measured.
+
+**HIS SCOPE LIMIT, RESPECTED AND THEN ANSWERED.** He proved `aria-pressed` was absent in the cases he could reach and explicitly did NOT claim the Bold button fails to light up on bold text. Tested directly on the pre-fix build: **it does** — those four report `pressed=true` on genuinely bold text. What was missing was the "off" state and the "mixed" state, not the positive one.
+
+**EVIDENCE TABLE — 15 controls × 3 states, every cell driven on the real toolbar** (`ui-audit/verify-notes-font-control.mjs` §2), before → after:
+
+| control | uniform | caret | mixed (before) | mixed (after) |
+|---|---|---|---|---|
+| Font | Calibri | Calibri | *(all six option labels)* | **blank(mixed)** |
+| Font size | 11 | 11 | blank(mixed) | blank(mixed) *(known-good arm, unchanged)* |
+| Block style | STYLE Body text | STYLE Body text | blank(mixed) | blank(mixed) |
+| Line spacing | Double | Double | blank(mixed) | blank(mixed) |
+| Bold | pressed=true | pressed=true | *(no state)* | **pressed=mixed** |
+| Italic | pressed=true | pressed=true | *(no state)* | **pressed=mixed** |
+| Underline | pressed=true | pressed=true | *(no state)* | **pressed=mixed** |
+| Strikethrough | pressed=true | pressed=true | *(no state)* | **pressed=mixed** |
+| Text colour | swatch=red | swatch=red | swatch=red *(guess)* | **mixed, no swatch** |
+| Highlight colour | swatch=yellow | swatch=yellow | swatch=yellow *(guess)* | **mixed, no swatch** |
+| Bulleted list | pressed=true | pressed=true | *(no state)* | **pressed=mixed** |
+| Numbered list | pressed=false | pressed=false | *(no state)* | **pressed=mixed** |
+| Align left | pressed=false | pressed=false | *(no state)* | **pressed=mixed** |
+| Align center | pressed=true | pressed=true | *(no state)* | **pressed=mixed** |
+| Align right | pressed=false | pressed=false | *(no state)* | **pressed=mixed** |
+
+Undo, Redo, Increase indent and Decrease indent are **actions, not toggles**, and are asserted to claim no pressed state at all. Alignment additionally asserts the radio property: exactly one of the three is pressed on a uniform selection.
+
+**ONE MECHANISM, NOT FIFTEEN.** `selectionFontFamilies` · `selectionMarkPresence` · `selectionMarkAttrs` · `selectionAlignments` · `selectionListKinds` · `togglePressed` all sit in `lib/notesMixedSelection.js` beside the existing `selectionFontSizes`. **A bespoke mixed-check written for one control is the defect, not the fix** — Font size was made correct in isolation and eleven other controls stayed wrong for months, because nothing about a private check in one control says anything about the next one.
+
+**⛔ TWO OF THE FAILURES IN THE FIRST HARNESS RUN WERE THE HARNESS'S OWN QUESTION, NOT THE APP** (DRIVER-SCROLL-IS-NOT-APP-SCROLL §6), and both are now written into `docs/NOTES-CARRY-FORWARD.md` as traps 13 and 14: the alignment buttons read as "no state at all" because they live in the More sheet and were queried on a closed toolbar; and Block style / Line spacing / both list toggles graded as "guessing" because the fixture's two blocks were both plain paragraphs in no list, so those four properties **honestly agreed** across the mixed range. A table that grades N properties needs a fixture that disagrees in all N.
+
+- **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+### B1382550 — ~~Font changes may not apply to headings~~ — INVESTIGATED, NOT A DEFECT `[Notes]` (bug) #notes #ui  *(owner-filed 2026-09-08 with an explicit instruction to establish the behaviour before fixing anything, and to strike the item rather than invent work if headings already accept a font change: "Do not take my framing as a finding.")*
+
+`[x]` **STRUCK — measured, no defect. The real defect behind the assumption was the toolbar layout, and that is B1382546.**
+
+- Verify: sandbox — every cell driven on real H1, H2 and body text; `ui-audit/verify-notes-font-control.mjs` §4.
+- Origin: owner chat block amendment, 2026-09-08.
+
+The assumption followed directly from the mislabelled toolbar (B1382546): with the STYLE picker sitting where Word puts the font name and showing "Body text", it read as a font control scoped to body text. **Headings accept every format, and always did.** Measured, not assumed — each cell is a real selection followed by a real pick on the real control, then read back off the rendered text:
+
+| target | Font | Font read-back | Size | Bold | Italic | Colour |
+|---|---|---|---|---|---|---|
+| Heading 1 | applied | Georgia | applied | applied | applied | applied |
+| Heading 2 | applied | Georgia | applied | applied | applied | applied |
+| body text | applied | Georgia | applied | applied | applied | applied |
+
+No heading-specific font rule exists in the stylesheet, the control is never disabled on a heading, and nothing silently reverts. Nothing was built for this item; it stays in the record so the question is not re-asked.
+
+- **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+
 ### B1361683 — The local project list dropped a project BEFORE the server confirmed the delete — the same lie by a second, independent route `[Site Planner / persistence]` (bug) #site-planner #persistence #ui #testing  *(owner follow-up on the B1358128 (×2) dispatch, 2026-09-08, and an explicit requirement of the original brief this session's first answer did not address: "does the code update the local list ahead of a confirmed server write, yes or no." **The answer was yes.** Minted **B1361683** from this branch's reserved block B1361680–B1361695 against freshly-fetched `origin/main` a2c4372. DEDUPE-FIRST — searched Open/⏳Verify/Done for "optimistic", "local removal", "deleteSite", "writeSites", B372, B757, B1202176, B1303824, B1358128: **B372** is the parent that ESTABLISHED the optimistic removal plus its honest-failure surface, and **B757** added the durable tombstone on top of it — neither asks whether the local list may run ahead of the server, which is this item. **B1358128 (×2)** produces the identical visible lie by an unrelated route (the id was erased before the delete ran) and is fixed in the same PR; this survives that fix completely. Net-new.)*
 
 `[x]` **FIXED THIS SESSION, in the same PR as B1358128 (×2).**

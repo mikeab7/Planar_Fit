@@ -105,6 +105,29 @@ Two more found since, each worth its own line because each returned a confident 
    note, and a count that was 1 before and 1 after may be a different box entirely. Click away onto
    the page, or count identities rather than nodes.
 
+13. **A CONTROL THAT LIVES IN THE "More" SHEET READS AS *MISSING*, NOT AS *BROKEN* (2026-09-08,
+   NOTES-TOOLBAR-STATE).** The first run of `verify-notes-font-control.mjs` reported the three
+   alignment buttons as exposing "no state at all". They expose it fine — they simply are not
+   rendered until the More sheet is open, and a closed toolbar has nothing to query. Same
+   species as trap 9 and as DRIVER-SCROLL-IS-NOT-APP-SCROLL §6: **the harness's own question
+   produced the reading.** Open the sheet for the read (every control on the bar stops
+   `mousedown`, so the selection survives) — and ASSERT that it survived rather than assuming,
+   which is what that harness's `snapshot()` now does.
+14. **A "MIXED" FIXTURE IS ONLY MIXED IN THE DIMENSIONS YOU ACTUALLY VARIED (2026-09-08).** The
+   same harness graded Block style, Line spacing and both list toggles as "guessing" because
+   they reported the same value on its uniform and its mixed range. They were right: both of its
+   blocks were plain paragraphs in no list, so those four properties genuinely agreed across
+   both ranges. **A table that grades N properties needs a fixture that disagrees in all N** —
+   otherwise the honest answers fail and the real defects hide among them. The fixture now
+   varies list membership, block style, alignment, line spacing, every mark, font, size and
+   colour at once.
+15. **AND THE OLDEST ONE IN THIS REPO, WHICH STILL COST A ROUND TODAY: THE HARNESS MEASURED A
+   BUNDLE THAT DID NOT CONTAIN THE FIX (2026-09-08).** A paste fix read as "still broken" — the
+   run that reported it was driving a `dist/` built before the fix was written. It is the local
+   twin of the repo's own live-measurement rule (a deployed chunk hash must be read in the same
+   call as the assertion): **rebuild, then measure, and treat a fix that "changed nothing at
+   all" as a build-staleness suspect before a code suspect.**
+
 See also `ui-audit/TRAPS.md`, and the named rules **FOREGROUND-OR-VOID** (a background tab cannot
 be measured — not its clock, not its pixels) and **COUNT-EVERY-KIND**.
 
@@ -135,6 +158,16 @@ sat BESIDE the pressed line, not under it. Live copy: `ui-audit/diagnose-notes-o
 ---
 
 ## 3 · Data facts
+
+**Font and size, as stored (2026-09-08).** A `textStyle` mark's `fontFamily` holds the source's
+RAW stack string — Word writes `"Calibri",sans-serif`, the palette writes `Calibri, Candara,
+sans-serif`, and **those are the same typeface**; compare with `notesFontFamily.js`'s
+`familyKey` (first family, unquoted, lower-cased), never with `===`. A `fontSize` is normalised
+to **px at the paste boundary** (`fontSizePx` — 11pt is stored as `14.67px`), because
+`parseFloat("11pt")` is 11 and made an 11pt run and an 11px run read as the same "11". **Notes
+already saved keep whatever they hold** — there is no migration and no repair pass; the owner
+was explicit that rewriting existing formatting is a separate decision he has not made, so the
+DISPLAY path resolves units too rather than the stored data being touched.
 
 **Local keys** — `planyr:notes:tree:v1:<uid>` · `planyr:notes:page:v1:<uid>:<pageId>` ·
 `planyr:notes:sync:v1:<uid>` (`<uid>` is the user id, or `local` when signed out).
@@ -189,6 +222,25 @@ position**.
    is exactly what shipped last time. Same species as **B539648** (the page grew down but crushed
    content sideways) and **B421490** (the vertical half existed, the horizontal half did not) —
    three instances now, all in this one feature.
+
+0b. **⛔ A TOOLBAR CONTROL THAT ANSWERS "WHAT IS AT ONE POSITION" WHEN IT WAS ASKED "WHAT IS IN
+   THIS SELECTION" (NOTES-TOOLBAR-STATE, 2026-09-08).** `editor.getAttributes()` /
+   `editor.isActive()` answer about the caret. For a RANGE they either read `$from` (so the
+   first run's value is presented as the whole selection's) or, for marks, return true only if
+   the mark covers the WHOLE range (so half-bold text reports a confident **false**,
+   indistinguishable from no bold at all). Both are guesses, and both look completely correct in
+   the code. **Every readout goes through `lib/notesMixedSelection.js`** — `selectionFontSizes`,
+   `selectionFontFamilies`, `selectionMarkPresence`, `selectionMarkAttrs`, `selectionAlignments`,
+   `selectionListKinds`, `formatDisplayValue`, `togglePressed`. **A bespoke mixed-check written
+   for one control is the defect, not the fix:** Font size was made correct in isolation
+   (B1139216) and eleven other controls stayed wrong for months, because nothing about a private
+   check in one control says anything about the next one. Guard: `ui-audit/verify-notes-font-
+   control.mjs` puts EVERY control through uniform · caret · mixed and prints the table.
+   ⛔ **AND `aria-pressed={active ? "true" : undefined}` IS A TWO-STATE ANSWER TO A THREE-STATE
+   QUESTION** — it gave Bold/Italic/Underline/Strikethrough no exposed state at all when off.
+   Measured on the pre-fix build: those four DO report `pressed=true` on genuinely bold text
+   (the positive case works), and report NOTHING when off or mixed. Use `togglePressed`'s
+   `"true"/"false"/"mixed"` for both the accessible state and the paint, from one value.
 
 1. **A GLOBAL KEY BINDING LEAKING INTO TEXT.** Escape handled twice (B434418); the arrow-nudge
    swallowed arrows while typing (B519681). The guard is a **PROPERTY** — every globally-bound key
@@ -288,7 +340,7 @@ position**.
      style, no attribute, no childList change anywhere; (b) `notesSpacing.js`'s `num()` is a bare
      `parseFloat`, which strips the `pt` suffix WITHOUT unit conversion, so `num('10pt')` reduces to
      the same `10` the block attr already stores — the two values agree numerically even though the
-     conversion itself is wrong (filed separately as **B839841**, a real but unrelated defect — a
+     conversion itself is wrong (filed separately as **B839841** — ⛔ **CORRECTED 2026-09-08: that number was never actually filed; it appears in no ledger, live or archived. The finding was real and is now carried by B1382547, which fixed it**: a
      point size renders as if it were a pixel size, everywhere, independent of this bug).
    - **Fractional `devicePixelRatio`** — the owner's actual production numbers (38.924, 35.8503,
      …) carry fractional residue; his panel measures `devicePixelRatio ≈ 2.15` under Windows
