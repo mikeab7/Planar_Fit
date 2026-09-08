@@ -248,8 +248,17 @@ export function filterProjects(projects = [], query = "") {
 // Compact relative timestamp for the switcher rows ("just now", "5m ago", "3h ago",
 // "2d ago", "3w ago", then a short calendar date for anything older than ~a month).
 // `now` is injectable so the behavior is deterministic under test.
+// ⛔ IT ACCEPTS AN ISO STRING AS WELL AS EPOCH MS, AND THAT IS A BUG FIX, NOT A CONVENIENCE.
+// `Number("2026-09-01T12:34:56Z")` is NaN, so the old `Number(ts) || 0` silently answered "" for
+// every ISO timestamp — and `cloudCheckDeleted` hands `deletedAt` straight through from Postgres,
+// where `deleted_at` IS an ISO string. The visible symptom was the deleted-project screen reading
+// "was moved to Recently deleted ." — a stray space before the period, which is the empty relative
+// time that should have been there. So the reported typo was the tail of a silently-swallowed
+// parse (LOUD-FAILURE: it degraded quietly instead of failing), and deleting the space would have
+// hidden it for good. The bin LIST was never affected — `listDeletedProjects` converts with
+// `toMs()` first — which is exactly why this survived: one of the two callers was already correct.
 export function relTime(ts, now = Date.now()) {
-  const t = Number(ts) || 0;
+  const t = typeof ts === "string" ? (Date.parse(ts) || Number(ts) || 0) : (Number(ts) || 0);
   if (!t) return "";
   const sec = Math.max(0, Math.floor((now - t) / 1000));
   if (sec < 45) return "just now";
