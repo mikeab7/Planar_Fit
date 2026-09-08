@@ -47,9 +47,11 @@ export default function DashboardCard({ title, headerMeta, headerRight, customiz
           </span>
         </span>
         {(headerMeta || headerRight) && (
-          <span style={headerRight
-            ? { flex: "none", fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" }
-            : { fontSize: 10.5, color: "var(--text-secondary)", flex: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{
+            fontSize: 10.5, color: "var(--text-secondary)", flex: "none",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            ...(headerRight ? { fontWeight: 600 } : null),
+          }}>
             {headerRight || headerMeta}
           </span>
         )}
