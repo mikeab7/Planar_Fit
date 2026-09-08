@@ -5,7 +5,17 @@
 > step; tick/remove it once he's done it. This is the **owner's** plate only. Browser click-throughs and
 > signed-in spot-checks are the Claude cohort's job (`VERIFICATION.md`), **never** Michael's — do NOT list those here.
 
-_Last updated: 2026-09-06._
+_Last updated: 2026-09-08._
+
+## 🧹 Three leftover test branches on GitHub need deleting (B1327088)
+
+> **Short version: while proving a CI fix worked, I opened and closed three disposable test pull
+> requests on GitHub, and I can delete the pull requests but not the leftover branches behind
+> them** (my tool for talking to GitHub doesn't have a "delete a branch" button, and it's not
+> something worth stopping the fix for). They're clearly named and already closed — nothing to
+> read or worry about, just tidiness. On github.com, under the repo's branches list, delete:
+> `test/zz-claude-touch-guard-verify-reject`, `test/zz-claude-verify-ordinary-a`,
+> `test/zz-claude-verify-ordinary-b`. Not urgent — do it whenever you're next in there.
 
 ## 📱 Try the new Properties sheet on your phone (B1223120)
 

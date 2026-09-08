@@ -90,9 +90,9 @@ jobs:
       # "Expected — Waiting for status to be reported", no merge control available to anyone). The
       # `build` job here ALWAYS runs and ALWAYS reports; only which STEPS inside it do real work
       # varies. See ui-audit/lib/ciGates.mjs's DOCS_ONLY_GATE_NAMES for exactly what still runs and
-      # why each one earns its place — the generated-index drift guards, the per-folder CLAUDE.md
-      # pointer guard, and the backlog/verification id checks all read content a docs-only push can
-      # actually touch; nothing else can.
+      # why each one earns its place — the Generated-index touch guard, the BACKLOG.md tag-legend
+      # guard, the per-folder CLAUDE.md pointer guard, and the backlog/verification id checks all
+      # read content a docs-only push can actually touch; nothing else can.
       - name: Detect docs-only change (a pull_request whose diff is Markdown only)
         id: docs_only
         run: |
@@ -115,17 +115,18 @@ jobs:
           fi
           echo "Changed files:"
           echo "$CHANGED"
-          # docs/UI-INVENTORY.md is Markdown by EXTENSION but not by CONTENT — ui-audit/ui-inventory.mjs
-          # generates it from a live Playwright crawl of the built app, and only the (expensive,
-          # browser-based) Signature-budget gate can tell whether it's still accurate. A change confined
-          # to this one file is a real, observed pattern (a line-number-attribution correction after a
-          # merge) — treating it as "docs-only" would skip the one check that verifies it. So it's
-          # excluded from the Markdown-only test below, same as any other non-.md file would be.
+          # docs/UI-INVENTORY.md USED TO be carved out here — it's Markdown by EXTENSION but not by
+          # CONTENT, generated from a live Playwright crawl, and a change confined to just this file
+          # used to force the full (expensive) build because only the browser-based Signature-budget
+          # gate could tell whether it was still accurate. That's no longer this fast path's job
+          # (NEW-1, B<PENDING>, 2026-09-08): a branch is never supposed to touch this file at all —
+          # the Generated-index touch guard fails it cheaply and immediately if it does — so there is
+          # nothing left here for the full crawl to verify, and docs/UI-INVENTORY.md is treated like
+          # any other Markdown file for this test.
           NON_DOCS="$(echo "$CHANGED" | grep -Ev '\.md$' || true)"
-          UI_INVENTORY="$(echo "$CHANGED" | grep -x 'docs/UI-INVENTORY.md' || true)"
-          if [ -n "$CHANGED" ] && [ -z "$NON_DOCS" ] && [ -z "$UI_INVENTORY" ]; then
+          if [ -n "$CHANGED" ] && [ -z "$NON_DOCS" ]; then
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
-            echo "Every changed file is Markdown (.md), and none is the generated docs/UI-INVENTORY.md — running the docs-only gate subset."
+            echo "Every changed file is Markdown (.md) — running the docs-only gate subset."
           else
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             echo "A non-Markdown file changed, or docs/UI-INVENTORY.md changed, or nothing changed — running the full build."
@@ -180,16 +181,27 @@ jobs:
           retention-days: 14
       # Backfill the required "build" status (NEW-3, 2026-09-05). Inert on every ordinary run —
       # only fires when build-check-sweep.yml dispatched THIS run to repair a PR whose required
-      # "build" check never reported at all (measured live today on PRs #1455/#1456: both sat at
+      # "build" check never reported at all (measured live on PRs #1455/#1456: both sat at
       # "Expected — Waiting for status to be reported" with zero workflow runs behind them, no
-      # `pull_request` event ever having fired for those branches — a GitHub-side event-delivery
-      # gap, not the docs-only fast path or a path filter: ui-audit/required-check-audit.mjs
-      # already proves no `paths:` filter can hide this job, and it still reports OK). A
-      # `workflow_dispatch` run's own auto-generated check does NOT satisfy a PR's required status
-      # (CLAUDE.md's "Nudge CI" note — a real push is what has always been needed instead), so
-      # this posts a CLASSIC commit status directly via the Statuses API, which required-status
-      # matching honors regardless of which event produced it. `always()` so a failing build still
-      # reports "failure" rather than leaving the PR stuck a second way.
+      # `pull_request` event ever having fired for those branches).
+      #
+      # ⛔ CORRECTED 2026-09-08 (NEW-1, B<PENDING>): the diagnosis originally recorded here — "a
+      # GitHub-side event-delivery gap, not the docs-only fast path or a path filter" — was WRONG.
+      # Both PRs were CONFLICTED on the generated indexes (MAP.md/BACKLOG_OPEN.md/docs/UI-INVENTORY.md)
+      # at the time, which is exactly why no `pull_request` run ever existed: GitHub cannot compute a
+      # test-merge ref for a conflicted PR, so it never fires the event that would create one. See
+      # scripts/generated-doc-touch-guard.mjs and .github/workflows/regen-derived-docs.yml for the
+      # actual fix — branches no longer touch those files, so this class of stuck PR should stop
+      # recurring. This backfill step stays as a safety net regardless (a genuine GitHub-side
+      # delivery gap remains possible even without this cause), it just no longer needs to be its
+      # only imagined trigger.
+      #
+      # `ui-audit/required-check-audit.mjs` already proves no `paths:` filter can hide this job, and
+      # it still reports OK. A `workflow_dispatch` run's own auto-generated check does NOT satisfy a
+      # PR's required status (CLAUDE.md's "Nudge CI" note — a real push is what has always been
+      # needed instead), so this posts a CLASSIC commit status directly via the Statuses API, which
+      # required-status matching honors regardless of which event produced it. `always()` so a
+      # failing build still reports "failure" rather than leaving the PR stuck a second way.
       - name: Backfill required status for a sweep-repaired PR
         if: always() && github.event.inputs.pr_number != ''
         uses: actions/github-script@v7
