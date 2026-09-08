@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-08 @ `54a9026f` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-08 @ `a422d728` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -15,7 +15,7 @@
 > iframe), **Doc Review**, **Library**. `/server` is listed as folder structure only (below) —
 > never its contents or secrets.
 
-_714 source files mapped._
+_715 source files mapped._
 
 ## infra
 
@@ -27,7 +27,7 @@ _714 source files mapped._
   - _exports_: `arrivedViaFreshReload`, `chunkNameOf`, `clearRecovery`, `clearReloadGuard`, `hasReloadParam`, `installChunkReloadGuard`, `isChunkLoadError`, `isChunkRecoveryStuck`, `landingReport`, `noteRecoveryAttempt`, `readRecovery`, `RECOVERY_EPISODE_MAX_MS`, `RECOVERY_KEY`, `RECOVERY_SETTLE_MS`, `recoveryLine`, `recoveryStage`, `RELOAD_COOLDOWN_MS`, `RELOAD_GUARD_KEY`, `RELOAD_PARAM`, `reloadFresh`, `shouldReloadAfterPreloadError`, `shouldReportFailure`, `stripReloadParam`, `subscribeChunkRecoveryStuck`, `writeRecovery`
 - **`src/app/ErrorBoundary.jsx`** — Per-workspace React class error boundary: contains render crashes, detects chunk-load errors, offers cache-busting reload vs mid-deploy 'try again'
   - _exports_: `crashModuleSlug`, `default (ErrorBoundary)`
-- **`src/app/firstLanding.js`** — First-time-user landing: decides whether a genuine route-less boot with zero evidence of any project (cloud when signed in, local cache when signed out) redirects from the Dashboard to the project-less Map
+- **`src/app/firstLanding.js`** — Redirects a genuinely route-less first boot with no projects anywhere (cloud, legacy local, or local cache) to the Site Planner's map view instead of the Dashboard; leaves any deep link or returning user untouched
   - _exports_: `firstLandingRedirect`, `isFreshRoutelessBoot`, `MAP_HASH`, `MAP_ROUTE`, `resolveHasAnyProjects`
 - **`src/app/flushRegistry.js`** — Cross-workspace flush-before-navigate registry: registerFlush/flushAll give each live workspace one synchronous local-save + keepalive cloud push before a forced reload
   - _exports_: `_flushers`, `flushAll`, `registerFlush`
@@ -69,6 +69,8 @@ _714 source files mapped._
   - _exports_: `default (DashboardCard)`
 - **`src/workspaces/dashboard/components/DashboardCards.jsx`** — the six default Dashboard card renderers (pure presentational, token-only).
   - _exports_: `CardSkeleton`, `CompsSummaryCard`, `GoingQuietCard`, `JumpBackInCard`, `PipelineCard`, `ScheduleHealthCard`
+- **`src/workspaces/dashboard/components/DashboardTopoBackground.jsx`** — animated topographic contour canvas behind the dashboard grid; dimmed, theme/brand-token colored, pauses on drag/resize/hidden-tab/reduced-motion/coarse-pointer.
+  - _exports_: `default (DashboardTopoBackground)`
 - **`src/workspaces/dashboard/components/NeedsAttentionCard.jsx`** — Needs-attention dashboard card — flat cross-project task list sorted by days since needs-attention.
   - _exports_: `NeedsAttentionCard`
 - **`src/workspaces/dashboard/components/PursuitsCard.jsx`** — Pursuits dashboard card — table of open pursuits sorted by soonest contractual date.
