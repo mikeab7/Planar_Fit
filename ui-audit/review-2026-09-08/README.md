@@ -17,8 +17,8 @@ they were written against the review sandbox — adjust if your checkout lives e
 | --- | --- | --- |
 | `probe-comps-production-rows.mjs` | Run Michael's four real production comps through `buildCompsCardData` | Featured comp renders `$0.64 /SF/yr` (recorded `annual` where every sibling is `monthly`); footer prints "Against your last 1 in Harris County, TX" directly above "this one stands alone" |
 | `probe-comps-peer-set.mjs` | Does the peer set separate NNN from gross, and normalize land units? Do the sentence and the dots agree? | No to all three. NNN vs GROSS share one scale; land comps in acres and in SF share one scale (43,560× apart, producing "$129996.90 above the median"); four tied rates report as "the highest of the four" |
-| `probe-feed-month-away.mjs` | A returning user gone a month — which rows survive the 12-row cap? | 17 events derived, 12 shown, and all 3 schedule events land in the hidden 5. Schedule rows are stamped at the window *start*, so they sort last and are cut first, every time |
-| `probe-thumbnail-size.mjs` | How large can a plan thumbnail get, and are values escaped into the SVG? | No cap: 300 shapes × 40 vertices → ~185 KB; 600 × 40 → ~380 KB. A quote character in a parcel stroke breaks out of its attribute (rendering corruption, not XSS — the SVG is shown via `<img>`) |
+| `probe-feed-month-away.mjs` | A returning user gone a month — which rows survive the 12-row cap? | 17 events derived, 12 shown, and all 3 schedule events land in the hidden 5. Schedule rows are stamped at the window *start*, so they sort last and are cut first, every time. **✅ FIXED — B1373536; re-run now shows 3 of 3 surviving** |
+| `probe-thumbnail-size.mjs` | How large can a plan thumbnail get, and are values escaped into the SVG? | No cap: 300 shapes × 40 vertices → ~185 KB; 600 × 40 → ~380 KB. A quote character in a parcel stroke breaks out of its attribute (rendering corruption, not XSS — the SVG is shown via `<img>`) . **✅ FIXED — B1373536; re-run now caps at 19.4 KB and escapes the injection** |
 | `probe-county-label.mjs` | Does `compsCardModel.countyLabel` agree with the county registry? | Agrees for all 18 configured keys today. The exposure is upstream: `MapFinder.resolveCompCounty` calls `countyKeyForName(name)` with **no state**, so a point in Montgomery County PA / Liberty County GA / Chambers County AL resolves to the Texas key and prints "…County, TX" |
 | `probe-comp-county-state.mjs` | **FIXED — B1376672.** Follows the finding above one level up: which key does a point actually get, end to end, through the real national county geometry? | Reproduced 4 of 4 (Norristown PA, Hinesville GA, Lanett AL, Hamilton GA all took a Texas key), and caught a second half nobody had noticed — a Denver point took **no** county at all. Both fixed by passing the state at all five call sites; the probe now prints the before/after columns side by side and its known-good arms hold |
 
@@ -33,6 +33,12 @@ they were written against the review sandbox — adjust if your checkout lives e
 > git has nothing to flag, and building the merge is the only way to see it.
 >
 > PR #1563 is still merge-conflicted against `main` and cannot land unattended.
+>
+> **Update, 2026-09-08 (B1373536).** #1563's seven conflicts are now resolved on
+> `claude/dashboard-card-defects-jq1nai`, which carries the feed fix on top of them — the feed
+> defect lives in a file that exists nowhere else, so there was no way to fix it without landing
+> that branch. That PR supersedes #1563. Its resolution of `Dashboard.jsx` drops the
+> `fetchCompsCounts` import, which is finding 1 above arriving exactly as predicted.
 
 1. **Merging #1564 breaks the build.** Its branch rewrote `dashboard/lib/dashboardCompsFetch.js`,
    dropping `fetchCompsCounts` — which `Dashboard.jsx` on `main` imports and calls for the merged
