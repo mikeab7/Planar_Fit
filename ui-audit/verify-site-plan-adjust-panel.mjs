@@ -116,7 +116,7 @@ async function runAtViewport(VIEWPORT) {
 
   await page.goto(BASE, { waitUntil: "load" });
   await page.waitForTimeout(1200);
-  await assertMeasurable(page, `verify-site-plan-adjust-panel@${label}`);
+  await assertMeasurable(page, "verify-site-plan-adjust-panel");
 
   // Reach the Site Planner workspace (MapFinder, since no site is active).
   const tab = page.locator('[data-testid="module-tab-site-planner"]');
