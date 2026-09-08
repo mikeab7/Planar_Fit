@@ -14,10 +14,25 @@
  *
  * MODES:
  *   node scripts/build-backlog-index.mjs           → regenerate BACKLOG_OPEN.md
- *   node scripts/build-backlog-index.mjs --check    → CI drift guard; exit 1 if the committed
+ *   node scripts/build-backlog-index.mjs --check    → full drift guard; exit 1 if the committed
  *                                                     BACKLOG_OPEN.md differs from a fresh parse
- *                                                     of BACKLOG.md (i.e. someone edited BACKLOG.md
- *                                                     without regenerating the index).
+ *                                                     of BACKLOG.md, OR an off-legend tag is used.
+ *                                                     No longer wired into the required `build`
+ *                                                     check (see `--tags-only` below) — kept for
+ *                                                     the scheduled regen workflow and local use.
+ *   node scripts/build-backlog-index.mjs --tags-only → CI gate (NEW-1, B<PENDING>, 2026-09-08):
+ *                                                     only the tag-sprawl check. Every PR that
+ *                                                     touched BACKLOG.md used to also have to
+ *                                                     regenerate and commit BACKLOG_OPEN.md in the
+ *                                                     same commit, so any two such PRs open at once
+ *                                                     conflicted on that generated file by
+ *                                                     construction — see .github/ci-gates.yml's
+ *                                                     "Generated-index touch guard" for the fix.
+ *                                                     The tag-legend rule is a real content quality
+ *                                                     check on BACKLOG.md itself, not a generated-
+ *                                                     index-freshness problem, so it stays required;
+ *                                                     BACKLOG_OPEN.md's own freshness no longer does
+ *                                                     — it is refreshed by a scheduled job instead.
  *
  * Mirrors ui-audit/*-audit.mjs: exports an audit fn the unit test imports; exits non-zero standalone.
  */
@@ -190,19 +205,30 @@ export function renderIndex(items) {
 // ----------------------------------------------------------------------------------------
 // Audit fn (imported by test) + CLI.
 // ----------------------------------------------------------------------------------------
-export function auditIndex() {
+/** The tag-sprawl guard alone: every `#tag` used on an Open/Verify item must be in the legend.
+ *  Split out of `auditIndex()` (NEW-1, B<PENDING>) so this real content-quality rule on
+ *  BACKLOG.md can stay a required CI gate without also requiring BACKLOG_OPEN.md itself to be
+ *  byte-fresh on every PR — that freshness requirement is what forced every BACKLOG.md-touching
+ *  PR to also regenerate and commit BACKLOG_OPEN.md, colliding with every other such PR open at
+ *  the same time. */
+export function auditTagLegend() {
   const text = readFileSync(BACKLOG, "utf8");
   const items = parseBacklog(text);
   const legend = parseLegend(text);
-  const expected = renderIndex(items);
   const problems = [];
-
-  // Tag-sprawl guard: every tag used on an Open/Verify item must be in the legend.
   if (legend.size) {
     const unknown = new Set();
     for (const i of items) for (const t of i.tags) if (!legend.has(t)) unknown.add(`${i.id}:${t}`);
     if (unknown.size) problems.push(`Tags not in the legend (add to the legend, or fix the typo): ${[...unknown].join(", ")}`);
   }
+  return { ok: problems.length === 0, problems };
+}
+
+export function auditIndex() {
+  const text = readFileSync(BACKLOG, "utf8");
+  const items = parseBacklog(text);
+  const expected = renderIndex(items);
+  const problems = [...auditTagLegend().problems];
 
   if (!existsSync(INDEX)) {
     problems.push("BACKLOG_OPEN.md does not exist — run `node scripts/build-backlog-index.mjs`.");
@@ -214,7 +240,11 @@ export function auditIndex() {
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
-  if (process.argv.includes("--check")) {
+  if (process.argv.includes("--tags-only")) {
+    const { ok, problems } = auditTagLegend();
+    if (!ok) { console.error("BACKLOG.md tag-legend check FAILED:\n" + problems.map((p) => "  • " + p).join("\n")); process.exit(1); }
+    console.log("BACKLOG.md tag-legend check passed.");
+  } else if (process.argv.includes("--check")) {
     const { ok, problems } = auditIndex();
     if (!ok) { console.error("BACKLOG_OPEN.md drift check FAILED:\n" + problems.map((p) => "  • " + p).join("\n")); process.exit(1); }
     console.log("BACKLOG_OPEN.md drift check passed.");
