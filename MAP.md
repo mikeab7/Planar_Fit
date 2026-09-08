@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-08 @ `ed8045ab6` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-08 @ `84076e5d` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -27,7 +27,7 @@ _715 source files mapped._
   - _exports_: `arrivedViaFreshReload`, `chunkNameOf`, `clearRecovery`, `clearReloadGuard`, `hasReloadParam`, `installChunkReloadGuard`, `isChunkLoadError`, `isChunkRecoveryStuck`, `landingReport`, `noteRecoveryAttempt`, `readRecovery`, `RECOVERY_EPISODE_MAX_MS`, `RECOVERY_KEY`, `RECOVERY_SETTLE_MS`, `recoveryLine`, `recoveryStage`, `RELOAD_COOLDOWN_MS`, `RELOAD_GUARD_KEY`, `RELOAD_PARAM`, `reloadFresh`, `shouldReloadAfterPreloadError`, `shouldReportFailure`, `stripReloadParam`, `subscribeChunkRecoveryStuck`, `writeRecovery`
 - **`src/app/ErrorBoundary.jsx`** — Per-workspace React class error boundary: contains render crashes, detects chunk-load errors, offers cache-busting reload vs mid-deploy 'try again'
   - _exports_: `crashModuleSlug`, `default (ErrorBoundary)`
-- **`src/app/firstLanding.js`** — a genuinely first-time user (no projects, ever) lands on the Map instead of the Dashboard on a route-less boot.
+- **`src/app/firstLanding.js`** — Redirects a genuinely route-less first boot with no projects anywhere (cloud, legacy local, or local cache) to the Site Planner's map view instead of the Dashboard; leaves any deep link or returning user untouched
   - _exports_: `firstLandingRedirect`, `isFreshRoutelessBoot`, `MAP_HASH`, `MAP_ROUTE`, `resolveHasAnyProjects`
 - **`src/app/flushRegistry.js`** — Cross-workspace flush-before-navigate registry: registerFlush/flushAll give each live workspace one synchronous local-save + keepalive cloud push before a forced reload
   - _exports_: `_flushers`, `flushAll`, `registerFlush`
@@ -69,7 +69,7 @@ _715 source files mapped._
   - _exports_: `default (DashboardCard)`
 - **`src/workspaces/dashboard/components/DashboardCards.jsx`** — the six default Dashboard card renderers (pure presentational, token-only).
   - _exports_: `CardSkeleton`, `CompsSummaryCard`, `GoingQuietCard`, `JumpBackInCard`, `PipelineCard`, `ScheduleHealthCard`
-- **`src/workspaces/dashboard/components/DashboardTopoBackground.jsx`** — the animated topographic contour field behind the dashboard's card grid.
+- **`src/workspaces/dashboard/components/DashboardTopoBackground.jsx`** — animated topographic contour canvas behind the dashboard grid; dimmed, theme/brand-token colored, pauses on drag/resize/hidden-tab/reduced-motion/coarse-pointer.
   - _exports_: `default (DashboardTopoBackground)`
 - **`src/workspaces/dashboard/components/NeedsAttentionCard.jsx`** — Needs-attention dashboard card — flat cross-project task list sorted by days since needs-attention.
   - _exports_: `NeedsAttentionCard`
