@@ -818,6 +818,20 @@ const COUNTIES_MAP_RAW = {
     state: "FL", center: [27.8, -81.7], zoom: 6, mapServer: null, statewide: true,
     layerUrl: "https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0",
   },
+  /* NEW-1 (2026-09-08, continuing B1332016) — Hawaii, Maryland, Nebraska and New Hampshire were
+   * measured live from the OWNER'S OWN BROWSER, not this sandbox (every host below 403s here —
+   * the same egress-allowlist policy block that already applies to AR/DE/IN/NJ/NC). Full field
+   * lists, the layer-id traps (Hawaii layer 25, not 0/5/9/11/30; New Hampshire layer 1, not 0)
+   * and the measurement provenance are in docs/STATEWIDE-PARCELS.md's per-state notes — this
+   * comment only flags the two id traps inline, since a future re-probe that "corrects" either
+   * layer id back to 0 would silently swap a polygon layer for a group layer or a point layer. */
+  hi_statewide: {
+    // Verify: live — geodata.hawaii.gov is blocked in this build environment; measured from the
+    // owner's own browser 2026-09-08. ⛔ LAYER 25 ("Statewide TMKs"), NOT 0 (a group layer with
+    // zero fields) and NOT the per-county layers 5/9/11/30. No owner, no value fields.
+    state: "HI", center: [20.7, -156.4], zoom: 7, mapServer: null, statewide: true,
+    layerUrl: "https://geodata.hawaii.gov/arcgis/rest/services/ParcelsZoning/MapServer/25",
+  },
   in_statewide: {
     // Verify: live — gisdata.in.gov is blocked in this build environment. No owner/value fields
     // in this layer at all (confirmed via item metadata, not just unreachable here).
@@ -827,6 +841,13 @@ const COUNTIES_MAP_RAW = {
   ma_statewide: {
     state: "MA", center: [42.3, -71.8], zoom: 8, mapServer: null, statewide: true,
     layerUrl: "https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0",
+  },
+  md_statewide: {
+    // Verify: live — mdgeodata.md.gov is blocked in this build environment; measured from the
+    // owner's own browser 2026-09-08. Owner NAME is absent on this layer — only the owner's
+    // MAILING ADDRESS (OWNADD1 etc). Leave owner absent; never fabricate it from the mailing fields.
+    state: "MD", center: [39.0, -76.7], zoom: 8, mapServer: null, statewide: true,
+    layerUrl: "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer/0",
   },
   mn_statewide: {
     // Opt-in coverage — counties choose to participate quarterly, so completeness varies.
@@ -851,6 +872,19 @@ const COUNTIES_MAP_RAW = {
     // this layer alone carries id + acreage, the same attribute-light shape as Utah/Delaware.
     state: "ND", center: [47.5, -100.5], zoom: 7, mapServer: null, statewide: true,
     layerUrl: "https://services1.arcgis.com/GOcSXpzwBHyk2nog/arcgis/rest/services/NDGISHUB_Parcels/FeatureServer/0",
+  },
+  ne_statewide: {
+    // Verify: live — gis.ne.gov is blocked in this build environment; measured from the owner's
+    // own browser 2026-09-08. "Tax Parcels" layer, full owner + value schema.
+    state: "NE", center: [41.5, -99.8], zoom: 7, mapServer: null, statewide: true,
+    layerUrl: "https://gis.ne.gov/Agency/rest/services/TaxParcelsDED/MapServer/0",
+  },
+  nh_statewide: {
+    // Verify: live — nhgeodata.unh.edu is blocked in this build environment; measured from the
+    // owner's own browser 2026-09-08. ⛔ LAYER 1 ("Parcels"), NOT 0 ("Parcel Points" — POINT
+    // geometry, unusable for the app's polygon click routing). No owner, no value fields.
+    state: "NH", center: [43.7, -71.6], zoom: 8, mapServer: null, statewide: true,
+    layerUrl: "https://nhgeodata.unh.edu/nhgeodata/rest/services/CAD/ParcelMosaic/MapServer/1",
   },
   nj_statewide: {
     // Verify: live — maps.nj.gov is blocked in this build environment. Owner-name values are
