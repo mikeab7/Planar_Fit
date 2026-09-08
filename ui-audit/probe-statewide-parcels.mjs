@@ -88,6 +88,12 @@ export const CANDIDATES = {
     note: "id + acreage confirmed via Hub metadata (451,344 features); owner/situs deliberately absent from this public copy (a fuller version requires a FirstMap login). enterprise.firstmap.delaware.gov blocked in this sandbox." },
   DC: { name: "District of Columbia", assessingUnit: "none — single consolidated city government (DC Office of Tax & Revenue)",
     sources: [],
+    // Owner correction, round 2 (2026-09-08): same bucket as Mississippi, not `no-free-source` —
+    // a real source exists and one half of it was confirmed reachable, declined on SHAPE (a join
+    // across two services), never on absence. No full REST URL is on record for either half (only
+    // the item name / host), so the cell names them in plain text rather than a guessed link.
+    shapeMismatch: true,
+    shapeCandidate: "ITSPE attribute table (arcgis.com-hosted, reachable) + Tax Lots geometry layer (maps2.dcgis.dc.gov) — real, joined by an SSL key, two services",
     noSource: "Real, rich data exists but is split across two services — an attribute table (ITSPE, arcgis.com-hosted, reachable) and a separate Tax Lots geometry layer (maps2.dcgis.dc.gov, blocked), joined by an SSL key. Not wired this round: the existing per-county pattern is a single layerUrl, and joining two services is real follow-up work, not a same-shape wire." },
   FL: { name: "Florida", wired: true, assessingUnit: "county",
     sources: [{ name: "Florida Statewide Cadastral (FL Dept. of Revenue, Property Tax Oversight)", url: "https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0", cite: "arcgis.com item efa909d6b1c841d298b0a649e7f71cf2" }],
@@ -116,6 +122,12 @@ export const CANDIDATES = {
     noSource: "LAGIC / LSU Atlas / LA Division of Administration GIS / LA Tax Commission checked — no state-run parcel aggregation found. qpublic.net/la is a private directory of parish links, not a state service." },
   ME: { name: "Maine", assessingUnit: "town/municipality (482 towns); Unorganized Territory assessed directly by Maine Revenue Services",
     sources: [],
+    // Owner correction, round 2 (2026-09-08): same bucket as Mississippi/DC — a real, reachable,
+    // 708,382-parcel mosaic exists, declined on SHAPE (needs an ADB join) AND on the publisher's
+    // own currency disclaimer, never on absence. No full REST URL is on record (only the item
+    // description), so the cell names it in plain text rather than a guessed link.
+    shapeMismatch: true,
+    shapeCandidate: "\"Maine Parcels Organized Towns\" mosaic (arcgis.com-hosted, reachable, 708,382 parcels) + a separate ADB ownership/value table — real, needs a join, publisher disclaims currency",
     noSource: "A real, live 'Maine Parcels Organized Towns' mosaic exists (arcgis.com-hosted, reachable, 708,382 parcels) but requires joining a separate ADB ownership/value table by ID, and the publisher's own notice states 'there is no complete statewide parcel data layer for Maine... data for many towns is more than fifteen years old.' Not wired this round: the join isn't the existing single-layerUrl shape, and the publisher itself disclaims completeness/currency." },
   MD: { name: "Maryland", wired: true, verify: "live", blocker: "mdgeodata.md.gov", assessingUnit: "state-run — SDAT (Dept. of Assessments & Taxation) runs 24 local offices directly; not independent county assessors",
     sources: [{ name: "MD iMAP — Parcel Boundaries (SDAT-sourced, monthly)", url: "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer/0", cite: "measured live in the owner's own browser, 2026-09-08 — not this sandbox" }],
@@ -129,6 +141,16 @@ export const CANDIDATES = {
     sources: [{ name: "Minnesota Parcels — Opt-In Open Data (MnGeo)", url: "https://utility.arcgis.com/usrsvcs/servers/1627519e8d3f42bcb55532d48e9a61e5/rest/services/OpenParcels/plan_parcels_open/MapServer/0", cite: "gisdata.mn.gov/dataset/plan-parcels-open" }],
     note: "Live-confirmed with real owner/value data on a sample feature. Coverage is OPT-IN — counties choose to participate quarterly, so completeness varies by county." },
   MS: { name: "Mississippi", assessingUnit: "county", sources: [],
+    // Owner correction, round 2 (2026-09-08): this row used to read `no-free-source` +
+    // `Candidate: none found` despite BOTH real endpoints being on record — the exact defect the
+    // round-1 correction was supposed to close, reproduced on the one state it decided about.
+    // `shapeMismatch` + `shapeCandidate` are the fix: a real, measured, best-in-the-whole-probe
+    // schema, declined on SHAPE (two half-state services), never presented as "nothing here".
+    // West's `/MapServer/0` layer id is INFERRED consistent with East's (the same MARIS publishing
+    // pattern) — not independently confirmed the way East's was; flagged so a future session
+    // re-verifies rather than assumes.
+    shapeMismatch: true,
+    shapeCandidate: "[MS_East_Parcels](https://gis.mississippi.edu/server/rest/services/Cadastral/MS_East_Parcels/MapServer/0) + [MS_West_Parcels](https://gis.mississippi.edu/server/rest/services/Cadastral/MS_West_Parcels/MapServer/0) — real, measured, two half-state services",
     noSource: "MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-08), not this sandbox — every MARIS host is blocked here. Real, rich statewide cadastral data exists — the best schema of the whole probe (55 fields: PARNO, OWNNAME, SITEADD, TAXACRES, GISACRES, LANDVAL, IMPVAL1, IMPVAL2, TOTVAL, DEEDREF, DEEDDATE, section/township/range) — but it ships as TWO half-state ArcGIS services, MS_East_Parcels and MS_West_Parcels (gis.mississippi.edu/server/rest/services/Cadastral/), never one statewide layerUrl. Not wired this round, same shape B1332016 already declined for DC: the per-county pattern in counties.js is a single layerUrl, and wiring only the East half would silently present half the state's coverage as the whole (the exact silent-wrong-answer class this repo keeps closing) — so it ships as not-wired-at-all rather than half-wired. Extending the source shape to a real two-service state is real, separate follow-up work." },
   MO: { name: "Missouri", assessingUnit: "county", sources: [],
     noSource: "MSDIS's full open-data catalog (176 datasets, checked directly) contains no parcels/cadastral dataset; the one parcel-shaped layer found (gis.mo.gov FMDCrealEstate) is scoped to state-OWNED real estate, not general private parcels." },
@@ -288,6 +310,13 @@ async function probeSource(src) {
 
 function verdictFor(state) {
   if (state.alreadyWired) return "already-wired";
+  // Owner correction, 2026-09-08 (round 2): a real, findable, sometimes fully-measured source
+  // that is declined on SHAPE (needs a join, or ships as more than one service) is not the same
+  // finding as "nothing exists" — the first Mississippi pass proved this the hard way, landing on
+  // `no-free-source` + `Candidate: none found` despite the note recording a real 55-field schema
+  // measured live. `shapeMismatch` is checked before the empty-sources fallback so a state that
+  // GENUINELY has nothing (sources: [] and no real candidate on record) still reads no-free-source.
+  if (state.shapeMismatch) return "shape-mismatch";
   if (!state.sources.length) return "no-free-source";
   const any = state.sources.some((s) => s.reachable);
   if (any) return "measured-reachable";
@@ -330,6 +359,11 @@ function buildMarkdown(results, probedAt) {
   lines.push("> row is a legitimate, expected finding for most states — record it plainly, never omit it. A `no-free-source` row whose");
   lines.push("> Candidate cell names a real service (rather than reading `none found`) means a real candidate WAS found but was never");
   lines.push("> queried from here — its own per-state note below says why (blocked host + bad third-party-provenance being the usual case).");
+  lines.push("> A `shape-mismatch` row is a DIFFERENT finding from `no-free-source` and must never be read as one: a real statewide source");
+  lines.push("> exists (sometimes fully measured, live, with a real field list — Mississippi's is the best schema of the whole probe) but its");
+  lines.push("> SHAPE doesn't fit this app's single-`layerUrl` wiring — it needs a join to a second table, or ships as more than one service");
+  lines.push("> covering different halves of the state. That is an INTEGRATION gap, never a DATA gap; its Candidate cell always names the");
+  lines.push("> real service(s), with a real clickable URL when one is on record.");
   lines.push(">");
   lines.push("> **Hawaii, Maryland, Nebraska, New Hampshire, Mississippi, Pennsylvania and Kansas were additionally measured LIVE FROM");
   lines.push("> THE OWNER'S OWN BROWSER on 2026-09-08 — a real, unrestricted network, never this sandbox.** Their per-state notes below");
@@ -351,8 +385,11 @@ function buildMarkdown(results, probedAt) {
     // blocked host, a third-party-provenance decline) — a silent contradiction between the cell
     // everyone actually reads and the prose next to it. `unmeasuredCandidate` names that candidate
     // in the cell itself (never a clickable URL — none was confirmed reachable) with why it wasn't
-    // queried, so "Candidate: none found" is reserved for rows where no real candidate exists at all.
-    const cand = src ? `[${src.name}](${src.url})` : (s.unmeasuredCandidate || "none found");
+    // queried; `shapeCandidate` (round 2 of the same correction) is its sibling for a candidate that
+    // WAS reachable/measured but is declined on SHAPE (a join, or more than one service) — a real
+    // URL when one is on record (Mississippi), plain text naming the real services when it isn't
+    // (DC, Maine). "Candidate: none found" is reserved for rows where no real candidate exists at all.
+    const cand = src ? `[${src.name}](${src.url})` : (s.shapeCandidate || s.unmeasuredCandidate || "none found");
     const isWired = s.alreadyWired || s.wired;
     if (isWired) wired.push(abbr);
     const wireCol = s.alreadyWired ? "✅ (already)" : s.wired ? (s.verify === "live" ? `✅ (Verify: live — ${s.blocker})` : "✅") : "—";
