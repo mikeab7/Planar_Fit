@@ -585,6 +585,11 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
      parked on a statewide composite) now share ONE Leaflet layer instead of stacking two identical
      ones over the same ground; the non-owner keys are aliases and must never remove the layer. */
   const displaySrcRef = useRef({});
+  // B1164656 (NEW-1/NEW-2) — counties whose live outline layer's hang-guard (`markDown`) has fired
+  // this session: the deterministic "we know this county's live CAD is down" signal `markDown`
+  // itself owns (unlike `isSourceOpen`'s 3-consecutive-CLICK-failure breaker, which answers a
+  // different question and can stay closed for minutes after the display layer already gave up).
+  const downDisplaysRef = useRef(new Set());
   const sitesLayerRef = useRef(null); // saved-site footprints
   // NEW-5 (B834580) — cancellation token for the budgeted saved-site paint below: bumped at the
   // start of every build() so a still-trickling PREVIOUS build's scheduled continuation becomes a
@@ -2218,6 +2223,21 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // SEE and what you can SELECT the same source — the B137 rule).
   const DISPLAY_LOAD_TIMEOUT_MS = 8000;
 
+  /* B1164656 (NEW-1/NEW-2) — swap a county's on-map display to its Drive PARCEL SNAPSHOT (B629),
+   * replacing whatever's there now. The one entry point `addDisplay`'s always-preferred branch AND
+   * `markDown`'s outage fallback below both call, so "the map is showing the cache" has exactly one
+   * mechanism rather than two that can disagree. A no-op if the snapshot is already the display. */
+  const showSnapshotDisplay = (key) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const cur = displaysRef.current[key];
+    if (cur && cur._isSnapshot) return;
+    if (cur) removeDisplay(key);
+    const snapLayer = makeSnapshotLayer(key);
+    snapLayer.addTo(map);
+    displaysRef.current[key] = snapLayer;
+  };
+
   // Lazily add a county's visible parcel-outline layer (zoom-gated). Skips a county
   // whose CAD breaker is already open (its tiles would only hang); the statewide TxGIO
   // outline layer still covers that area. Idempotent per county.
@@ -2235,9 +2255,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     // with a staler harvest. (Fort Bend, Tier B, is tiled — Phase 2 — and has no whole-county
     // snapshot loaded.)
     if (SNAPSHOT_COUNTIES.has(key) && preferSnapshotForDisplay({ hasSnapshot: !!getSnapshot(key), liveUrl: layerUrlsRef.current[key] })) {
-      const snapLayer = makeSnapshotLayer(key);
-      snapLayer.addTo(map);
-      displaysRef.current[key] = snapLayer;
+      showSnapshotDisplay(key);
       return;
     }
 
@@ -2294,7 +2312,14 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     // would leave the user with nothing to see OR click. Only a real county layer gets
     // the hang-guard below.
     if (statewide) {
-      fl.on("requesterror", () => setErr("Statewide parcel outlines are slow right now — clicking a lot still adds it."));
+      // B1164656 (NEW-2) — a per-county Drive PARCEL SNAPSHOT (B629) already fell back and is
+      // showing its own cached outlines (see markDown below); blaming "statewide" outlines for the
+      // outage on top of that both misnames the source ON SCREEN and, if it fires after the cache
+      // banner, silently overwrites the correct message with a less accurate one.
+      fl.on("requesterror", () => {
+        if (CLIENT_SNAPSHOT_COUNTIES.some((c) => downDisplaysRef.current.has(c) && getSnapshot(c))) return;
+        setErr("Statewide parcel outlines are slow right now — clicking a lot still adds it.");
+      });
       return;
     }
 
@@ -2314,6 +2339,22 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
         if (displaysRef.current[k] === fl) { delete displaysRef.current[k]; delete displaySrcRef.current[k]; }
       });
       recordSourceResult(key, false);
+      downDisplaysRef.current.add(key);
+      // B1164656 (NEW-1/NEW-2) — a county with a loaded Drive PARCEL SNAPSHOT has a real fallback
+      // better than the generic statewide outline: its OWN saved copy, which the click path now
+      // (NEW-1, `snapshotHitAt` in `handleClick`) resolves a lot from too. Show it, and say so —
+      // naming the cache and its as-of date beats a banner that blames "statewide" outlines for
+      // what's actually our own saved copy, and only promises a click works where that's now true.
+      if (SNAPSHOT_COUNTIES.has(key) && getSnapshot(key)) {
+        showSnapshotDisplay(key);
+        setErr(cacheFallbackNotice(key));
+        return;
+      }
+      // B1164656 (NEW-2) — a DIFFERENT nearby real county going down (no snapshot of its own) is
+      // strictly less relevant than a cache banner already telling the truth about a snapshot
+      // county in view; never let it clobber that message with the generic one (the same
+      // ordering problem the statewide handler above guards against).
+      if (CLIENT_SNAPSHOT_COUNTIES.some((c) => downDisplaysRef.current.has(c) && getSnapshot(c))) return;
       setErr("That county's parcel server is slow right now — showing statewide outlines; clicking a lot still adds it.");
     };
     // Arm the hang-timer only once a request to the host is actually in flight, so we
@@ -2362,13 +2403,18 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       if (!selectModeRef.current || !mapRef.current) return;
       const cur = displaysRef.current[county];
       if (cur && cur._isSnapshot) return; // already the snapshot layer (self-refreshing)
-      // B787 — only swap the on-map display to the snapshot when it's actually the preferred
-      // display source for this county (an image-only/unreachable live source — Waller). A healthy
+      // B787 — swap the on-map display to the snapshot when it's actually the preferred display
+      // source for this county (an image-only/unreachable live source — Waller). A healthy
       // queryable CAD (Chambers → CCAD) keeps its own current vectors; don't flicker them out for a
-      // staler snapshot (the snapshot still serves clicks/outage via the promote path).
-      if (!preferSnapshotForDisplay({ hasSnapshot: !!getSnapshot(county), liveUrl: layerUrlsRef.current[county] })) return;
-      removeDisplay(county);
-      addDisplay(county);
+      // staler snapshot (the snapshot still serves clicks/outage via the promote path) — UNLESS
+      // B1164656 (NEW-1/NEW-2): that live CAD's own display already gave up this session
+      // (`downDisplaysRef`, set by `markDown`) and the snapshot only just now finished loading —
+      // then the cache IS the best available outline source and should say so.
+      const preferred = preferSnapshotForDisplay({ hasSnapshot: !!getSnapshot(county), liveUrl: layerUrlsRef.current[county] });
+      const knownDown = downDisplaysRef.current.has(county) && !!getSnapshot(county);
+      if (!preferred && !knownDown) return;
+      showSnapshotDisplay(county);
+      if (knownDown && !preferred) setErr(cacheFallbackNotice(county));
     });
     return off;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2518,6 +2564,13 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   const backupCountyLabel = (attrs) => { const c = findAttr(attrs, /^county$/i); return c ? titleCase(c) : "This county"; };
   // " · as of Jul 3, 2026" from a snapshot's generatedAt ISO string, or "" when unknown. Pure.
   const fmtAsOf = (iso) => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? ` · as of ${d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}` : ""; };
+  // B1164656 (NEW-2) — the accurate banner for "this county's outlines are Planyr's saved Drive
+  // copy, not the live CAD": names the county + the snapshot's as-of date, and promises a click
+  // works only because NEW-1 (`snapshotHitAt` in `handleClick`) made that true.
+  const cacheFallbackNotice = (key) => {
+    const v = snapshotVintage(key);
+    return `${titleCase(key)} County's live parcel server is unavailable — showing Planyr's saved copy${fmtAsOf(v && v.asOf)}. Clicking a lot still selects it.`;
+  };
 
   // B629 — the parcel under a point from any LOADED Drive snapshot, shaped like an identify hit
   // ({county, feature}), or null. The last-resort answer when every live source is unreachable.
@@ -2586,6 +2639,25 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
           return; // the optimistic addParcelHit already added it to the selection — leave it in place
         }
         if (optKey) rollbackHit(optKey);
+        /* B1164656 (NEW-1) — the optimistic-highlight fallback just above only finds a hit when the
+         * SNAPSHOT happens to already be the DISPLAYED layer at click time (true for Waller, whose
+         * only live source is the image-only statewide layer; almost never true for a county with
+         * its own live CAD like Chambers/CCAD, whose display stays the live layer until it's timed
+         * out or never drew at all). That left a fully-loaded snapshot sitting in memory, unused, on
+         * exactly the case it exists for: live down, nothing selectable on screen. `snapshotHitAt`
+         * queries the loaded snapshot directly — the SAME lookup `selectParcelAt`'s address-search
+         * path already uses — regardless of what's currently painted on the map. */
+        if (res.responded === 0) {
+          const cached = snapshotHitAt(latlng.lng, latlng.lat);
+          if (cached) {
+            const added = addParcelHit(cached, latlng);
+            if (added) {
+              const v = snapshotVintage(cached.county);
+              setCachedNotice({ county: backupCountyLabel(added.attrs || {}), asOf: v && v.asOf });
+              return;
+            }
+          }
+        }
         /* B209502 — SAY THE COUNTY, and say it has no parcel data, rather than implying the click
          * was bad. Before this, a click anywhere in one of the ~245 Texas counties Planyr has no
          * CAD for read as "No parcel right there — zoom in and click directly on a lot", which

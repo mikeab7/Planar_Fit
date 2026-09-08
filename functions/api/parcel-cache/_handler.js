@@ -30,13 +30,24 @@ export const SNAPSHOT_COUNTIES = new Set(["chambers", "waller", "fortbend"]);
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 const notFound = () => new Response(null, { status: 404, headers: { "cache-control": "no-store" } });
-// The stored bytes are already gzipped; declare it so the browser gunzips transparently.
-const gzGeoJson = (bytes) =>
-  new Response(bytes, { status: 200, headers: {
+/* B1164656 (NEW-1) — decompress the stored gzip bytes HERE, server-side, rather than shipping them
+ * raw with a manually-set `content-encoding: gzip` and trusting the browser to gunzip transparently.
+ * Measured live in a real signed-in browser against production (Cowork, 2026-09-07): it does NOT —
+ * the response body is still gzip after fetch() hands it to `res.json()`, which throws, and
+ * parcelSnapshot.js's `refreshFromDrive` silently swallows that error (`catch (_) { return; }`), so
+ * the in-memory snapshot Map never populates and every downstream fallback (display, click) has
+ * nothing to fall back TO. Decompressing once here removes the whole class of client-side
+ * gzip-handling bugs; Cloudflare's own edge still compresses the (larger, plain-text) body
+ * transparently for the wire when the request's Accept-Encoding allows it, so this costs no real
+ * bandwidth — it only removes the double (and unreliable) manual encoding. */
+async function geoJsonFromGzip(bytes) {
+  const stream = new Response(bytes).body.pipeThrough(new DecompressionStream("gzip"));
+  const text = await new Response(stream).text();
+  return new Response(text, { status: 200, headers: {
     "content-type": "application/geo+json",
-    "content-encoding": "gzip",
     "cache-control": "public, max-age=300",
   } });
+}
 
 /* The Drive filename for a request. Whole county → `<county>.json.gz`; a tile → the same with a
  * `_<z>_<x>_<y>` suffix; the sidecar → `<county>.meta.json`. Returns null on any shape that isn't
@@ -76,7 +87,7 @@ export async function handleParcelCache({
       return json({ cached: true, ts, ageMs: f.ageMs, stale: f.stale, ...extra });
     }
     const media = await client.media(existing.id);
-    return gzGeoJson(media.bytes);
+    return await geoJsonFromGzip(media.bytes);
   } catch (_) {
     return metaMode ? json({ cached: false }) : notFound();
   }
