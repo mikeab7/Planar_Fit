@@ -54,10 +54,9 @@ async function startBlank(page) {
   // NEW-1 (owner report 2026-08-29) — B831776's toolbar rebuild had left TWO "Start blank" buttons
   // on screen at once (the row-1 toolbar one and the map toolbar one), which is exactly what this
   // comment used to route `.first()` around instead of fixing. That duplicate is gone now: there is
-  // ONE entry point (the "Select parcels" split button's caret), so `.first()` is no longer load-
+  // ONE entry point (the toolbar's own "Draw" button since NEW-1), so `.first()` is no longer load-
   // bearing here — left in place only because it is harmless.
-  await page.getByTestId("map-start-blank-menu-btn").first().click();
-  await page.getByTestId("map-start-blank-menu-item").first().click();
+  await page.getByTestId("map-toolbar-draw").first().click();
   await expect(canvas(page)).toBeVisible();
 }
 

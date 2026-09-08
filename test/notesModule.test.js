@@ -1216,7 +1216,17 @@ describe("the project a notebook belongs to", () => {
      * every move. The old form measured a delta between two CLIENT coordinates, which mean
      * different things once the scroller moves underneath the gesture. */
     expect(node).toMatch(/grabX: e\.clientX - boxRect\.left/);
-    expect(node.slice(node.indexOf('grip.addEventListener("pointermove"'))).toMatch(/host\.getBoundingClientRect\(\);\s+\/\/ read FRESH/);
+    expect(node.slice(node.indexOf('dom.addEventListener("pointermove"'))).toMatch(/host\.getBoundingClientRect\(\);\s+\/\/ read FRESH/);
+    /* ⛔ AND THE DRAG IS ON THE WHOLE BOX, NOT ON THE GRIP (NOTES-FREE-PLACEMENT / NEW-2). Its
+     * being grip-only was the owner's "dragging the note by its BODY does nothing at all,
+     * silently" — with a 9x14px grip at zero opacity as the only alternative. The grip is now
+     * decoration and takes no presses at all, which also retires instrument trap #9. */
+    expect(node, "the box body carries the drag").toMatch(/dom\.addEventListener\("pointerdown", \(e\) => beginDrag\(e, \{ immediate: false \}\)\)/);
+    /* ⛔ …AND THE GRIP STILL DOES TOO, unconditionally. The body stands down while the caret is
+     * inside the box (a press-and-travel there is somebody selecting a phrase), so without this
+     * the one box you are typing in would be the one box you cannot move. */
+    expect(node, "the grip drags too, and owns its press outright")
+      .toMatch(/grip\.addEventListener\("pointerdown", \(e\) => beginDrag\(e, \{ immediate: true \}\)\)/);
     const print = read(NOTES, "lib", "notesPrint.js");
     /* ⛔ MATCHED ON THE SHARED HANDLE CLASS (NEW-PICTURE-CANVAS). There are eight resize handles
      * now, and pinning the exact selector LIST would mean this guard has to be edited every time
@@ -1262,7 +1272,7 @@ describe("the project a notebook belongs to", () => {
      * available — B539648's right-edge crush surviving in the one path that item did not touch.
      * The guard is on the SHAPE rather than on a number: the move path may not reach the width. */
     const node = read(NOTES, "lib", "notesAnchorNode.js");
-    const move = node.slice(node.indexOf('grip.addEventListener("pointermove"'), node.indexOf("const end = (e) =>"));
+    const move = node.slice(node.indexOf('dom.addEventListener("pointermove"'), node.indexOf("const end = (e) =>"));
     expect(move, "the move drag uses the point-only rule").toMatch(/moveAnchorPoint\(/);
     expect(move, "⛔ …and never calls the placement rule, which spends the width").not.toMatch(/placeAnchor\(/);
     expect(move, "⛔ …and never writes a width at all").not.toMatch(/style\.width/);

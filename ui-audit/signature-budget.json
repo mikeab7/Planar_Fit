@@ -1,7 +1,7 @@
 {
   "bySurface": {
     "Map landing page (no project selected)": 18,
-    "Map landing page (comp mode)": 18,
+    "Map landing page (decide bar)": 18,
     "Map landing page (selecting parcels)": 18,
     "App header": 7,
     "Main menu — File ▾": 1,
@@ -19,7 +19,7 @@
       "date": "2026-09-05",
       "surfaces": [
         "Map landing page (no project selected)",
-        "Map landing page (comp mode)",
+        "Map landing page (decide bar)",
         "Map landing page (selecting parcels)",
         "Left rail + panels (Yield)",
         "Library",
@@ -33,7 +33,7 @@
       "date": "2026-09-01",
       "surfaces": [
         "Map landing page (no project selected)",
-        "Map landing page (comp mode)",
+        "Map landing page (decide bar)",
         "Map landing page (selecting parcels)"
       ],
       "count": 3,
@@ -53,7 +53,7 @@
       "date": "2026-09-01",
       "surfaces": [
         "Map landing page (no project selected)",
-        "Map landing page (comp mode)",
+        "Map landing page (decide bar)",
         "Map landing page (selecting parcels)",
         "App header"
       ],
