@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists } from "../src/shared/projects/projectModel.js";
+import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId } from "../src/shared/projects/projectModel.js";
 import { listProjects } from "../src/shared/projects/projects.js";
 import { setActiveUser } from "../src/workspaces/site-planner/lib/activeUser.js";
 
@@ -241,6 +241,45 @@ describe("unionProjectLists — a controlled switcher (Scheduler) sees the real 
       const out = unionProjectLists(mixed, tworegistry);
       expect(out.map((p) => p.id)).toEqual(["g2", 16, 17]); // g2's own bridged copy (id 9) is dropped, same as B881666
     });
+  });
+});
+
+// B1358128 — unionProjectLists shows a site with exactly one linked schedule (or none at all)
+// using the SITE's own registry id, standing in for it. `onDeleteProject`/`onRenameProject`/
+// `onDuplicateProject` (the Schedule module's bridge to its own embedded hs-v1 project map) only
+// understand THEIR OWN ids — a registry-standin id reaching them unresolved is a genuine id-space
+// mismatch, and the bridge silently does nothing with it. resolveControlledId is the fix: it
+// mirrors selectSchedule's own pre-existing resolution (which only ever covered PICKING a
+// project) so Rename/Delete/Duplicate get the identical treatment.
+describe("resolveControlledId — resolves a switcher row's id to what a controlled bridge actually understands (B1358128)", () => {
+  const schedules = [
+    { id: 16, name: "Richfield", linkedSiteId: "g1", linkedSiteName: "Richfield" },
+    { id: 17, name: "Grand Port", linkedSiteId: "g2", linkedSiteName: "Grand Port" },
+    { id: 18, name: "Operations", linkedSiteId: null },
+  ];
+  it("a controlled entry's own id resolves to itself unchanged", () => {
+    expect(resolveControlledId(schedules, 17)).toBe(17);
+    expect(resolveControlledId(schedules, 18)).toBe(18);
+  });
+  it("a single-linked-schedule registry-standin id (a bare site id) resolves to that schedule's own id — the exact case that silently no-op'd Delete/Rename in the Schedule module", () => {
+    expect(resolveControlledId(schedules, "g1")).toBe(16);
+    expect(resolveControlledId(schedules, "g2")).toBe(17);
+  });
+  it("a registry id with NO linked schedule at all resolves to null — the caller's signal to fall back rather than silently no-op", () => {
+    expect(resolveControlledId(schedules, "g-no-schedule")).toBeNull();
+  });
+  it("a site with multiple linked schedules prefers the currently-active one over always-the-first (mirrors selectSchedule's pre-existing B1112449/NEW-2 fix)", () => {
+    const multi = [
+      { id: 16, name: "ZZ-RENAME-TEST-G", linkedSiteId: "g3" },
+      { id: 17, name: "ZZ-RENAME-TEST-G (2)", linkedSiteId: "g3" },
+    ];
+    expect(resolveControlledId(multi, "g3", 17)).toBe(17); // prefers the active id when given
+    expect(resolveControlledId(multi, "g3")).toBe(16);     // falls back to the first when no preference resolves
+    expect(resolveControlledId(multi, "g3", 999)).toBe(16); // an unmatched preference falls back too, never throws
+  });
+  it("null-safe on an empty or missing list", () => {
+    expect(resolveControlledId([], "g1")).toBeNull();
+    expect(resolveControlledId(undefined, "g1")).toBeNull();
   });
 });
 
