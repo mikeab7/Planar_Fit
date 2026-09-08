@@ -565,6 +565,12 @@ function RailTab({ label, count, active, onClick }) {
 
 export default function MapFinder({ visible, isActive = true, overlays, setOverlays, layerStatus = {}, setLayerStatus, sites = [], parcelSummary = null, lastEditedByGroup = null, activeSiteId, onOpenSite, onDeleteSite, onSetStatus, onSetDates, onRenameSite, onSharedChange, onUseParcels, onSkip, comps = [], onPlaceComp, onCompClick, pendingCompAnchor = null, onCompAnchorConsumed, focusCompId = null, onCompFocusHandled, onCompsChange, onOpenReviewInDocReview }) {
   const elRef = useRef(null);
+  // B1310209 (NEW-2) — the map's own relatively-positioned host box (below), the same one every
+  // other floating map panel (the Comps rail, the Layers panel) is already a position:absolute
+  // child of. SitePlansSection portals its docked Adjust panel into this element directly, so it
+  // renders as a true sibling of those panels rather than wherever SitePlansSection happens to
+  // sit in the tree (deep inside the rail's own scroll region).
+  const mapHostRef = useRef(null);
   const mapRef = useRef(null);
   const addrTokRef = useRef(0); // B545: address-search generation — a newer search invalidates an older in-flight one
   const imageryCapRef = useRef(null); // NEW-6 — detach fn for the imagery layer's tile-cache cap
@@ -3000,7 +3006,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
           touch-action once it detects touch support (leaflet.css's `leaflet-touch-drag`/
           `leaflet-touch-zoom` classes) — this is the same intent stated one layer earlier, on
           the wrapper Leaflet mounts into, matching the fix in the Site Planner's own canvas. */}
-      <div style={{ position: "relative", flex: 1, minHeight: 0, touchAction: "none", overscrollBehavior: "none" }}>
+      <div ref={mapHostRef} style={{ position: "relative", flex: 1, minHeight: 0, touchAction: "none", overscrollBehavior: "none" }}>
         <div ref={elRef} style={{ position: "absolute", inset: 0 }} />
 
         {/* B831781 (NEW-6) — A PERSISTENT MODE NEEDS A VISIBLE ARMED STATE. With Comp mode active
@@ -3696,6 +3702,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                     focusedCompId={focusedComp?.id ?? null}
                     onStartPinExistingComp={pinExistingCompOnOverlay}
                     startUploadRef={startOverlayUploadRef}
+                    mapHostRef={mapHostRef}
                   />
                 </Suspense>
               </PanelErrorBoundary>
