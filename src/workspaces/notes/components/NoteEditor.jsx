@@ -86,6 +86,17 @@ const SHEET_PAD_TOP = { narrow: 18, wide: 30 };
 /* The gap under the title band, before the body starts. */
 const TITLE_BAND_GAP = 16;
 
+/* ⛔ THE STRIP OF GREY THAT MUST ALWAYS EXIST BESIDE THE PAGE (NOTES-FREE-PLACEMENT round 2).
+ * A page that has outgrown the pane is left-aligned so its own left edge is reachable at scroll 0
+ * — that part of B1273296's rule is right and is kept. What it must NOT do is put the page flush
+ * against the pane, because the grey margin IS the surface you place a note on and drag one into;
+ * at zero width the whole left half of "the page grows in four directions" becomes unreachable.
+ * The number is chosen against the GESTURE, not against taste: it has to be comfortably wider
+ * than a box's own grip and than the 4px slop that separates a press from a drag, and about the
+ * width of the natural gutter on a small laptop, so a grown page still reads as a page on a desk
+ * rather than as a different layout. */
+const MAT_GUTTER = 72;
+
 /* ⛔ THE PAGE TITLE IS A RATIO OF THE BODY, NOT A PIXEL NUMBER (NOTES-FREE-PLACEMENT / NEW-6,
  * owner report 2026-09-08: *"42px against 15px body, 2.8x, on a 580px column… it is the one
  * element still shouting"*).
@@ -2024,6 +2035,9 @@ export default function NoteEditor({
    * `0` is the ordinary state and costs nothing. */
   const [sheetGrowLeft, setSheetGrowLeft] = useState(0);
   const [sheetGrowTop, setSheetGrowTop] = useState(0);
+  /* Whether the sheet is genuinely wider than the pane it sits in — the ONE condition that makes
+   * centring impossible. Measured in the same pass as the growth, from the same numbers. */
+  const [sheetOverflowsPane, setSheetOverflowsPane] = useState(false);
   /* The title + metadata band's own height, measured rather than assumed: it is what sits between
    * the sheet's top padding and the body's own origin, so it is exactly how far ABOVE the body a
    * box may reach before the sheet itself has to grow. Measuring the band (content the effect
@@ -2307,9 +2321,14 @@ export default function NoteEditor({
        * (which would rewrap his words as a side effect of moving a box). */
       const contentW = Math.max(naturalPageWidth, needX);
       const grow = growLeft > 0 || needX > naturalPageWidth;
-      setSheetGrowWidth(grow ? growLeft + padX + contentW : null);
+      const totalSheetWidth = grow ? growLeft + padX + contentW : naturalSheetWidth;
+      setSheetGrowWidth(grow ? totalSheetWidth : null);
       setSheetGrowLeft(growLeft);
       setSheetGrowTop(growTop);
+      /* ⛔ THE GUTTER IS PART OF THE FIT TEST, not something added after it. A sheet that only
+       * fits once you ignore the margin beside it would flip to centred and immediately have no
+       * margin again — the defect this is fixing, one frame later. */
+      setSheetOverflowsPane(totalSheetWidth + MAT_GUTTER * 2 > paneWidth);
     };
     measure();
     /* Re-measured as the text inside a block reflows, which is the half that matters: the
@@ -2349,7 +2368,26 @@ export default function NoteEditor({
     const dom = editor && !editor.isDestroyed ? editor.view.dom : null;
     const sc = scrollerRef.current;
     if (!dom || !sc) return;
-    const at = { left: dom.offsetLeft, top: dom.offsetTop };
+    /* ⛔ THE POSITION IS READ IN THE SCROLLER'S OWN CONTENT SPACE, AND THE FIRST VERSION OF THIS
+     * READ `dom.offsetLeft` INSTEAD — WHICH IS ALWAYS 0 HERE, so the delta was always 0 and this
+     * effect never once fired (NOTES-FREE-PLACEMENT round 2). `offsetLeft` is measured against
+     * `offsetParent`, and the body's offsetParent is a wrapper inside the sheet, not the scroller
+     * — so it reads 0 no matter how far the sheet's own padding pushes the words sideways.
+     * Measured on the real gesture: the sheet's padding-left went 40px → 236px while `offsetLeft`
+     * stayed 0 both times, and the words moved 196px right under the reader.
+     * ⛔ THIS IS THE FAILURE MODE THE REPO KEEPS PAYING FOR — a guard that passes while the
+     * mechanism behind it is dead. It passed its own harness because every case there had the
+     * sheet CENTRED and growing rightward, where there is no shift to compensate; nothing pointed
+     * it at the one scene it exists for. Hence `verify-notes-left-margin-reachable`, which starts
+     * every case from an already-grown page.
+     * The rect-based form below is scroll-INDEPENDENT (the live `scrollLeft` is added back in), so
+     * two readings differ only by a real layout shift — never by the scrolling this then does. */
+    const scRect = sc.getBoundingClientRect();
+    const domRect = dom.getBoundingClientRect();
+    const at = {
+      left: Math.round(domRect.left - scRect.left + sc.scrollLeft),
+      top: Math.round(domRect.top - scRect.top + sc.scrollTop),
+    };
     const was = growAnchorRef.current;
     growAnchorRef.current = at;
     if (!was) return;                       // first measurement: nothing to hold steady against
@@ -2357,7 +2395,7 @@ export default function NoteEditor({
     const dy = at.top - was.top;
     if (dx) sc.scrollLeft += dx;
     if (dy) sc.scrollTop += dy;
-  }, [editor, sheetGrowWidth, sheetGrowLeft, sheetGrowTop]);
+  }, [editor, sheetGrowWidth, sheetGrowLeft, sheetGrowTop, sheetOverflowsPane]);
 
   /* ---- PASTE JUST THE TEXT (B36051) ------------------------------------------------------
    *
@@ -2633,7 +2671,28 @@ export default function NoteEditor({
            there, and the pane-overflow case (this same rule, one door further) is already
            subsumed — a sheet wide enough to outgrow the pane was already wide enough to have
            grown at all. */
-        style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column", alignItems: (narrow || sheetGrowWidth != null || sheetGrowTop > 0) ? "flex-start" : "center", position: "relative" }}
+        /* ⛔ SUPERSEDED, AND THE COMMENT ABOVE IS KEPT BECAUSE IT NAMES A REAL DEFECT THIS MUST NOT
+           REINTRODUCE (NOTES-FREE-PLACEMENT round 2, owner report 2026-09-08).
+           The rule above — stop centring the MOMENT anything has grown the page — closed the jump
+           it describes and opened a worse one: a grown sheet sits FLUSH against the pane's left
+           edge, so the grey margin on the left becomes ZERO. Measured at every width, on the
+           deployed build: ungrown, the sheet sits inside 276 of grey on each side; grown, the left
+           gutter is 0 and `elementFromPoint` at the mat's own left edge answers `note-sheet`. With
+           no left margin there is nothing to double-click in (the owner's "nothing is created at
+           all") and nowhere to drag a box into (his "it lands at left: 18px"). The page could grow
+           leftward in the model and you could not GET there.
+           ⛔ THE JUMP IS NOW HANDLED BY MEASUREMENT RATHER THAN BY ABANDONING CENTRING — the
+           layout effect above folds the body's own measured `offsetLeft` change into the scroller
+           in the same frame, which did not exist when the rule above was written. So the sheet
+           centres whenever it FITS (grown or not) and only left-aligns once it genuinely outgrows
+           the pane, and even then it keeps a real gutter to work in. */
+        style={{
+          flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column",
+          alignItems: (narrow || sheetOverflowsPane) ? "flex-start" : "center", position: "relative",
+          /* The gutter is only needed in the left-aligned case; centring already provides one. */
+          paddingLeft: (!narrow && sheetOverflowsPane) ? MAT_GUTTER : undefined,
+          paddingRight: (!narrow && sheetOverflowsPane) ? MAT_GUTTER : undefined,
+        }}
       >
         <PasteOptions
           offer={pasteAt && pasteOffer ? { ...pasteOffer, ...pasteAt } : null}
