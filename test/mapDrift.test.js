@@ -1,4 +1,4 @@
-/* MAP.md generator (B637; narrowed by NEW-1/B<PENDING>, 2026-09-08). This used to require the
+/* MAP.md generator (B637; narrowed by NEW-1/B1358128, 2026-09-08). This used to require the
  * committed repo-root MAP.md's file/export inventory to exactly match a fresh scan of the source
  * tree on every PR — dropped because that meant every PR that added/removed/renamed a file, or
  * changed a primary export (an extremely common shape of change), also had to regenerate and

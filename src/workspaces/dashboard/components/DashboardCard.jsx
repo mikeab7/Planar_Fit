@@ -10,11 +10,18 @@
  * renders a plain stack there, no react-grid-layout at all — "don't let a phone drag-resize a
  * grid it cannot see") Customize mode still needs to work for remove/add/reset, but there is no
  * drag gesture to offer, so the grip glyph and grab cursor are left off.
+ *
+ * `headerMeta` (NEW-COMPS-CARD) and `headerRight` (B1366384) are two independent optional quiet
+ * right-aligned slots in the header row, beside the title (the Comps card's "latest of N" uses
+ * headerMeta; the "Since you were last here" card's elapsed span uses headerRight). No card uses
+ * both at once today, but they're kept as separate props rather than merged into one so a future
+ * card can carry a count AND a span without inventing a third slot. Every other card leaves both
+ * unset, so their header row is byte-identical to before either was added.
  */
 import { RADIUS } from "../../../shared/ui/radius.js";
 import { IconButton } from "../../../shared/ui/controls.jsx";
 
-export default function DashboardCard({ title, headerRight, customizing, showDragHandle = true, onRemove, children }) {
+export default function DashboardCard({ title, headerRight, headerMeta, customizing, showDragHandle = true, onRemove, children }) {
   return (
     <div
       style={{
@@ -44,6 +51,11 @@ export default function DashboardCard({ title, headerRight, customizing, showDra
         {headerRight && (
           <span style={{ flex: "none", fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" }}>
             {headerRight}
+          </span>
+        )}
+        {headerMeta && (
+          <span style={{ fontSize: 10.5, color: "var(--text-secondary)", flex: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {headerMeta}
           </span>
         )}
         {customizing && (

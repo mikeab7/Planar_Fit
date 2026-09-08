@@ -30,7 +30,7 @@ describe("bug-hunt B505–B509: the fixes still exist in source", () => {
     // The theme token stays the single source of warn text across ALL three files (never a hex).
     const info = read("../src/workspaces/site-planner/lib/layerPanelInfo.js");
     expect(info).toMatch(/ls && ls\.stale \? "warn"/);                       // stale → warn tone
-    const rowInfo = read("../src/workspaces/site-planner/components/RowInfo.jsx");
+    const rowInfo = read("../src/shared/ui/RowInfo.jsx");
     expect(rowInfo).not.toMatch(/#b45309|#8a5410|#efb54e/i);                 // no hardcoded amber
     expect(rowInfo).toMatch(/tone === "warn" \? "var\(--warn-text\)"/);      // warn tone → theme token
   });

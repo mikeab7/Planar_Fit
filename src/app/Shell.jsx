@@ -315,6 +315,18 @@ export default function Shell() {
     setNoteIntent({ pageId, token: Date.now() });
     navigate({ module: "notes", projectId: projectId ?? null, cross: false, org: !!orgScope });
   };
+  // NEW-COMPS-CARD — same shape as openTaskInScheduler above: the Dashboard's Comps card click-
+  // through to its featured comp. A comp is never project-scoped (see shared/comps/db/comps.sql's
+  // own header — "may optionally reference a project, never requires one"), so this always routes
+  // to the Site Planner's map/finder view (projectId: null) rather than a specific project; the
+  // map finder's own effect (MapFinder.jsx, on `focusCompId` arriving) switches its left rail to
+  // the Comps tab and opens the panel, so nothing further is needed once `focusCompId` is set.
+  const [compIntent, setCompIntent] = useState(null);
+  const openCompInSitePlanner = ({ compId }) => {
+    if (compId == null) return;
+    setCompIntent({ compId, token: Date.now() });
+    navigate({ module: "site-planner", projectId: null, cross: false, org: false });
+  };
   // Cross-module schedule link (the Schedule + the Site Planner live in SEPARATE cloud backends
   // and can't read each other). When the embedded Schedule app reports a link set/created, mirror
   // the lightweight hint onto the Site Planner side so the Site dashboard can show "has a schedule"
@@ -711,6 +723,7 @@ export default function Shell() {
                     docIntent={docIntent}
                     scheduleTaskIntent={scheduleTaskIntent}
                     noteIntent={noteIntent}
+                    compIntent={compIntent}
                     onGoDashboard={goDashboard}
                     onNewProject={newProject}
                     onOpenReviewInDocReview={openReviewInDocReview}
@@ -780,6 +793,7 @@ export default function Shell() {
                   onOpenReviewInDocReview={openReviewInDocReview}
                   onOpenTaskInScheduler={openTaskInScheduler}
                   onOpenNoteInNotes={openNoteInNotes}
+                  onOpenCompInSitePlanner={openCompInSitePlanner}
                 />
               </Suspense>
             </ErrorBoundary>

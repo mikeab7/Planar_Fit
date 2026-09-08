@@ -1,4 +1,4 @@
-import RowInfo from "./RowInfo.jsx";
+import RowInfo from "../../../shared/ui/RowInfo.jsx";
 import { SOURCE_TAGS, SOURCE_TAG_COLOR_VAR } from "../lib/provenance.js";
 
 /* SourceTag (B895) — the one reusable "where did this number come from" tag. Every

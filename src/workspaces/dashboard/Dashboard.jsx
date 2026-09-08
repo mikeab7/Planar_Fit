@@ -40,20 +40,24 @@ import { Button, ToggleChip } from "../../shared/ui/controls.jsx";
 import DashboardCard from "./components/DashboardCard.jsx";
 import DashboardTopoBackground from "./components/DashboardTopoBackground.jsx";
 import {
-  JumpBackInCard, PipelineCard, GoingQuietCard, CompsSummaryCard, ScheduleHealthCard,
+  JumpBackInCard, PipelineCard, GoingQuietCard, ScheduleHealthCard,
   CardSkeleton,
 } from "./components/DashboardCards.jsx";
+import CompsCard from "./components/CompsCard.jsx";
 import { NeedsAttentionCard } from "./components/NeedsAttentionCard.jsx";
 import { PursuitsCard } from "./components/PursuitsCard.jsx";
 import { SinceLastHereCard } from "./components/SinceLastHereCard.jsx";
+import { RecentPlansCard } from "./components/RecentPlansCard.jsx";
 import {
   CARD_DEFS, GRID_COLS, normalizeLayout, availableToAdd, addCard, removeCard, resetLayout,
   applyGridChange, narrowOrder, toRglItem,
 } from "./lib/dashboardLayout.js";
+import { pickRecentPlans } from "./lib/recentPlans.js";
 import { loadDashboardLayout, saveDashboardLayout } from "./lib/dashboardPrefs.js";
 import { loadSinceLastHere, saveSinceLastHere } from "./lib/dashboardSinceLastHerePrefs.js";
 import { fetchSiteSummaries } from "./lib/dashboardSitesFetch.js";
-import { fetchCompsCounts, fetchCompsForMap } from "./lib/dashboardCompsFetch.js";
+import { fetchAllCompsForCard, fetchCompsForMap } from "./lib/dashboardCompsFetch.js";
+import { buildCompsCardData } from "./lib/compsCardModel.js";
 import { fetchRecentComps } from "./lib/dashboardCompsRecentFetch.js";
 import { fetchRecentNotePages } from "./lib/dashboardNotesRecentFetch.js";
 import { fetchLastTouchedDoc } from "./lib/dashboardDocFetch.js";
@@ -105,7 +109,7 @@ function useMeasuredWidth() {
   return [ref, width];
 }
 
-export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenNoteInNotes }) {
+export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenNoteInNotes, onOpenCompInSitePlanner }) {
   const [layout, setLayout] = useState(() => normalizeLayout(null));
   const [customizing, setCustomizing] = useState(false);
   const [saveNote, setSaveNote] = useState(null); // null | "saved" | "local" | "error"
@@ -156,10 +160,10 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
 
   // ── Data: one fetch per source, in parallel, once per mount. ──────────────────────────────
   const [sites, setSites] = useState([]);
-  const [comps, setComps] = useState(null);
+  const [comps, setComps] = useState([]);
   // NEW-1 (Locations map card) — the raw located-comp rows (id/lat/lon) the map draws as quiet
-  // dots. Separate from `comps` above, which is the aggregated type-count `compsSummary` card
-  // reads — the map needs positions, not a breakdown.
+  // dots. Separate from `comps` above, which now feeds the Comps card's featured-comp/peer-set
+  // derivation (full rows), not a type-count breakdown — the map only ever needs positions.
   const [compsForMap, setCompsForMap] = useState([]);
   const [doc, setDoc] = useState(null);
   const [scheduleProjects, setScheduleProjects] = useState(null);
@@ -198,7 +202,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
 
       const results = await Promise.allSettled([
         fetchSiteSummaries().then((v) => { if (live) setSites(v); return v; }),
-        fetchCompsCounts().then((v) => { if (live) setComps(v); }),
+        fetchAllCompsForCard().then((v) => { if (live) setComps(v); }),
         fetchCompsForMap().then((v) => { if (live) setCompsForMap(v); }),
         fetchLastTouchedDoc().then((v) => { if (live) setDoc(v); }),
         fetchScheduleProjects().then((v) => { if (live) setScheduleProjects(v); return v; }),
@@ -248,27 +252,27 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
 
   const cardData = useMemo(() => ({
     jumpBackIn: { project: mostRecentProject(projects), doc },
+    recentPlans: { plans: pickRecentPlans(sites, 4) },
     pipelineStatus: { counts: pipelineCounts(projects) },
     needsAttention: { rows: needsAttentionRows },
     pursuitsTable: { rows: pursuitsRows, yieldBySite: yieldBySiteMap },
     goingQuiet: { rows: goingQuiet(projects) },
-    compsSummary: { counts: comps },
+    compsSummary: { data: buildCompsCardData(comps) },
     scheduleHealth: { rows: scheduleProjects ? summarizeScheduleHealth(scheduleProjects) : [] },
     sinceLastHere: { feed: sinceLastHere?.feed || null },
-  }), [projects, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap, sinceLastHere]);
+  }), [projects, sites, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap, sinceLastHere]);
 
   const openProject = (p) => onNavigate?.({ module: "site-planner", projectId: p.groupId, cross: false, org: false });
   const openSchedule = (p) => onNavigate?.({ module: "scheduler", projectId: p.linkedSiteId, cross: false, org: false });
   const openDoc = (d) => onOpenReviewInDocReview?.({ id: d.id, project_id: d.projectId });
   const openTask = (row) => onOpenTaskInScheduler?.({ linkedSiteId: row.linkedSiteId, taskId: row.taskId });
-  // B1366384 — a comp's own `projectId` is a bare SITE id (comps.project_id → public.sites.id),
-  // not the GROUP id `onNavigate` needs to open the right plan; resolve it off the already-fetched
-  // `sites` list rather than a second query.
-  const openComp = (comp) => {
-    const site = sites.find((s) => s.id === comp?.projectId);
-    const groupId = site ? (site.group_id || site.id) : comp?.projectId;
-    if (groupId) onNavigate?.({ module: "site-planner", projectId: groupId, cross: false, org: false });
-  };
+  // B1366384 reuses this same handler for the "Since you were last here" card's comp-added rows —
+  // both cards hand it a full comp row, and this already knows how to route it (MapFinder's own
+  // effect switches to the Comps tab and highlights it once `focusCompId` arrives).
+  const openComp = (comp) => onOpenCompInSitePlanner?.({ compId: comp.id });
+  // Empty-state "add one" — there's no specific comp to deep-link into yet, so this lands the
+  // owner on the map/finder view, one click from the Comps tab (MapFinder's own toolbar).
+  const addComp = () => onNavigate?.({ module: "site-planner", projectId: null, cross: false, org: false });
   // NEW-1 (Locations map card) — "wherever he can fix them": the Site Planner's own project list
   // (no project id lands on MapFinder, never an auto-resumed last plan — SitePlannerApp.jsx's own
   // bootActiveId), where every located-or-not project is reachable to open and set a location on.
@@ -276,14 +280,15 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
 
   // NEW-1 — while data is still loading every slot renders the SAME stable-height skeleton
   // instead of its real (variable-height) content; see the `dataReady` effect above.
-  const SKELETON_ROWS = { jumpBackIn: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 2, goingQuiet: 3, sinceLastHere: 6, locationsMap: 6 };
+  const SKELETON_ROWS = { jumpBackIn: 2, recentPlans: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 6, goingQuiet: 3, sinceLastHere: 6, locationsMap: 6 };
   const CARD_RENDERERS = dataReady ? {
     jumpBackIn: () => <JumpBackInCard {...cardData.jumpBackIn} onOpenProject={openProject} onOpenDoc={openDoc} />,
+    recentPlans: () => <RecentPlansCard {...cardData.recentPlans} onOpenProject={openProject} />,
     pipelineStatus: () => <PipelineCard {...cardData.pipelineStatus} />,
     needsAttention: () => <NeedsAttentionCard {...cardData.needsAttention} onOpenTask={openTask} />,
     pursuitsTable: () => <PursuitsCard {...cardData.pursuitsTable} onOpenProject={openProject} />,
     goingQuiet: () => <GoingQuietCard {...cardData.goingQuiet} onOpenProject={openProject} />,
-    compsSummary: () => <CompsSummaryCard {...cardData.compsSummary} />,
+    compsSummary: () => <CompsCard {...cardData.compsSummary} onOpenComp={openComp} onAddComp={addComp} />,
     scheduleHealth: () => <ScheduleHealthCard {...cardData.scheduleHealth} onOpenSchedule={openSchedule} />,
     sinceLastHere: () => (
       <SinceLastHereCard
@@ -303,6 +308,11 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     ),
   } : Object.fromEntries(Object.keys(CARD_DEFS).map((k) => [k, () => <CardSkeleton rows={SKELETON_ROWS[k]} />]));
 
+  // NEW-COMPS-CARD — the header row's quiet right-side "latest of N" meta, computed only once
+  // real data is in (a skeleton card has nothing to count yet).
+  const compsHeaderMeta = dataReady && cardData.compsSummary.data.total
+    ? `latest of ${cardData.compsSummary.data.total}` : undefined;
+
   const toAdd = availableToAdd(layout);
   const orderedForNarrow = isNarrow ? narrowOrder(layout) : layout;
 
@@ -314,6 +324,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
       <DashboardCard
         title={def.title}
         headerRight={entry.key === "sinceLastHere" ? sinceLastHere?.headerSpan : null}
+        headerMeta={entry.key === "compsSummary" ? compsHeaderMeta : undefined}
         customizing={customizing}
         showDragHandle={!isNarrow}
         onRemove={() => setLayout((l) => removeCard(l, entry.key))}

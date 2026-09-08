@@ -281,6 +281,13 @@ export const SHEET_COLUMNS = [
     setValue: (d, v) => ({ ...d, landSizeUnit: v }),
     flagKey: () => "landSizeUnit",
   },
+  // NEW-COMPS-CARD — building-spec facts (clear height, year built): properties of the BUILDING,
+  // not the deal, so they sit in PROPERTY beside Size — and unlike Size they never vary by comp
+  // type, so a plain simpleColumn suffices (no polymorphic getValue/setValue). Land has no
+  // building yet, so both are grey em-dash there, same as every other building_sale/lease-only
+  // PROPERTY column. `db/comps_building_specs.sql`.
+  simpleColumn({ key: "clearHeightFt", label: "Clear Ht (ft)", fullLabel: "Clear height (ft)", group: "PROPERTY", width: 68, align: "right", kind: "number", appliesTo: (t) => t === "building_sale" || t === "lease" }),
+  simpleColumn({ key: "yearBuilt", label: "Yr Built", fullLabel: "Year built", group: "PROPERTY", width: 60, align: "right", kind: "number", appliesTo: (t) => t === "building_sale" || t === "lease" }),
 
   // DEAL — facts about the transaction: when, how long.
   // B986096-HARDENING-25 — `editHint` becomes the edit `<input>`'s native `placeholder` while a
