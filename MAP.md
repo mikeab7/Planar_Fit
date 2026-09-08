@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-08 @ `b8c0f520e` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-08 @ `a422d728` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -15,7 +15,7 @@
 > iframe), **Doc Review**, **Library**. `/server` is listed as folder structure only (below) —
 > never its contents or secrets.
 
-_716 source files mapped._
+_715 source files mapped._
 
 ## infra
 
@@ -27,7 +27,7 @@ _716 source files mapped._
   - _exports_: `arrivedViaFreshReload`, `chunkNameOf`, `clearRecovery`, `clearReloadGuard`, `hasReloadParam`, `installChunkReloadGuard`, `isChunkLoadError`, `isChunkRecoveryStuck`, `landingReport`, `noteRecoveryAttempt`, `readRecovery`, `RECOVERY_EPISODE_MAX_MS`, `RECOVERY_KEY`, `RECOVERY_SETTLE_MS`, `recoveryLine`, `recoveryStage`, `RELOAD_COOLDOWN_MS`, `RELOAD_GUARD_KEY`, `RELOAD_PARAM`, `reloadFresh`, `shouldReloadAfterPreloadError`, `shouldReportFailure`, `stripReloadParam`, `subscribeChunkRecoveryStuck`, `writeRecovery`
 - **`src/app/ErrorBoundary.jsx`** — Per-workspace React class error boundary: contains render crashes, detects chunk-load errors, offers cache-busting reload vs mid-deploy 'try again'
   - _exports_: `crashModuleSlug`, `default (ErrorBoundary)`
-- **`src/app/firstLanding.js`** — Sends a genuine first-timer's route-less boot to the Map (Site Planner, no project selected) instead of the Dashboard, using a durable cloud/local "has any project" check rather than a wipeable localStorage flag.
+- **`src/app/firstLanding.js`** — Redirects a genuinely route-less first boot with no projects anywhere (cloud, legacy local, or local cache) to the Site Planner's map view instead of the Dashboard; leaves any deep link or returning user untouched
   - _exports_: `firstLandingRedirect`, `isFreshRoutelessBoot`, `MAP_HASH`, `MAP_ROUTE`, `resolveHasAnyProjects`
 - **`src/app/flushRegistry.js`** — Cross-workspace flush-before-navigate registry: registerFlush/flushAll give each live workspace one synchronous local-save + keepalive cloud push before a forced reload
   - _exports_: `_flushers`, `flushAll`, `registerFlush`
@@ -69,7 +69,7 @@ _716 source files mapped._
   - _exports_: `default (DashboardCard)`
 - **`src/workspaces/dashboard/components/DashboardCards.jsx`** — the six default Dashboard card renderers (pure presentational, token-only).
   - _exports_: `CardSkeleton`, `CompsSummaryCard`, `GoingQuietCard`, `JumpBackInCard`, `PipelineCard`, `ScheduleHealthCard`
-- **`src/workspaces/dashboard/components/DashboardTopoBackground.jsx`** — Animated topographic contour field behind the dashboard's card grid; pauses during card drag/resize and stays non-interactive (pointer-events:none).
+- **`src/workspaces/dashboard/components/DashboardTopoBackground.jsx`** — animated topographic contour canvas behind the dashboard grid; dimmed, theme/brand-token colored, pauses on drag/resize/hidden-tab/reduced-motion/coarse-pointer.
   - _exports_: `default (DashboardTopoBackground)`
 - **`src/workspaces/dashboard/components/NeedsAttentionCard.jsx`** — Needs-attention dashboard card — flat cross-project task list sorted by days since needs-attention.
   - _exports_: `NeedsAttentionCard`
@@ -608,8 +608,6 @@ _716 source files mapped._
   - _exports_: `default (AppHeader)`, `exitFs`, `fsElement`, `fsSupported`, `MODULE_ACCENT`, `requestFs`, `useNarrow`
 - **`src/shared/ui/bottomSheetTracker.js`** — Module-scope publish/subscribe signal: the open mobile bottom sheet's live height, so a FloatingNotice can sit above it instead of under or over it
   - _exports_: `currentBottomSheetHeight`, `publishBottomSheetHeight`, `subscribeBottomSheetHeight`, `useBottomSheetHeight`
-- **`src/shared/ui/chromeDock.js`** — Registry letting the map/site-planner canvas claim the global Help/Report control as its own furniture (portal target) instead of separate fixed-viewport chrome
-  - _exports_: `activeChromeDock`, `registerChromeDock`
 - **`src/shared/ui/clickDiag.js`** — B1066370 self-instrumenting click diagnostic: a capture-phase listener flags a press with no matching click within a short window, so a "worked on the second click" report captures itself when the owner hits it live
   - _exports_: `describeSuspect`, `installClickDiag`, `labelFor`
 - **`src/shared/ui/CloudSyncBadge.jsx`** — App-wide cloud-sync glyph driven by real saveState (synced/saving/offline/readonly/error/local); loud never-vanish error via crash boundary + retry popover
