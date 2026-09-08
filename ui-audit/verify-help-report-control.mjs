@@ -121,10 +121,29 @@
  * (the docked button still never overlaps the zoom stack / Leaflet controls / the ✎ Tools FAB, by
  * construction of where the dock anchor sits), they just no longer describe `position:fixed` math.
  *
+ * ⛔ B1336528 (owner chat block "NEW-1", 2026-09-08) — PART J: the Schedule route's grid lives inside a
+ * same-origin `<iframe src="/sequence/">`, which `cornerClearanceFromBottom` used to never
+ * query — a genuine occupant a screen down inside that iframe read as "nothing in this corner"
+ * from the parent document alone. Fixed in `shared/ui/cornerClearance.js` (content-aware,
+ * same-origin iframe descent via `elementsFromPoint`, capped so a degenerate hit can't
+ * reproduce the old reserve-everything bug). PART J proves the exact shipped mechanism against a
+ * self-contained, zero-network synthetic iframe fixture rather than the real Schedule route,
+ * because THIS SANDBOX's headless Chromium cannot reach any external host at all —
+ * `/sequence/index.html` loads `@supabase/supabase-js`/`@tabler/icons-webfont` synchronously
+ * from `cdn.jsdelivr.net`, and that CONNECT tunnel measurably closes after ~6s through this
+ * session's own egress proxy (curl through the identical proxy succeeds; Chromium does not — see
+ * `cornerClearance.js`'s header for the full measurement). A live pass against the real Schedule
+ * route with real project data is filed as its own `VERIFICATION.md` entry, closable by any
+ * environment with ordinary internet access (a real browser, or CI).
+ *
  *   node ui-audit/verify-help-report-control.mjs [--url http://localhost:4173/] [--shots]
  */
 import { chromium, webkit, devices } from "playwright";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 import { assertMeasurable } from "./lib/tabTiming.mjs";
 import { pacedWait } from "./lib/tabTiming.mjs";
 
@@ -877,6 +896,61 @@ try {
       check("[live-switch] the corner-clearance math consumed the NEW size — the same probe occupant now overlaps the wider column and the button jumps to clear it (mutation-sensitive: reads ~14 if a stale width is fed in instead)", (after.vh - after.b) >= 205 && (after.vh - after.b) <= 215, `before clearance=${before.vh - before.b} after clearance=${after.vh - after.b}`);
       await ctx.close();
     }
+  }
+
+  // ─────────────────────────────────────────── PART J — NEW-1: same-origin iframe content
+  // clearance (the Schedule route). See this file's own header for why this drives a
+  // self-contained SYNTHETIC iframe rather than the real `/sequence/` page: this sandbox's
+  // headless Chromium cannot reach cdn.jsdelivr.net (or any external host) at all, which
+  // `/sequence/index.html` needs synchronously just to finish parsing. This proves the exact
+  // shipped mechanism — the real module source, read fresh off disk, dynamically imported into a
+  // real page — against a zero-network fixture instead, so the check is genuine, not skipped.
+  console.log("\nPART J — NEW-1: same-origin iframe content is measured, not invisible (synthetic fixture — see this file's header for why the real Schedule route can't load here)");
+  {
+    const modulePath = resolvePath(HERE, "../src/shared/ui/cornerClearance.js");
+    const moduleSource = readFileSync(modulePath, "utf8");
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await ctx.newPage();
+    await page.goto("about:blank");
+
+    // Import the REAL shipped module (not a re-typed copy) via a blob: URL — zero network, so
+    // this works identically regardless of what this session's egress policy allows.
+    await page.evaluate(async (src) => {
+      const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+      window.__cc = await import(url);
+    }, moduleSource);
+
+    // Mount a synthetic same-origin iframe mimicking Scheduler.jsx's real layout: a header band,
+    // then a full-bleed pane holding one "grid row" reaching the pane's own bottom-right corner —
+    // no third-party resource, so it loads instantly anywhere.
+    await page.evaluate(() => new Promise((resolve) => {
+      document.body.style.margin = "0";
+      const iframe = document.createElement("iframe");
+      Object.assign(iframe.style, { position: "fixed", left: "0", top: "61px", right: "0", bottom: "0", width: "100vw", height: "calc(100vh - 61px)", border: "none" });
+      iframe.srcdoc = '<!doctype html><html><body style="margin:0"><div class="drow" style="position:absolute; left:0; right:0; bottom:0; height:24px; background:#eee;"></div></body></html>';
+      iframe.onload = () => resolve();
+      document.body.appendChild(iframe);
+    }));
+    await pacedWait(page, 200);
+
+    const result = await page.evaluate(() => {
+      const { cornerClearanceFromBottom } = window.__cc;
+      const fixedBehavior = cornerClearanceFromBottom({ right: 14, width: 30, base: 14 });
+
+      // MUTATION-PROOF, against this SAME live DOM: temporarily suppress exactly what NEW-1
+      // added (the `document.querySelectorAll("iframe")` call the new descent loop makes) to
+      // reproduce the pre-fix code path, then restore it immediately. A build that reverts NEW-1
+      // would make `fixedBehavior` collapse to this `oldBehavior` value.
+      const realQSA = document.querySelectorAll.bind(document);
+      document.querySelectorAll = (sel) => (sel === "iframe" ? [] : realQSA(sel));
+      const oldBehavior = cornerClearanceFromBottom({ right: 14, width: 30, base: 14 });
+      document.querySelectorAll = realQSA;
+
+      return { fixedBehavior, oldBehavior };
+    });
+    check("PART J: replaying the pre-NEW-1 code path (no iframe descent) on this exact DOM reproduces the bare corner", result.oldBehavior === 14, JSON.stringify(result));
+    check("PART J: the shipped function genuinely clears the same-origin iframe's own bottom-right content", result.fixedBehavior > 14 && result.fixedBehavior < 100, JSON.stringify(result));
+    await ctx.close();
   }
 
   const failed = results.filter((r) => !r.ok);
