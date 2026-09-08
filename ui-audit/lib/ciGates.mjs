@@ -73,13 +73,16 @@ export function isUnsupportedExpression(value) {
  * mostly full builds answering a docs-only push that has no code to lint, test, or build).
  *
  * Deliberately narrow, and each entry earns its place by reading content a docs-only change can
- * actually touch: the two generated indexes (MAP.md, BACKLOG_OPEN.md), the per-folder CLAUDE.md
- * pointers, the backlog/verification id space (a docs-only push is exactly how a BACKLOG.md/
- * VERIFICATION.md hand-edit ships), and the required-check contract itself — which is also the
- * guard that would catch THIS list ever drifting into unreachability (see
- * ui-audit/required-check-audit.mjs). Every one of the six runs on nothing but Node built-ins and
- * the `git` CLI — no `npm ci` needed — which is why the docs-only path in scripts/ci-parity.mjs
- * skips dependency install entirely rather than merely skipping the heavy gates.
+ * actually touch: whether the PR touches a GENERATED doc it never should (NEW-1, B<PENDING>,
+ * 2026-09-08 — a touch to any of MAP.md/BACKLOG_OPEN.md/docs/UI-INVENTORY.md is exactly the kind
+ * of change this fast path would otherwise wave through, since they're all Markdown-extension
+ * files), the BACKLOG.md tag-legend rule, the per-folder CLAUDE.md pointers, the backlog/
+ * verification id space (a docs-only push is exactly how a BACKLOG.md/VERIFICATION.md hand-edit
+ * ships), and the required-check contract itself — which is also the guard that would catch THIS
+ * list ever drifting into unreachability (see ui-audit/required-check-audit.mjs). Every one of the
+ * six runs on nothing but Node built-ins and the `git` CLI — no `npm ci` needed — which is why the
+ * docs-only path in scripts/ci-parity.mjs skips dependency install entirely rather than merely
+ * skipping the heavy gates.
  *
  * Deliberately EXCLUDED: lint / the scheduler syntax guard / the GIS source registry guard / the
  * e2e + landing-coverage fixture guards / `npm test` / the Vite build / the performance budget /
@@ -87,9 +90,9 @@ export function isUnsupportedExpression(value) {
  * no source file, and they are the entire cost this fast path exists to avoid paying twice.
  */
 export const DOCS_ONLY_GATE_NAMES = [
+  "Generated-index touch guard (branches must never touch MAP.md / BACKLOG_OPEN.md / docs/UI-INVENTORY.md — NEW-1)",
   "Required-check contract guard (a required check must always be able to report — NEW-2)",
-  "MAP.md drift guard (regenerate with `node scripts/build-map.mjs` — B637)",
-  "BACKLOG_OPEN.md drift + tag-legend guard (regenerate with `node scripts/build-backlog-index.mjs` — B638)",
+  "BACKLOG.md tag-legend guard (every #tag must be in the legend — B638; narrowed by NEW-1)",
   "Doc pointer freshness guard (per-folder CLAUDE.md references — ui-audit/doc-pointer-audit.mjs)",
   "Verification-queue ceiling guard (no-Blocker / stale V# items — B825233)",
   "Mint gate (new B#/V# unclaimed on main and on in-flight branches — B779)",
