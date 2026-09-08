@@ -74,6 +74,22 @@ describe("sourceHealth — parcel-server circuit breaker (B244)", () => {
     expect(out.map((c) => c.county)).toEqual(["harris", "ar_statewide"]); // open breaker, still never dropped
   });
 
+  it("B1332016 continuation (2026-09-08) — a state wired from the owner's OWN BROWSER survives its own outage exactly like every other statewide composite, via the real STATEWIDE_KEYS list", () => {
+    // Same mutation proof as the AR case above, for the second batch (HI/MD/NE/NH) — these four
+    // were measured live from the owner's own browser rather than probed from this sandbox
+    // (docs/STATEWIDE-PARCELS.md), but they are wired through the identical `<state>_statewide`
+    // shape and reuse this exact outage path, zero per-state code. Nebraska is picked because
+    // gis.ne.gov is a REAL, confirmed 403 from this build environment's own egress policy.
+    expect(STATEWIDE_KEYS).toContain("ne_statewide");
+    expect(STATEWIDE_KEYS).toEqual(expect.arrayContaining(["hi_statewide", "md_statewide", "nh_statewide"]));
+    const t = 1000;
+    for (let i = 0; i < SOURCE_FAIL_THRESHOLD; i++) recordSourceResult("ne_statewide", false, t);
+    expect(isSourceOpen("ne_statewide", t)).toBe(true); // the breaker really did open — not a no-op
+    const cands = [{ county: "harris", url: "u1" }, { county: "ne_statewide", url: "u2" }];
+    const out = filterHealthyCandidates(cands, STATEWIDE_KEYS, t);
+    expect(out.map((c) => c.county)).toEqual(["harris", "ne_statewide"]); // open breaker, still never dropped
+  });
+
   it("never returns empty even if every candidate's breaker is open (coverage must survive)", () => {
     const t = 1000;
     for (let i = 0; i < SOURCE_FAIL_THRESHOLD; i++) { recordSourceResult("harris", false, t); recordSourceResult("fortbend", false, t); }
@@ -153,6 +169,14 @@ describe("isStatewideBackup — honest 'statewide backup' labeling (B630)", () =
     expect(isStatewideBackup("ny_statewide", {
       realPrimaries: [],
       queried: [{ county: "ny_statewide" }],
+      statewideKeys: STATEWIDE_KEYS,
+    })).toBe(false);
+  });
+
+  it("B1332016 continuation (2026-09-08) — the same holds for a state wired from the owner's own browser (Maryland has no per-county entry either)", () => {
+    expect(isStatewideBackup("md_statewide", {
+      realPrimaries: [],
+      queried: [{ county: "md_statewide" }],
       statewideKeys: STATEWIDE_KEYS,
     })).toBe(false);
   });

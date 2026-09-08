@@ -135,14 +135,16 @@ describe("the dialed-in tier is never shadowed by the derived tier (owner instru
 describe("the derivation changes nothing about enumeration or the statewide pseudo-keys", () => {
   it("STATEWIDE_KEYS is still a hand-curated, bounded list of pseudo-keys — derived counties are real counties, not fallback keys", () => {
     // NEW-1 (2026-09-08, docs/STATEWIDE-PARCELS.md) added 19 more hand-curated statewide
-    // composites alongside the original two — still every one dialed in by a probed URL, never
-    // a per-county DERIVATION the way the 254 Texas counties above are. The invariant this test
-    // guards is "still small and literal", not "still exactly two".
+    // composites alongside the original two; a same-day follow-up pass (B1332016, measured live
+    // from the owner's own browser — this sandbox can't reach any of these hosts) added HI/MD/NE/NH,
+    // raising 21 to 25 — still every one dialed in by a probed URL, never a per-county DERIVATION
+    // the way the 254 Texas counties above are. The invariant this test guards is "still small and
+    // literal", not "still exactly two" (or twenty-one).
     expect(STATEWIDE_KEYS).toEqual([
       "txgio_statewide", "co_statewide",
       "ak_statewide", "ar_statewide", "ct_statewide", "de_statewide", "fl_statewide",
-      "in_statewide", "ma_statewide", "mn_statewide", "mt_statewide", "nc_statewide",
-      "nd_statewide", "nj_statewide", "ny_statewide", "oh_statewide", "tn_statewide",
+      "hi_statewide", "in_statewide", "ma_statewide", "md_statewide", "mn_statewide", "mt_statewide", "nc_statewide",
+      "nd_statewide", "ne_statewide", "nh_statewide", "nj_statewide", "ny_statewide", "oh_statewide", "tn_statewide",
       "ut_statewide", "vt_statewide", "wi_statewide", "wy_statewide",
     ]);
   });

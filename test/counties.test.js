@@ -295,3 +295,52 @@ describe("resolveTaxRates — Harris wired, everyone else unchanged (NEW-1)", ()
     expect(r.note).toMatch(/Comptroller upstream unreachable/);
   });
 });
+
+// B1332016 continuation (2026-09-08) — Hawaii/Maryland/Nebraska/New Hampshire were measured live
+// from the owner's own browser (docs/STATEWIDE-PARCELS.md), not this sandbox, and wired following
+// the EXACT existing `<state>_statewide` shape: no bbox, `statewide: true`, no idField/addrField
+// hints (the app's own live field auto-detect handles absence — the hint fields are only ever a
+// fallback for when detection comes up empty, per counties.js's own module header).
+describe("B1332016 continuation — HI/MD/NE/NH statewide composites", () => {
+  const NEW_STATES = [
+    ["hi_statewide", "HI"],
+    ["md_statewide", "MD"],
+    ["ne_statewide", "NE"],
+    ["nh_statewide", "NH"],
+  ];
+
+  it.each(NEW_STATES)("%s is wired as a real statewide composite for %s", (key, state) => {
+    const entry = COUNTIES_MAP[key];
+    expect(entry, key).toBeTruthy();
+    expect(entry.state).toBe(state);
+    expect(entry.statewide).toBe(true);
+    expect(entry.bbox).toBeUndefined(); // must never win a click by extent — appended fallback only
+    expect(entry.mapServer).toBeNull();
+    expect(typeof entry.layerUrl).toBe("string");
+    expect(entry.layerUrl.length).toBeGreaterThan(0);
+    // No hand-typed idField/addrField — absent fields (MD owner name; NH/HI owner+value) must
+    // read as absent via live detection, never as a fabricated hint pointing at nothing.
+    expect(entry.idField).toBeUndefined();
+    expect(entry.addrField).toBeUndefined();
+  });
+
+  it("Hawaii is wired to layer 25 ('Statewide TMKs'), never layer 0 (a group layer) or a per-county layer", () => {
+    expect(COUNTIES_MAP.hi_statewide.layerUrl).toMatch(/\/ParcelsZoning\/MapServer\/25$/);
+  });
+
+  it("New Hampshire is wired to layer 1 ('Parcels', polygon), never layer 0 ('Parcel Points', point geometry)", () => {
+    expect(COUNTIES_MAP.nh_statewide.layerUrl).toMatch(/\/ParcelMosaic\/MapServer\/1$/);
+  });
+
+  it("each new state is queryable everywhere in its state as the trailing fallback (same contract as every other statewide key)", () => {
+    for (const [key] of NEW_STATES) {
+      expect(STATEWIDE_KEYS).toContain(key);
+    }
+  });
+
+  it("Mississippi is deliberately NOT wired — it ships as two half-state services and wiring only one would silently present half the state as the whole", () => {
+    expect(COUNTIES_MAP.ms_statewide).toBeUndefined();
+    expect(COUNTIES_MAP.ms_east_statewide).toBeUndefined();
+    expect(COUNTIES_MAP.ms_west_statewide).toBeUndefined();
+  });
+});
