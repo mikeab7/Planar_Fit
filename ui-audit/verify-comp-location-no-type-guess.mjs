@@ -8,12 +8,12 @@
  * `compType: "land"` unconditionally. `CompsPanel.jsx`'s `pendingAnchor` effect calls exactly
  * that — `emptyDraft(pendingAnchor)` — the moment a location is picked with NOTHING already
  * armed and NOTHING already open waiting for one: a fresh map pin drop (the toolbar's
- * "Place comp" button), a parcel select, or a site-plan pin, with the Comps sheet closed or
+ * toolbar's ground-first Drop-a-pin → "Log a comp"), a parcel select, or a site-plan pin, with the Comps sheet closed or
  * every existing row already located. That is the one path in this codebase where a location
  * alone, with zero deal terms typed anywhere, silently became a Land comp.
  *
  * This is the ONE scenario none of this module's existing ui-audit coverage exercises:
- * `verify-comp-entry-p0.mjs` and `verify-place-comp-split-button.mjs` both always seed a row via
+ * `verify-comp-entry-p0.mjs` (and the since-deleted `verify-place-comp-split-button.mjs`) seed a row via
  * the paste textarea FIRST (their own comments say why — "the append bug never shows on the
  * first row"), so every map-click check they run goes through the FILL-EXISTING-ROW branch, never
  * the APPEND-A-NEW-ROW branch this bug lives in. This script drives that branch specifically:
@@ -21,7 +21,7 @@
  * cell.
  *
  * No fixture needed — MapFinder is the default landing screen for a session with no open plan
- * (same as verify-place-comp-split-button.mjs), and the anchor/county lookup already races its
+ * (as the since-deleted verify-place-comp-split-button.mjs did), and the anchor/county lookup already races its
  * own offline timeout with no live GIS required to observe the DRAFT's Type value.
  *
  *   npm run dev -- --port 4319   (in another terminal)
@@ -54,27 +54,34 @@ await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 20000 });
 await page.waitForSelector(".leaflet-container", { timeout: 20000 });
 await pacedWait(page, 800);
 
-console.log("\n=== Arm Comp mode, but leave the paste sheet CLOSED — nothing armed, nothing open ===");
-await page.locator('div[role="tablist"][aria-label="What an address search creates"] button', { hasText: "Comp" }).click();
-await pacedWait(page, 150);
+// NEW-1 (2026-09-08) — there is no Comp MODE to arm any more; the map toolbar is ground-first and
+// the decide bar asks after you have pointed at something. Opening the Comps rail tab is all this
+// setup ever actually needed from that click.
+console.log("\n=== Open the Comps rail tab, leave the paste sheet CLOSED — nothing armed, nothing open ===");
 await page.getByRole("tab", { name: /^Comps/ }).first().click();
 await pacedWait(page, 200);
 check("the paste sheet is genuinely NOT open (no textarea on screen)", (await page.locator("textarea").count()) === 0);
 check("no rows exist yet", (await rowCount(page)) === 0);
 
-console.log("\n=== Click Place comp, click the map — the FIRST comp, nothing typed anywhere ===");
+console.log("\n=== Drop a pin, click the map, choose 'Log a comp' — the FIRST comp, nothing typed anywhere ===");
 {
-  const btn = page.getByRole("button", { name: "Place comp", exact: true });
+  const btn = page.getByTestId("map-toolbar-drop-pin");
   await btn.waitFor({ state: "visible", timeout: 8000 });
   await btn.click();
   await pacedWait(page, 150);
-  check('toolbar shows "Click the map to place a comp…" once armed',
-    (await page.getByText("Click the map to place a comp", { exact: false }).count()) > 0);
+  // NEW-1 — armed for a POINT, and the wording says nothing about what the point will become:
+  // that is the question the decide bar asks, and asking it early is what this item removed.
+  check('toolbar shows "Click the map to mark a point…" once armed',
+    (await page.getByText("Click the map to mark a point", { exact: false }).count()) > 0);
 
   const mapBox = await page.locator(".leaflet-container").first().boundingBox();
   check("found the Leaflet map container", !!mapBox);
   if (mapBox) {
     await page.mouse.click(mapBox.x + mapBox.width / 2, mapBox.y + 150);
+    await pacedWait(page, 400);
+    // NEW-1 — and NOW say what the point is. This is the only added step; everything downstream
+    // (the append-vs-fill branch, the Type cell) is the same code the old primary click reached.
+    await page.getByTestId("map-decide-verb-comp").click();
     await pacedWait(page, 3500); // resolveCompCounty races its own 3s offline timeout — no live GIS needed
   }
 

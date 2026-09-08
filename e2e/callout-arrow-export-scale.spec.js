@@ -19,8 +19,7 @@ const canvas = (p) => p.getByTestId("planner-canvas");
 async function startBlank(page) {
   await armPlannerHooks(page);
   await page.goto("/");
-  await page.getByTestId("map-start-blank-menu-btn").click();
-  await page.getByTestId("map-start-blank-menu-item").click();
+  await page.getByTestId("map-toolbar-draw").click();
   await expect(canvas(page)).toBeVisible();
 }
 

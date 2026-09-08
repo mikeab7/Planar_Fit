@@ -565,7 +565,8 @@ export default function SitePlansSection({
   // renders nothing (except an in-flight upload/crop flow, which is never site-scoped).
   // `onStartPinExistingComp(compId, overlayId)` replaces `onStartPinOnOverlay` here — pinning is
   // always re-pinning the ALREADY-OPEN comp now, never creating a new one (that flow still exists,
-  // unchanged, via the map's own "Place comp → on a site plan" menu). `startUploadRef` lets the
+  // unchanged, via this card's own "Pin comp here" — the map toolbar's "Place comp → on a site
+  // plan" menu was removed by NEW-1, 2026-09-08). `startUploadRef` lets the
   // Comps list's own "+ Site plan" button (no comp open yet — order (a), upload-first) trigger the
   // same upload flow this component owns.
   focusedProjectId = null, focusedCompId = null, onStartPinExistingComp, startUploadRef,
@@ -1268,7 +1269,8 @@ export default function SitePlansSection({
             onZoomToOverlay={onZoomToOverlay}
             pinning={pinningOverlayId === focusedOverlay.id}
             // B1167713 (NEW-2) — the ONLY thing that changed about pinning: the target is always
-            // the comp already open here, never a brand-new one (the map's own "Place comp → on a
+            // the comp already open here, never a brand-new one (this card's own "Pin comp here"; the
+            // map toolbar's "Place comp → on a
             // site plan" menu still creates new comps, unchanged, via onPlaceComp elsewhere).
             onStartPin={() => onStartPinExistingComp?.(focusedCompId, focusedOverlay.id)}
             onStopPin={() => onStopPinOnOverlay?.()}

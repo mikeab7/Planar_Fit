@@ -49,9 +49,9 @@ export async function startBlank(page) {
     await tab.click({ timeout: 3_000 });
     await expect(tab).toHaveAttribute("aria-current", "page", { timeout: 3_000 });
   }).toPass({ timeout: 30_000 });
-  // NEW-1 — "Start blank" is the secondary option behind the "Select parcels" split button's caret.
-  await page.getByTestId("map-start-blank-menu-btn").first().click();
-  await page.getByTestId("map-start-blank-menu-item").first().click();
+  // NEW-1 (2026-09-08) — "Start blank" is the map toolbar's first-class "Draw" button now; it
+  // was promoted out of the "Select parcels" caret menu when that toolbar went ground-first.
+  await page.getByTestId("map-toolbar-draw").first().click();
   await expect(canvas(page)).toBeVisible({ timeout: 15_000 });
 }
 

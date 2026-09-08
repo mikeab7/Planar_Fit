@@ -38,10 +38,10 @@ await page.evaluate(() => new Promise((res) => { const r = indexedDB.deleteDatab
 await page.reload({ waitUntil: "domcontentloaded" });
 await page.waitForTimeout(3500);
 
-const startCaret = page.getByTestId("map-start-blank-menu-btn").first();
+const startCaret = page.getByTestId("map-toolbar-draw").first();
 if (await startCaret.isVisible().catch(() => false)) {
   await startCaret.click();
-  await page.getByTestId("map-start-blank-menu-item").first().click();
+  await page.getByTestId("map-toolbar-draw").first().click();
   await page.waitForTimeout(2500);
 }
 const siteId = await page.evaluate((k) => localStorage.getItem(k), CUR_KEY);

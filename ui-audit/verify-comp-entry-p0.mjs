@@ -173,19 +173,20 @@ console.log("\n=== BLOCKER 2 — the toolbar pin fills the open row, never appen
   check("Location still 'Set' (genuinely unarmed) before the pick",
     await page.locator('td[data-cell^="0-"]').filter({ hasText: "Set" }).count() > 0);
 
-  // B848304 — the resting-state "Drop a pin"/"Comp from parcel" pair collapsed into ONE
-  // "Place comp" split button; the primary click uses the last-used anchor, defaulting to
-  // "On the map" on a fresh session (which every context in this file is), so this is the exact
-  // functional equivalent of the old "Drop a pin" click.
-  const placeCompBtn = page.getByRole("button", { name: "Place comp", exact: true });
-  await placeCompBtn.waitFor({ state: "visible", timeout: 8000 });
-  await placeCompBtn.click();
+  /* NEW-1 (2026-09-08) — GROUND FIRST, and the routing this check exists for is UNCHANGED by it.
+   * B848304's "Place comp ▾" is gone; the toolbar marks a POINT and the decide bar then asks what
+   * it is. Picking "Log a comp" there calls the very same `placeCompPinAt` the old primary click
+   * did, so HARDENING-12's guarantee — a toolbar pick fills the row already waiting rather than
+   * appending an orphan — is exercised on the identical code path, one click later. */
+  await page.getByTestId("map-toolbar-drop-pin").click();
   await pacedWait(page, 300);
 
   const mapBox = await page.locator(".leaflet-container").first().boundingBox();
   check("found the Leaflet map container", !!mapBox);
   if (mapBox) {
     await page.mouse.click(mapBox.x + mapBox.width / 2, mapBox.y + 150);
+    await pacedWait(page, 400);
+    await page.getByTestId("map-decide-verb-comp").click();
     // resolveCompCounty races a 3s timeout when GIS is unreachable (this fixture is offline).
     await pacedWait(page, 3500);
   }
