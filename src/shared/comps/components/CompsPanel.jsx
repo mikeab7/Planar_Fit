@@ -781,7 +781,7 @@ export default function CompsPanel({
   // the grid IS the create surface now (B849232/NEW-1 replaces the old single-comp create form;
   // editing an already-saved comp still uses the field form below).
   // ⛔ HARDENING-12 (B986096, owner P0 live-test) — "the toolbar pin ignores the row and makes a
-  // new one." The map toolbar's "Drop a pin"/"Comp from parcel" buttons arm the MAP directly, a
+  // new one." The map toolbar's own pin/parcel buttons arm the MAP directly, a
   // SEPARATE mechanism from the grid's own per-row arming above (`armedRowId`) — a user reaching
   // for the toolbar while a pasted row is still waiting for a location never touched a row's
   // Location cell, so `armedRowId` was null and every pick appended a fresh orphan row instead of
@@ -1115,8 +1115,10 @@ export default function CompsPanel({
               <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--text-secondary)" }}>Comps</span>
               {/* B849232/NEW-1 — the paste-grid, not the map pin tool, is the everyday way in now:
                   Michael enters comps in batches from broker emails, most of which don't start
-                  with a map click at all. The map's "Place comp" split button still works — it
-                  opens the grid pre-seeded with one row (see the pendingAnchor effect above).
+                  with a map click at all. The map is still a way in — NEW-1 (2026-09-08) turned
+                  its "Place comp ▾" split button into ground-first: point at ground (a pin or a
+                  parcel), then pick "Log a comp" on the decide bar. That opens the grid pre-seeded
+                  with one row exactly as before (see the pendingAnchor effect above).
                   B848304 — renamed from "＋ New comps": that name read as the primary CREATE
                   action and competed with the map's own comp-placement entry point for the same
                   job. This button's real job is bulk paste from a broker email or a spreadsheet
@@ -1156,7 +1158,7 @@ export default function CompsPanel({
             )}
             {kmlImportError && <div style={{ padding: "6px 14px 0", fontSize: 10.5, color: "var(--danger-text)" }}>{kmlImportError}</div>}
             <SummaryStrip comps={comps} />
-            {comps.length === 0 && <div style={{ padding: 14, fontSize: 12, color: "var(--text-secondary)" }}>No comps yet. Paste a few from a broker email with “＋ Paste comps” above, or use “Place comp” on the map.</div>}
+            {comps.length === 0 && <div style={{ padding: 14, fontSize: 12, color: "var(--text-secondary)" }}>No comps yet. Paste a few from a broker email with “＋ Paste comps” above, or point at the map and choose “Log a comp”.</div>}
             {comps.map((c) => <CompRow key={c.id} comp={c} onOpen={openDetail} overlaysById={overlaysById} />)}
 
             {/* B1066368 — "Recently deleted", mirroring SitePlansSection.jsx's own trash disclosure

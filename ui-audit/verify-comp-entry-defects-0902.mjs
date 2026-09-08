@@ -417,15 +417,18 @@ console.log("\n=== NEW-5 — Executed date optional: Today button, save not bloc
   check("with no Location set, the footer names ONLY the Location gap — never an Executed-date requirement",
     /missing a Location/i.test(panelTextNoLoc) && !/Executed date/i.test(panelTextNoLoc), panelTextNoLoc.match(/\d+ of \d+ ready[^.]*\./)?.[0]);
 
-  // Set a Location via the map (the same "Place comp" flow verify-comp-entry-p0.mjs uses) — the
-  // row is left with NO Executed date the whole time, proving date is genuinely non-blocking.
-  const placeCompBtn = page.getByRole("button", { name: "Place comp", exact: true });
-  if (await placeCompBtn.count()) {
-    await placeCompBtn.click();
+  // Set a Location via the map (the same ground-first flow verify-comp-entry-p0.mjs uses since
+  // NEW-1, 2026-09-08: mark a point, then say on the decide bar that it is a comp) — the row is
+  // left with NO Executed date the whole time, proving date is genuinely non-blocking.
+  const dropPinBtn = page.getByTestId("map-toolbar-drop-pin");
+  if (await dropPinBtn.count()) {
+    await dropPinBtn.click();
     await pacedWait(page, 300);
     const mapBox = await page.locator(".leaflet-container").first().boundingBox();
     if (mapBox) {
       await page.mouse.click(mapBox.x + mapBox.width / 2, mapBox.y + 150);
+      await pacedWait(page, 400);
+      await page.getByTestId("map-decide-verb-comp").click();
       await pacedWait(page, 3500);
     }
   }
