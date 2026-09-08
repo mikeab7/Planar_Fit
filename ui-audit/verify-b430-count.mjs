@@ -49,12 +49,12 @@ async function run() {
   if (await spTab.count()) { await spTab.click(); await page.waitForTimeout(800); ok("Site Planner tab clicked"); }
   else fail("Site Planner tab not found");
 
-  // Open a blank site so the tool rail appears — "Start blank" is the secondary option behind
-  // the "Select parcels" split button's caret (NEW-1).
-  const startCaret = page.locator('[data-testid="map-start-blank-menu-btn"]');
+  // Open a blank site so the tool rail appears — "Start blank" is the toolbar's first-class
+  // "Draw" button since NEW-1 (2026-09-08) took that toolbar ground-first.
+  const startCaret = page.locator('[data-testid="map-toolbar-draw"]');
   if (await startCaret.count()) {
     await startCaret.click();
-    await page.locator('[data-testid="map-start-blank-menu-item"]').click();
+    await page.locator('[data-testid="map-toolbar-draw"]').click();
     await page.waitForTimeout(1200);
     ok("Opened blank site");
   } else fail("Start blank caret not found");

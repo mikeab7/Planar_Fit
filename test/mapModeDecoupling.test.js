@@ -82,24 +82,42 @@ describe("MapFinder map-layer effects never read `mode` (B831778/NEW-3)", () => 
     expect(MENTIONS_MODE.test(body)).toBe(false);
   });
 
-  // ⛔ B850018 (NEW-11) SUPERSEDES this test's original claim. B831776/B831777's "one piece of
-  // state, never two" was a deliberate design and this test used to guard it; the owner reversed
-  // that design ("when i click comp in the center it shouldnt auto switch the left side to comp
-  // mode as well" — measured bidirectional coupling on deployed build 80c78cc). The toolbar switch
-  // (`mode`) and the rail tab (`panelTab`) are now two INDEPENDENT state variables, and this test
-  // now guards THAT instead — the opposite assertion, on purpose, not a loosening.
-  it("the toolbar switch reads `mode`; the rail tab reads its OWN `panelTab`, never `mode` (B850018/NEW-11)", () => {
+  /* ⛔ B850018 (NEW-11) reversed B831776/B831777's "one piece of state, never two" after the owner
+   * measured bidirectional coupling on deployed build 80c78cc ("when i click comp in the center it
+   * shouldnt auto switch the left side to comp mode as well"), and this test guarded the split
+   * that followed: `mode` (the centre toggle) and `panelTab` (the rail tab) as two independent
+   * variables.
+   * ⛔ NEW-1 (2026-09-08) — `mode` IS GONE, along with the SiteCompSwitch that read it: the map
+   * toolbar went ground-first, so nothing on it asks what you are making before you have pointed
+   * at ground. That REMOVES this coupling by construction rather than merely forbidding it, and
+   * this test now guards the stronger property — that no centre-toolbar mode comes back to couple
+   * the rail to. The RailTab half is unchanged and still asserted. */
+  it("no toolbar mode exists to couple the rail to, and the rail tab still reads its OWN `panelTab` (B850018/NEW-11 → NEW-1)", () => {
     const src = readFileSync(SRC, "utf8");
-    expect(src).toMatch(/<SiteCompSwitch mode=\{mode\} onChange=\{setMode\}/);
+    const code = stripComments(src);
+    // The switch, its state, and its storage key are gone — all three, so a partial resurrection
+    // (e.g. the state back without the control) fails here too.
+    expect(code).not.toMatch(/SiteCompSwitch/);
+    expect(code).not.toMatch(/const \[mode, /);
+    expect(code).not.toMatch(/setItem\("planarfit:mapMode:v1"/);
     expect(src).toMatch(/<RailTab label="Sites"[\s\S]{0,120}active=\{panelTab === "site"\}/);
     expect(src).toMatch(/<RailTab label="Comps"[\s\S]{0,80}active=\{panelTab === "comp"\}/);
     // Teeth proof: the OLD coupled pattern must genuinely be gone, not just "a new pattern also
-    // exists alongside it" — a partial revert would still satisfy the three matches above.
+    // exists alongside it" — a partial revert would still satisfy the two matches above.
     expect(src).not.toMatch(/<RailTab label="Sites"[\s\S]{0,120}active=\{mode === "site"\}/);
     expect(src).not.toMatch(/<RailTab label="Comps"[\s\S]{0,80}active=\{mode === "comp"\}/);
   });
 
-  it("setPanelTab is a plain setter — switching tabs must never cancel an in-flight comp placement the way leaving `mode` does", () => {
+  /* NEW-1 — `panelTab` still READS the retired `planarfit:mapMode:v1` key to seed itself, and that
+   * is deliberate: it is the value already sitting in every existing user's browser for "which
+   * list was I looking at", so dropping the read would silently reset the rail for all of them.
+   * Asserted so a later cleanup pass does not remove it as dead code. */
+  it("panelTab still seeds from the retired mapMode key, so existing users keep their rail tab", () => {
+    const code = stripComments(readFileSync(SRC, "utf8"));
+    expect(code).toMatch(/const \[panelTab, setPanelTab\] = useState\([\s\S]{0,220}getItem\("planarfit:mapMode:v1"\)/);
+  });
+
+  it("setPanelTab is a plain setter — switching tabs must never cancel an in-flight comp placement", () => {
     const src = readFileSync(SRC, "utf8");
     const i = src.indexOf("const [panelTab, setPanelTab] = useState(");
     expect(i, "panelTab state not found").toBeGreaterThan(-1);

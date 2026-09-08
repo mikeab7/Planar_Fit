@@ -136,7 +136,13 @@ export function nudgeDelta(key, { shift = false } = {}) {
  * supposed to move it. So the delta is clamped ONCE, against the whole set's bounding box, and
  * every member gets the same clamped delta. `min` defaults to zero (the page's own edge).
  */
-export function moveSelection(boxes = [], { dx = 0, dy = 0 }, { min = 0, maxX = Infinity } = {}) {
+/* ⛔ A GROUP DRAG IS NOT CLAMPED EITHER (NOTES-FREE-PLACEMENT, owner report 2026-09-08). `min`
+ * used to default to 0 — the same positive-only floor `moveAnchorPoint` held — so a selection
+ * dragged past the page's left or top edge stopped dead while the page failed to grow. Both
+ * defaults are now open, and the SHEET grows to hold whatever the set reaches (`anchorExtentLeft`
+ * / `anchorExtentTop`). The parameters stay so a caller that genuinely needs a wall can ask for
+ * one; no caller does today. */
+export function moveSelection(boxes = [], { dx = 0, dy = 0 }, { min = -Infinity, maxX = Infinity } = {}) {
   const members = (boxes || []).filter((b) => b && b.id != null);
   if (!members.length) return [];
   let left = Infinity;

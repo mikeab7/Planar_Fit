@@ -56,10 +56,10 @@ await page.waitForTimeout(3500);
 check("app booted clean with initHistoryStore at module load", errs.length === 0, errs.join(" | ").slice(0, 160));
 
 // Create a new site + place several count-changing edits (each distinct shape → forces a snapshot).
-const startCaret = page.getByTestId("map-start-blank-menu-btn").first();
+const startCaret = page.getByTestId("map-toolbar-draw").first();
 if (await startCaret.isVisible().catch(() => false)) {
   await startCaret.click();
-  await page.getByTestId("map-start-blank-menu-item").first().click();
+  await page.getByTestId("map-toolbar-draw").first().click();
   await page.waitForTimeout(2500);
 }
 const newId = await page.evaluate((k) => { try { return localStorage.getItem(k); } catch (_) { return null; } }, CUR_KEY);

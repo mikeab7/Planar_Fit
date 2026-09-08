@@ -54,8 +54,7 @@ const canvas = () => page.getByTestId("planner-canvas");
 try {
   await page.goto(BASE, { waitUntil: "load" });
   await settle(page, 700);
-  await page.getByTestId("map-start-blank-menu-btn").click();
-  await page.getByTestId("map-start-blank-menu-item").click();
+  await page.getByTestId("map-toolbar-draw").click();
   await page.waitForSelector('[data-testid="planner-canvas"]', { timeout: 10000 });
   await settle(page, 500);
   const box = await canvas().boundingBox();
