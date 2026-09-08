@@ -22,7 +22,9 @@ import { NUM_FONT, TABULAR_NUMS } from "../../../shared/theme/typography.js";
 import { FONT_SIZE } from "../../../shared/ui/designTokens.js";
 import Chip from "../../../shared/ui/Chip.jsx";
 import { pinFallbackText, siteplanLocationText } from "../../../shared/comps/lib/compLocationText.js";
-import { TYPE_LABEL, compSizeSf, relativeTimeLabel, countyEntry, compScaleLayout } from "../lib/compsCardModel.js";
+import {
+  TYPE_LABEL, compSizeSf, relativeTimeLabel, countyEntry, compScaleLayout, MIN_PEERS_FOR_SCALE,
+} from "../lib/compsCardModel.js";
 
 const MUTED = { fontSize: 12, color: "var(--text-secondary)" };
 const EMPTY = { fontSize: 12, color: "var(--text-secondary)", fontStyle: "italic" };
@@ -111,7 +113,7 @@ export default function CompsCard({ data, onOpenComp, onAddComp }) {
   const { peerSet, rate, countyLabel, sentence } = data;
   const peers = peerSet?.peers || [];
   const excludedCount = peerSet?.excludedCount || 0;
-  const scaleReady = rate != null && peers.length >= 3;
+  const scaleReady = rate != null && peers.length >= MIN_PEERS_FOR_SCALE;
   const addedAgo = relativeTimeLabel(featured.createdAt);
   const typeLabel = TYPE_LABEL[featured.compType] || "Comp";
   const sizeSf = compSizeSf(featured);
@@ -119,9 +121,23 @@ export default function CompsCard({ data, onOpenComp, onAddComp }) {
   if (sizeSf != null) specParts.push(`${Math.round(sizeSf).toLocaleString()} SF`);
   if (featured.clearHeightFt != null) specParts.push(`${Number(featured.clearHeightFt).toLocaleString()} ft clear`);
   if (featured.yearBuilt != null) specParts.push(`built ${featured.yearBuilt}`);
+  // The reason comes from the model (`buildPeerSet`), which is the only thing that knows WHY a comp
+  // was held out — a fixed "missing county or size" stopped being true once a mismatched lease basis
+  // or land unit became an exclusion too.
   const excludedNote = excludedCount > 0
-    ? ` (${excludedCount} nearby comp${excludedCount === 1 ? "" : "s"} excluded — missing county or size.)`
+    ? ` (${excludedCount} nearby comp${excludedCount === 1 ? "" : "s"} excluded — ${peerSet?.excludedReason || "not comparable"}.)`
     : "";
+  // ⛔ BELOW `MIN_PEERS_FOR_SCALE` THE CARD SAYS ONE THING, ONCE. It used to print the "Against your
+  // last N …" heading and, directly beneath it, "this one stands alone" — two sentences contradicting
+  // each other inside one panel (adversarial review, 2026-09-08; on Michael's real account it read
+  // "Against your last 1 in Harris County, TX" above "this one stands alone"). The heading is a claim
+  // that a comparison is being drawn, so it renders only when one actually is.
+  const where = countyLabel || "this county";
+  const sparseLine = rate == null
+    ? "This comp's rate isn't recorded yet, so it can't be placed against its peers."
+    : peers.length === 0
+      ? `No comparable comps in ${where} yet — this one stands alone.`
+      : `Only ${peers.length === 1 ? "one other comparable comp" : `${peers.length} other comparable comps`} in ${where} yet — not enough to place this one on a scale.`;
 
   return (
     <div
@@ -177,18 +193,15 @@ export default function CompsCard({ data, onOpenComp, onAddComp }) {
       )}
 
       <div style={{ marginTop: 2, padding: "10px 12px", borderRadius: RADIUS.sm, background: "var(--surface-base)", display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={UPPER_LABEL}>Against your last {peers.length} in {countyLabel || "this county"}</div>
         {scaleReady ? (
           <>
+            <div style={UPPER_LABEL}>Against your last {peers.length} in {where}</div>
             <CompScale featuredRate={rate.value} peerRates={peers.map((p) => p.rate)} />
             <div style={{ fontSize: FONT_SIZE.control, color: "var(--text-secondary)", lineHeight: 1.4 }}>{sentence}{excludedNote}</div>
           </>
         ) : (
           <div style={{ fontSize: FONT_SIZE.control, color: "var(--text-secondary)", fontStyle: "italic", lineHeight: 1.4 }}>
-            {rate == null
-              ? "This comp's rate isn't recorded yet, so it can't be placed against its peers."
-              : `Not enough comps in ${countyLabel || "this county"} yet to compare — this one stands alone.`}
-            {excludedNote}
+            {sparseLine}{excludedNote}
           </div>
         )}
       </div>
