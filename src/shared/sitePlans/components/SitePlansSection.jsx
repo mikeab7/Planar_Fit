@@ -24,7 +24,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Button, Field, IconButton, ToggleChip } from "../../ui/controls.jsx";
+import { Button, Field, IconButton, MenuItem, ToggleChip } from "../../ui/controls.jsx";
+import AnchoredMenu from "../../ui/AnchoredMenu.jsx";
 import { RADIUS } from "../../ui/radius.js";
 import { FONT_SIZE } from "../../ui/designTokens.js";
 import { MAP_CHROME_Z, panelMaxHeight, SCALE_BAR_CLEARANCE_PX } from "../../../workspaces/site-planner/lib/mapChromeStack.js";
@@ -206,6 +207,16 @@ function LockIcon({ locked }) {
     </svg>
   );
 }
+// NEW-5 (owner chat, 2026-09-08) — the resting card's one action button becomes this menu's
+// trigger; drawn (not the `⋯` text glyph) for the same reason ProjectBreadcrumb's own per-row
+// kebab is (a text ellipsis is at the mercy of the platform font, sitting beside real SVG icons).
+function KebabIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ flex: "none", display: "block" }}>
+      <circle cx="12" cy="5" r="1.9" /><circle cx="12" cy="12" r="1.9" /><circle cx="12" cy="19" r="1.9" />
+    </svg>
+  );
+}
 
 /* The image-point picker was removed with the control-point wizard — a page preview is now
  * purely informational (no clicks collected). */
@@ -232,14 +243,29 @@ function emptyFlow() {
 
 /** One overlay's RESTING card (B1310208, NEW-1, owner decision 2026-09-07: "at rest the plan card
  * shows what it IS and nothing you operate"). Thumbnail, name, date/page and status lines only —
- * every editing control (visibility, lock, opacity, rotation, share, move/resize, crop, pin,
- * change page, delete) lives in the docked SitePlanAdjustPanel below, reached through the one
- * "Adjust" button. There is no overflow menu ("why do we even have the three dots" — owner,
- * NEW-3): Edit/adjust IS the Adjust button; Delete moved to the Adjust panel's own footer.
+ * every editing control (visibility, lock, opacity, rotation, share, move/resize, crop) lives in
+ * the docked SitePlanAdjustPanel below; the occasional, deliberate ones (Adjust, Change page, Pin
+ * comp here, Delete site plan) live in this row's own three-dot menu.
+ * ⛔ NEW-5 (owner chat, 2026-09-08) — SUPERSEDES B1310210's "why do we even have the three dots"
+ * removal, and this is a deliberate correction, not a revert of that item: what the owner objected
+ * to on 2026-09-07 was that the menu rendered with NO background at all (fixed at the root by
+ * B1263075, `AnchoredMenu`'s own default-opaque-surface fix) — not the menu existing. With that
+ * fixed, he asked for the labelled "Adjust" button itself to become the icon, so the resting card
+ * reads even quieter: a name, a thumbnail, and one small control rather than one labelled button.
  * Module scope (MODULE-SCOPE-COMPONENTS). */
-function OverlayRow({ o, adjustOpen, onOpenAdjust, onRename, rasterFailed, duplicateCount, zoomBelowGate, onZoomToOverlay }) {
+function OverlayRow({
+  o, adjustOpen, onOpenAdjust, onRename, rasterFailed, duplicateCount, zoomBelowGate, onZoomToOverlay,
+  pinning, onStartPin, onStopPin, onConfirmChangePage, onDelete,
+}) {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(o.docTitle || "");
+  const [menuOpen, setMenuOpen] = useState(false);
+  // "list" | "confirmChangePage" | "confirmDelete" — the menu swaps its OWN content for a
+  // confirm step rather than closing (the ProjectBreadcrumb per-row kebab's own pattern), so
+  // Change page / Delete keep a real "are you sure" without a second, separate control.
+  const [menuView, setMenuView] = useState("list");
+  const menuAnchorRef = useRef(null);
+  const closeMenu = () => { setMenuOpen(false); setMenuView("list"); };
 
   const commitName = () => {
     setEditingName(false);
@@ -281,12 +307,51 @@ function OverlayRow({ o, adjustOpen, onOpenAdjust, onRename, rasterFailed, dupli
             {o.sourceFileName && stripFileExt(o.sourceFileName) !== (o.docTitle || "") ? `${o.sourceFileName} · ` : ""}{o.docDate || ""} · p.{o.page}
           </div>
         </div>
-        {/* B1310208/B1310209 — the ONE button that leaves the resting card: everything that used
-            to live behind the disclosure arrow, the overflow menu, and the expanded action band
-            now lives in the docked panel this opens. */}
-        <Button size="sm" variant={adjustOpen ? "primary" : "ghost"} onClick={onOpenAdjust} style={{ ...ACTION_BTN_STYLE, flex: "none" }}>
-          Adjust
-        </Button>
+        {/* NEW-5 — the ONE control that leaves the resting card: Adjust opens the docked
+            manipulation panel; Change page / Pin comp here / Delete site plan are occasional,
+            deliberate edits that don't need their own always-visible buttons. */}
+        <div style={{ position: "relative", flex: "none" }}>
+          <IconButton ref={menuAnchorRef} size={26} active={adjustOpen || menuOpen}
+            onClick={() => setMenuOpen((v) => !v)} aria-label="More actions" title="More actions">
+            <KebabIcon />
+          </IconButton>
+          <AnchoredMenu open={menuOpen} onClose={closeMenu} anchorRef={menuAnchorRef} placement="below-right" width={210}>
+            {menuView === "list" && (
+              <>
+                <MenuItem onClick={() => { closeMenu(); onOpenAdjust(); }}>Adjust</MenuItem>
+                <MenuItem onClick={() => setMenuView("confirmChangePage")}>Change page…</MenuItem>
+                {placed && (pinning ? (
+                  <MenuItem onClick={() => { closeMenu(); onStopPin(); }} style={{ display: "flex", alignItems: "center", gap: 6 }}><PinIcon />Cancel pin</MenuItem>
+                ) : (
+                  <MenuItem onClick={() => { closeMenu(); onStartPin(); }} style={{ display: "flex", alignItems: "center", gap: 6 }}><PinIcon />Pin comp here</MenuItem>
+                ))}
+                <MenuItem onClick={() => setMenuView("confirmDelete")} style={{ color: "var(--danger-text)" }}>Delete site plan…</MenuItem>
+              </>
+            )}
+            {menuView === "confirmChangePage" && (
+              <div style={{ padding: "5px 7px" }}>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 9 }}>
+                  Changing the page clears this plan's position on the map.
+                </div>
+                <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                  <Button size="sm" variant="ghost" onClick={() => setMenuView("list")}>Cancel</Button>
+                  <Button size="sm" variant="danger" onClick={() => { closeMenu(); onConfirmChangePage(); }}>Change page</Button>
+                </div>
+              </div>
+            )}
+            {menuView === "confirmDelete" && (
+              <div style={{ padding: "5px 7px" }}>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 9 }}>
+                  Delete “{o.docTitle || "this site plan"}”? Comps pinned to it keep their location but lose the link back.
+                </div>
+                <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                  <Button size="sm" variant="ghost" onClick={() => setMenuView("list")}>Cancel</Button>
+                  <Button size="sm" variant="danger" onClick={() => { closeMenu(); onDelete(); }}>Delete</Button>
+                </div>
+              </div>
+            )}
+          </AnchoredMenu>
+        </div>
       </div>
 
       {!placed && <div style={{ fontSize: FONT_SIZE.label, color: "var(--warn-text)", marginTop: 4 }}>Not placed yet.</div>}
@@ -331,35 +396,32 @@ function OverlayRow({ o, adjustOpen, onOpenAdjust, onRename, rasterFailed, dupli
 }
 
 /** The docked "Adjust" panel (B1310209, NEW-2, owner decision 2026-09-07 — "if it's like a small
- * panel, then that's fine by me"). Every editing control for the plan currently focused in the
- * Comps rail, opened by OverlayRow's "Adjust" button and portaled straight onto the map (docked
- * bottom-right, MAP_CHROME_Z.panel — mapChromeStack.js's own header has the corner reasoning and
- * the measured scale-bar clearance). Same surface/border/radius/shadow as the Layers panel, so it
- * reads as the fourth instance of the app's existing floating-map-panel system, not a new one —
- * it DOCKS, it never hovers or drags.
- * NEW-3 — the old overflow menu's two items land here: Move/resize's own label already doubles
- * as its exit (click again to stop editing), and Delete gets its own separated footer slot next
- * to Done, rather than sharing a menu with an edit action. Pin comp here and Change page… join
- * Move/resize and Crop in the body — all four are the same class of thing (an occasional,
- * deliberate edit to an already-placed plan), so they get one shared action row.
+ * panel, then that's fine by me"). Opened by OverlayRow's three-dot menu and portaled straight
+ * onto the map (docked bottom-right, MAP_CHROME_Z.panel — mapChromeStack.js's own header has the
+ * corner reasoning and the measured scale-bar clearance). Same surface/border/radius/shadow as the
+ * Layers panel, so it reads as the fourth instance of the app's existing floating-map-panel
+ * system, not a new one — it DOCKS, it never hovers or drags.
+ * ⛔ NEW-5 (owner chat, 2026-09-08) — this panel now holds ONLY the controls you manipulate WHILE
+ * adjusting a plan already on the map: visibility, lock, opacity, rotation, share, move/resize,
+ * crop. Change page / Pin comp here / Delete site plan moved OUT, to OverlayRow's own three-dot
+ * menu — those are occasional, deliberate actions, not something dragged or watched while
+ * positioning the plan, and having them here made the panel do two different jobs at once.
  * NEW-4 — opacity (dragged constantly, judged on the map) is its own prominent, full-width block;
  * rotation (set once, and read-only while locked per B1154369) is a visibly quieter, compact one
  * right below it — the two no longer compete for the same weight.
- * ⛔ Found live during this item's own headless verification: the global help/report FAB
+ * ⛔ Found live during B1310209's own headless verification: the global help/report FAB
  * (`app/HelpReportControl.jsx`) is ALSO fixed bottom-right and measures the real DOM to decide
  * its own clearance (`shared/ui/cornerClearance.js`) — but it only clears Leaflet's own
  * `.leaflet-bottom.leaflet-right` container and anything carrying `data-canvas-corner`. A new
  * bottom-right occupant that doesn't declare itself is invisible to that math, and this panel's
- * footer (Delete / Done) sat right where the FAB was measured to land. Declaring
+ * footer sat right where the FAB was measured to land. Declaring
  * `data-canvas-corner="site-plan-adjust"` is the whole fix — no coordinate math of our own,
  * the FAB reads our rendered box and floats clear of it, per that module's own contract. */
 function SitePlanAdjustPanel({
-  o, isActive, onActivate, onDeactivate, pinning, onStartPin, onStopPin,
+  o, isActive, onActivate, onDeactivate,
   onSetOpacity, onOpacityCommit, onSetRotation, onToggleVisible, onToggleLocked, onStartCrop,
-  onConfirmChangePage, onDelete, teams, onShareTeam, isOwner, onClose,
+  teams, onShareTeam, isOwner, onClose,
 }) {
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [confirmingChangePage, setConfirmingChangePage] = useState(false);
   // B1134753 NEW-20 — "rotation needs a way to type an exact value." `null` = not editing (show
   // the live stored value); a string while the field has focus, so a half-typed "12." isn't
   // clobbered by the next map-driven re-render mid-keystroke.
@@ -463,10 +525,8 @@ function SitePlanAdjustPanel({
           </div>
         )}
 
-        {/* NEW-3 — Move/resize, Crop, Pin comp here and Change page… are the same class of
-            action (an occasional, deliberate edit to an already-placed plan), so they share one
-            row here rather than splitting across a resting-card action band and an overflow
-            menu the way they used to. One shared height (ACTION_BTN_STYLE, NEW-3/B1263074). */}
+        {/* NEW-5 — Move/resize and Crop are the two things you manipulate on the map itself
+            while this panel is open; one shared height (ACTION_BTN_STYLE, NEW-3/B1263074). */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", paddingTop: 6, borderTop: "1px solid var(--border-default)" }}>
           {/* Move/resize's own label now doubles as its exit — clicking it again while active
               stops editing, which is what the old overflow menu's "Stop editing" row did. */}
@@ -480,36 +540,13 @@ function SitePlanAdjustPanel({
             title={!o.rasterKey ? "This plan doesn't have an image yet" : hasCrop(o) ? "Already cropped — edit or reset it" : undefined}>
             <CropIcon />{hasCrop(o) ? "Edit crop" : "Crop…"}
           </ToggleChip>
-          {placed && (pinning ? (
-            <Button size="sm" variant="danger" onClick={onStopPin} style={ACTION_BTN_STYLE}>Cancel pin</Button>
-          ) : (
-            <Button size="sm" variant="ghost" onClick={onStartPin} style={ACTION_BTN_STYLE}><PinIcon />Pin comp here</Button>
-          ))}
-          {confirmingChangePage ? (
-            <Button size="sm" variant="danger" onClick={() => { setConfirmingChangePage(false); onConfirmChangePage(); }} style={ACTION_BTN_STYLE}>Confirm — this clears its position</Button>
-          ) : (
-            <Button size="sm" variant="ghost" onClick={() => setConfirmingChangePage(true)} style={ACTION_BTN_STYLE}>Change page…</Button>
-          )}
         </div>
       </div>
 
-      {/* NEW-3 — Delete gets a deliberately separated home: the panel's own footer, beside Done,
-          where a destructive action is predictable and isn't sharing a menu with an edit action. */}
-      <div style={{ flex: "none", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "7px 10px", borderTop: "1px solid var(--border-default)", background: "var(--surface-raised)" }}>
-        {confirmingDelete ? (
-          <>
-            <span style={{ fontSize: FONT_SIZE.label, color: "var(--danger-text)" }}>Delete “{o.docTitle || "this site plan"}”? Comps pinned to it keep their location but lose the link back.</span>
-            <span style={{ display: "flex", gap: 6, flex: "none" }}>
-              <Button size="sm" variant="danger" onClick={() => { setConfirmingDelete(false); onDelete(); }}>Delete</Button>
-              <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)}>Cancel</Button>
-            </span>
-          </>
-        ) : (
-          <>
-            <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(true)} style={{ color: "var(--danger-text)" }}>Delete site plan…</Button>
-            <Button size="sm" onClick={onClose}>Done</Button>
-          </>
-        )}
+      {/* NEW-5 — Delete moved to OverlayRow's own three-dot menu (an occasional, deliberate
+          action, not something manipulated while adjusting), so the footer is Done alone now. */}
+      <div style={{ flex: "none", display: "flex", alignItems: "center", justifyContent: "flex-end", padding: "7px 10px", borderTop: "1px solid var(--border-default)", background: "var(--surface-raised)" }}>
+        <Button size="sm" onClick={onClose}>Done</Button>
       </div>
     </div>
   );
@@ -1229,6 +1266,14 @@ export default function SitePlansSection({
             rasterFailed={!!rasterFailedIds?.has(focusedOverlay.id)}
             zoomBelowGate={zoomBelowGate}
             onZoomToOverlay={onZoomToOverlay}
+            pinning={pinningOverlayId === focusedOverlay.id}
+            // B1167713 (NEW-2) — the ONLY thing that changed about pinning: the target is always
+            // the comp already open here, never a brand-new one (the map's own "Place comp → on a
+            // site plan" menu still creates new comps, unchanged, via onPlaceComp elsewhere).
+            onStartPin={() => onStartPinExistingComp?.(focusedCompId, focusedOverlay.id)}
+            onStopPin={() => onStopPinOnOverlay?.()}
+            onConfirmChangePage={() => startChangePage(focusedOverlay)}
+            onDelete={() => { closeAdjust(); remove(focusedOverlay); }}
           />
           </>
         ) : (
@@ -1402,20 +1447,12 @@ export default function SitePlansSection({
           onActivateOverlay && onActivateOverlay(focusedOverlay.id);
         }}
         onDeactivate={() => onActivateOverlay && onActivateOverlay(null)}
-        pinning={pinningOverlayId === focusedOverlay.id}
-        // B1167713 (NEW-2) — the ONLY thing that changed about pinning: the target is always
-        // the comp already open here, never a brand-new one (the map's own "Place comp → on a
-        // site plan" menu still creates new comps, unchanged, via onPlaceComp elsewhere).
-        onStartPin={() => onStartPinExistingComp?.(focusedCompId, focusedOverlay.id)}
-        onStopPin={() => onStopPinOnOverlay?.()}
         onSetOpacity={(v) => setOpacityLive(focusedOverlay, v)}
         onOpacityCommit={() => flushOpacityWrite(focusedOverlay)}
         onSetRotation={(deg) => setRotation(focusedOverlay, deg)}
         onStartCrop={() => startCrop(focusedOverlay)}
         onToggleVisible={() => toggleVisible(focusedOverlay)}
         onToggleLocked={() => toggleLocked(focusedOverlay)}
-        onConfirmChangePage={() => startChangePage(focusedOverlay)}
-        onDelete={() => { closeAdjust(); remove(focusedOverlay); }}
         teams={teams}
         onShareTeam={(teamId) => shareOverlay(focusedOverlay, teamId)}
         isOwner={focusedOverlay.userId === currentUserId}

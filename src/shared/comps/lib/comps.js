@@ -130,7 +130,11 @@ export function annualLeaseRate(comp) {
 
 /** Total annual rent for one lease comp — the whole reason a leased-SF figure matters: the
  * rate alone is $/SF, so without a size there is no dollar total to derive. Null unless BOTH
- * an annual-normalizable rate AND a positive size are present — never guessed. */
+ * an annual-normalizable rate AND a positive size are present — never guessed.
+ * ⛔ NEW-2 (owner chat, 2026-09-08) — no longer rendered as its own row in `compFieldRows`' comp
+ * detail list (Rate, Leased SF and Net effective already carry the deal). Still read directly by
+ * `CompsPanel.jsx`'s `CompForm` — the live "$X/yr total (face)" preview under the Rate field
+ * while entering/editing a lease comp — so this function itself is unchanged. */
 export function leaseTotalAnnualRent(comp) {
   const annual = annualLeaseRate(comp);
   const sf = positiveNumber(comp?.leaseSizeSf);
@@ -347,13 +351,6 @@ export function compsSummaryBits(comps) {
 function fmtMoney(n) {
   return n == null ? null : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
-// Whole-dollar currency — for a derived TOTAL (never a per-SF rate, which needs its cents).
-// `maximumFractionDigits` alone left a lone trailing decimal on a non-round total (B831603
-// NEW-5: ".65 x 613,208 x 12" rendered as "$4,783,022.4"); this floors it to whole dollars,
-// matching the live rent-total preview the create form already shows under Leased SF.
-function fmtMoneyWhole(n) {
-  return n == null ? null : Number(n).toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
 function fmtPsf(n) {
   return n == null ? null : `$${n.toFixed(2)}/SF`;
 }
@@ -389,11 +386,22 @@ function fmtCompDate(iso) {
   return formatDateDisplay(iso) || null;
 }
 
-/** The Executed date's compact DISPLAY label, for the list row / map popup — the formatted date,
- * or a neutral "Date unknown" when the comp was saved without one (NEW-5, owner decision,
- * 2026-09-02: required-to-save was relaxed, so a genuinely blank date is a real, saveable state,
- * never rendered as blank/missing). Exported separately from `compFieldRows` so a compact row
- * doesn't have to build the whole field list just to read one label. */
+/** The Executed date's compact DISPLAY label, for the list row (CompRow) and the "Recently
+ * deleted" trash row (TrashRow) — the formatted date, or a neutral "Date unknown" when the comp
+ * was saved without one (NEW-5, owner decision, 2026-09-02: required-to-save was relaxed, so a
+ * genuinely blank date is a real, saveable state, never rendered as blank/missing). Exported
+ * separately from `compFieldRows` so a compact row doesn't have to build the whole field list
+ * just to read one label.
+ * ⛔ NEW-3 (owner chat, 2026-09-08) — the comp DETAIL view's own "Date" row dropped its "Date
+ * unknown" fallback (see `compFieldRows`'s "date" row, above) once it sat next to two clearly
+ * named date rows; this function's callers are different: a one-line list/trash summary with no
+ * neighboring date fields to disambiguate against, where a blank gap would read as a layout
+ * error rather than an absent fact, and CompRow's own tooltip explains what the fallback sort
+ * key is. So "Date unknown" EARNS its place here and stays. AUDIT-FIRST note: the map's own
+ * comp-marker tooltip (`MapFinder.jsx`) does NOT call this function — it interpolates
+ * `comp.compDate` raw, so a blank date there prints a trailing "· " with nothing after it. Found
+ * while auditing this function's callers; left alone as its own, separate, pre-existing minor
+ * cosmetic gap, out of this item's scope. */
 export function compDateLabel(compDate) {
   return compDate ? formatDateDisplay(compDate) : "Date unknown";
 }
@@ -458,10 +466,11 @@ export function compFieldRows(comp) {
       push("rate", "Rate", `$${fmtRate(comp.leaseRate)}/SF${period}${basis}`);
     }
     if (comp?.leaseSizeSf != null) push("size", "Leased SF", `${Number(comp.leaseSizeSf).toLocaleString()} SF`);
-    const totalRent = leaseTotalAnnualRent(comp);
-    // NEW-3: labeled FACE (never blended with an effective/net-of-abatement figure this app
-    // doesn't compute — see the item for why) + NEW-5: whole-dollar currency, never a raw float.
-    if (totalRent != null) push("totalRent", "Total annual rent (face)", fmtMoneyWhole(totalRent));
+    // NEW-2 (owner chat, 2026-09-08) — "Total annual rent (face)" removed from this detail list:
+    // Rate, Leased SF and Net effective already carry the deal, and a fourth money figure here
+    // was redundant with what the create form's own live rate preview already shows. Read
+    // `leaseTotalAnnualRent`'s own header — CompsPanel.jsx's CompForm still calls it directly, to
+    // preview the total under the Rate field while entering a lease comp.
     if (comp?.leaseOpex != null) push("opex", "OpEx ($/SF/yr)", fmtMoney(comp.leaseOpex));
     if (comp?.leaseTi != null) push("ti", "TI allowance", `${fmtMoney(comp.leaseTi)}/SF`);
     if (comp?.leaseTerm) push("term", "Term", comp.leaseTerm);
@@ -486,9 +495,18 @@ export function compFieldRows(comp) {
   // ⛔ NEW-5 (owner decision, 2026-09-02) — a blank Executed date used to make this row DISAPPEAR
   // entirely (the `push` helper skips a null/empty value), which was right for a field that's
   // simply not part of a comp's type but wrong here: now that the date is genuinely optional,
-  // its absence is a real, visible fact about the comp, not nothing to report. "Date unknown" is
-  // neutral text, not an error — it renders in the same style as every other field row.
-  push("date", "Date", comp?.compDate ? fmtCompDate(comp.compDate) : "Date unknown");
+  // its absence is a real, visible fact about the comp, not nothing to report. "Date unknown" was
+  // neutral text, not an error — it rendered in the same style as every other field row.
+  // ⛔ NEW-3 (owner chat, 2026-09-08) — REVERSES the above, live on this exact detail view: three
+  // date rows sat next to each other (Commencement, Date entered, and this bare one), and a
+  // nameless "Date" beside two NAMED dates was the confusing part, not its blank state. Two
+  // changes: (a) relabeled "Executed" — the same word the create form already uses, so it's never
+  // again a nameless "Date" next to "Commencement" and "Date entered"; (b) back to the ORIGINAL
+  // `push` behavior — disappears when genuinely blank, rather than a "Date unknown" placeholder.
+  // `compDateLabel` (the list row / map popup's compact summary) keeps its own "Date unknown"
+  // fallback — see that function's header for why a one-line summary still needs it even though
+  // this detail row no longer does.
+  push("date", "Executed", comp?.compDate ? fmtCompDate(comp.compDate) : null);
   // "Date entered" — metadata about the RECORD (when it was added), never a deal fact, always
   // present, never editable. It's what recency ordering falls back to when Executed is unknown
   // (`sortCompsByRecency`) — shown here so that fallback is never invisible.
