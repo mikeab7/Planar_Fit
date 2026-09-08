@@ -46,10 +46,12 @@ import {
 import CompsCard from "./components/CompsCard.jsx";
 import { NeedsAttentionCard } from "./components/NeedsAttentionCard.jsx";
 import { PursuitsCard } from "./components/PursuitsCard.jsx";
+import { RecentPlansCard } from "./components/RecentPlansCard.jsx";
 import {
   CARD_DEFS, GRID_COLS, normalizeLayout, availableToAdd, addCard, removeCard, resetLayout,
   applyGridChange, narrowOrder, toRglItem,
 } from "./lib/dashboardLayout.js";
+import { pickRecentPlans } from "./lib/recentPlans.js";
 import { loadDashboardLayout, saveDashboardLayout } from "./lib/dashboardPrefs.js";
 import { fetchSiteSummaries } from "./lib/dashboardSitesFetch.js";
 import { fetchAllCompsForCard, fetchCompsForMap } from "./lib/dashboardCompsFetch.js";
@@ -207,13 +209,14 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
 
   const cardData = useMemo(() => ({
     jumpBackIn: { project: mostRecentProject(projects), doc },
+    recentPlans: { plans: pickRecentPlans(sites, 4) },
     pipelineStatus: { counts: pipelineCounts(projects) },
     needsAttention: { rows: needsAttentionRows },
     pursuitsTable: { rows: pursuitsRows, yieldBySite: yieldBySiteMap },
     goingQuiet: { rows: goingQuiet(projects) },
     compsSummary: { data: buildCompsCardData(comps) },
     scheduleHealth: { rows: scheduleProjects ? summarizeScheduleHealth(scheduleProjects) : [] },
-  }), [projects, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap]);
+  }), [projects, sites, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap]);
 
   const openProject = (p) => onNavigate?.({ module: "site-planner", projectId: p.groupId, cross: false, org: false });
   const openSchedule = (p) => onNavigate?.({ module: "scheduler", projectId: p.linkedSiteId, cross: false, org: false });
@@ -230,9 +233,10 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
 
   // NEW-1 — while data is still loading every slot renders the SAME stable-height skeleton
   // instead of its real (variable-height) content; see the `dataReady` effect above.
-  const SKELETON_ROWS = { jumpBackIn: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 6, goingQuiet: 3, locationsMap: 6 };
+  const SKELETON_ROWS = { jumpBackIn: 2, recentPlans: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 6, goingQuiet: 3, locationsMap: 6 };
   const CARD_RENDERERS = dataReady ? {
     jumpBackIn: () => <JumpBackInCard {...cardData.jumpBackIn} onOpenProject={openProject} onOpenDoc={openDoc} />,
+    recentPlans: () => <RecentPlansCard {...cardData.recentPlans} onOpenProject={openProject} />,
     pipelineStatus: () => <PipelineCard {...cardData.pipelineStatus} />,
     needsAttention: () => <NeedsAttentionCard {...cardData.needsAttention} onOpenTask={openTask} />,
     pursuitsTable: () => <PursuitsCard {...cardData.pursuitsTable} onOpenProject={openProject} />,
