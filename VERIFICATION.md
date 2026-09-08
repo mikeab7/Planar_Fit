@@ -164,6 +164,29 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V948848 — B1310208-B1310211: the redesigned site-plan panel, at Michael's own 1191×465 window `Blocker: auth`
+
+**Why this needs its own real pass, and why it can't run today.** All four items are a re-layout of `SitePlansSection.jsx`, driven by a real signed-in comp + a real placed `site_plan_overlays` row — this sandbox's egress proxy hard-blocks the real production Supabase project (`lyeqzkuiwngunutlkkmi.supabase.co`): confirmed directly via `curl` (`CONNECT tunnel failed, response 403`, and the agent-proxy's own status endpoint logs it as `gateway answered 403 to CONNECT`), the same wall this repo's own `e2e/auth.setup.js` hits. This is a hard proxy-level CONNECT rejection, not a TLS-handshake quirk WebKit can route around (the B1215536 note elsewhere in this file about WebKit reaching hosts Chromium can't is about a DIFFERENT failure shape — `ws_closed_mid_exchange` after the tunnel opens — and does not apply to a 403 the gateway returns before any handshake starts).
+
+**What was verified here (this session, sandbox — mocked signed-in, not the real thing).** `ui-audit/verify-site-plan-adjust-panel.mjs` (new) launches the real built app and intercepts the Supabase REST/auth endpoints at the network layer (Playwright `ctx.route`, which fires before a request leaves the browser regardless of auth state) to serve one throwaway comp ("Core 5 - West Hardy" — the same name Michael's own real comp carries, deliberately reused as the fixture name since the dispatch named it, but this is FABRICATED DATA, not his real row: `id: "throwaway-comp-1"`) and one throwaway placed site-plan overlay, at his own reported 1191×465 viewport. 24/24 checks pass:
+1. The comp's own name renders in a real, unclipped box (not cut off by the scroll region).
+2. The resting plan card shows only identity (thumbnail, name, date/page, status) plus one "Adjust" button — no Move/resize, Pin comp here, Change page, Delete, or overflow "⋯" visible until Adjust is pressed.
+3. Pressing Adjust opens a panel docked within 15px of the map's true right edge, ≥30px clear of the Leaflet scale bar, never off the top of the map, never overlapping the Comps rail — `position:absolute`, `border-radius:12px`, matching the Layers panel's own chrome exactly.
+4. The panel body carries Opacity (bold, prominent), Rotation (a visibly quieter weight, distinct from Opacity's), Move/resize, Crop, Pin comp here, Change page; the footer carries Delete (inline confirm, never a native dialog) and Done.
+5. **A genuine cross-cutting defect this same pass found and this session fixed:** the global help/report FAB also lives bottom-right and measures the real DOM to clear that corner's real occupants (`shared/ui/cornerClearance.js`) — the new panel wasn't declaring itself, so the FAB sat over its Done button and ate the click in the harness before the fix (`data-canvas-corner="site-plan-adjust"`). Re-run after the fix: Done is clickable and closes the panel.
+
+`npm run lint` clean; `npm run build` clean; `npx vitest run test/comps.test.js test/compLocationText.test.js test/siteplanOverlayCrop.test.js test/breadcrumbPrivacyLock.test.js` 148/148 green (regression check on the touched file, unaffected by this item); `node ui-audit/design-drift-audit.mjs --check` and `node scripts/build-map.mjs --check` both pass.
+
+**Steps, each with a named expected result — on a real signed-in account, window resized to 1191×465, using a THROWAWAY comp + plan (never `site_plan_overlays` row `aa2d8163-7d45-4929-8a05-dad94ba2528d` or comp `ddb5a9e5-76c5-49e6-88b0-4a842f1b0a46` — his real Airtex plan and Core 5 - West Hardy comp):**
+1. Create a throwaway comp with a throwaway placed site plan. Open that comp's detail view at the 1191×465 window. **Expect:** the comp's own name renders whole, not clipped by the scroll region, before the plan card.
+2. Look at the plan card at rest. **Expect:** thumbnail, name, date/page, the Site dropdown, and exactly one "Adjust" button — no visible Move/resize, Pin comp here, Change page, Delete, or "⋯" menu.
+3. Click Adjust. **Expect:** a small panel docks to the bottom-right corner of the map, matching the Layers panel's look, never overlapping the Comps rail (left) or Imagery & layers (right).
+4. In the panel, compare Opacity and Rotation. **Expect:** Opacity reads visually heavier/more prominent; Rotation reads quieter/smaller. Lock the plan (or note it's already locked) and confirm Rotation shows "N° · locked — unlock to rotate" rather than an editable field.
+5. Click "Delete site plan…" in the footer. **Expect:** an inline confirm appears next to Done, never a native browser dialog; Cancel backs out cleanly.
+6. Click Done. **Expect:** the panel closes; nothing on the map or in the rail is left in a stuck/armed state.
+7. Clean up: delete (soft-delete) the throwaway comp and plan created for this check.
+
+**Result:** ⏳ pending — needs a real signed-in account. `Cadence: once`.
 ### V655696 — B1167200: the Schedule tab boots on the owner's own machine with no boot task attributed to `babel.min.js` `Blocker: real-device`
 
 **Why this needs its own real pass, and why it can't run today.** The bug this closes was found from `public.client_errors` boot-capture telemetry on the OWNER'S OWN signed-in machine (`bootTaskMs 2379.7`, attributed to `babel.min.js` at `DOMContentLoaded`) — a real-hardware, real-network timing measurement. This sandbox's headless Chromium runs behind a proxy with its own network characteristics (confirmed this session: the SAME comparison run here read ~15.1s vs ~8.8s median boot, dominated by this sandbox's own slow `supabase-js` CDN round-trip, not representative of his machine's absolute numbers) — so the only thing that actually closes this item is a fresh boot capture landing from his own browser, showing the babel task gone.
