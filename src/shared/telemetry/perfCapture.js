@@ -89,7 +89,17 @@ export const BOOT_TRIGGER_VOCAB = ["", "single", "cumulative"];
  * the long tasks, the scene and the counter history. But a reader must be able to tell "nothing was
  * happening" from "the track was lost", because those support opposite conclusions, and the owner's
  * own button is the single worst place to be unable to tell. */
-export const NOTE_VOCAB = ["", "no-baseline", "baseline-late", "no-frames", "trimmed", "trimmed-hard"];
+/* ⛔ NEW-1 (B1317824) — "trimmed" USED TO BE A BARE, UNDIFFERENTIATED FLAG covering three different
+ * facts (a frame cut, a task cut, a counter cut) with no way to tell which. A reader could not tell
+ * "the frame track survived intact" from "the frame track was thrown away entirely" without also
+ * cross-checking framesKept — and the encoder itself made exactly that mistake (see encodeCapture's
+ * header). The vocabulary now names WHICH series a genuine shortfall cut, so the note alone answers
+ * the question the bare word never could. `trimmed-hard` is unchanged — the last-resort case where
+ * even the reserved minimum still would not fit. */
+export const NOTE_VOCAB = [
+  "", "no-baseline", "baseline-late", "no-frames",
+  "trimmed-frames", "trimmed-tasks", "trimmed-both", "trimmed-counters", "trimmed-hard",
+];
 
 /* ── Plan identity ───────────────────────────────────────────────────────────────────────────
  * A plan id here may be an opaque key OR a name the owner typed. Opaque-looking ids pass; anything
@@ -341,10 +351,24 @@ export function decodeFrames(track, spikes) {
  * A frame TRACK is mostly redundant once the summary stats exist — `frames`/`p50Ms`/`p95Ms`/
  * `p99Ms`/`maxMs`/`jankFrames` already ride the numeric columns (`buildCapture`, above) and answer
  * "how bad, how often" on their own. A long-task ROW is the only place a script gets a NAME
- * (`attributionLabel`) — it is not recoverable from anything else in the payload. So on a genuine
- * shortfall the frame track is now the first thing cut, all the way to zero if that's what it
- * takes, and the long-task table is the LAST series touched. Counters are shed first of all (as
- * before) because a scene snapshot is the least time-critical fact in the row. */
+ * (`attributionLabel`) — it is not recoverable from anything else in the payload.
+ *
+ * ⛔ NEW-1 (B1317824) — THAT FIX OVERCORRECTED: SHEDDING THE FRAME TRACK "ALL THE WAY TO ZERO IF
+ * THAT'S WHAT IT TAKES" MEANT THE WORSE THE STALL, THE MORE LONG TASKS IT PRODUCED, THE LESS OF THE
+ * FRAME EVIDENCE SURVIVED — the exact shape the PR 951 trigger defect was in (a fixed budget that gets
+ * LESS likely to succeed the worse the case it exists for gets). Measured on the owner's real
+ * 2026-09-07 row: 114 frames, ~20 long tasks, `framesKept:0`, `framesDropped:114`, `ft` the empty
+ * string — the frame track lost ENTIRELY to a long-task table that was never even trimmed. A
+ * capture with no frame track at all is close to useless: it is the one series `attributionLabel`
+ * doesn't cover and the reason this whole feature exists.
+ *
+ * So the two series now share the row rather than either one owning it outright. The frame track
+ * gets a RESERVED FLOOR (the same `8` that was already the last rung of `FRAME_FLOORS` — no new
+ * magic number) that survives as long as any long task remains; the long-task table is trimmed
+ * OLDEST-FIRST into whatever room is left, exactly the direction the frame track already trims in
+ * (dropping the earliest evidence, keeping the most recent). Only once the long-task table is
+ * completely empty does the frame reserve itself give way, down toward zero. Counters are still shed
+ * first of all, unchanged, because a scene snapshot is the least time-critical fact in the row. */
 export function encodeCapture(cap, { maxChars = CAPTURE_MAX_CHARS } = {}) {
   const base = { ...cap };
   const deltas = Array.isArray(base.f) ? base.f.slice() : [];
@@ -382,27 +406,19 @@ export function encodeCapture(cap, { maxChars = CAPTURE_MAX_CHARS } = {}) {
   let s = build(frames, tasks, counters);
   let trimmedFrames = 0, trimmedTasks = 0, trimmedCounters = 0;
 
-  // Shed the oldest counter samples first — a scene snapshot is the least time-critical fact here.
+  // Stage 1 — shed the oldest counter samples first: a scene snapshot is the least time-critical
+  // fact in the row, so it always yields before either the frame track or the long-task table.
   while (s.length > maxChars && counters.length > 6) { counters.shift(); trimmedCounters++; s = build(frames, tasks, counters); }
 
   /* ⛔ B265541 — THE FRAME FLOOR IS A LADDER, NOT A WALL, AND THE OLD WALL LOST THE WHOLE EPISODE
-   * ON EXACTLY THE WORST CAPTURES. This used to stop shedding at 60 frames and, if the row still
-   * did not fit, fall through to the bare last-resort row — which drops EVERY series, frame track
-   * included. Caught by `ui-audit/verify-capture-pipe.mjs` on a real induced stall: one auto
-   * capture arrived `note:"trimmed-hard"` with `framesKept:0`.
-   *
-   * The mechanism is a perverse one. A frame over 63 ms cannot be held in the packed track's one
+   * ON EXACTLY THE WORST CAPTURES. A frame over 63 ms cannot be held in the packed track's one
    * base-64 digit, so it is ALSO carried explicitly in `fx` as `[index, ms]` — about ten characters
    * apiece. On a smooth capture almost nothing lands in `fx`; on a genuine stall almost EVERYTHING
-   * does, so 60 retained frames can cost ~660 characters on their own. The jankier the episode, the
-   * likelier the row overran the floor — and the reward for overrunning it was losing all of it.
-   * A capture of a bad moment is the only kind worth having, so the failure was aimed at the data
-   * this whole programme exists to collect.
-   *
-   * Thirty frames of a stall is half a second of evidence and is worth far more than nothing, so
-   * the floor steps down (and, per NEW-2, the ladder now runs all the way to 0 rather than
-   * stopping at 8 — see below) before the long-task table is ever touched. `framesKept`/
-   * `framesDropped` still say exactly what was lost. */
+   * does, so 60 retained frames can cost ~660 characters on their own — the jankier the episode,
+   * the likelier the row overran a fixed floor. The ladder steps the floor down in stages
+   * (60 → 30 → 16 → 8) so a bad episode still keeps SOME frames rather than losing the whole track
+   * to one hard cutoff. Stage 2 stops at the ladder's LAST rung (8) — see NEW-1 below for why that
+   * rung is now a protected reserve rather than just another step toward zero. */
   const shedFrames = (floor) => {
     while (s.length > maxChars && frames.length > floor) {
       const drop = Math.max(1, Math.min(frames.length - floor, Math.ceil((s.length - maxChars) / 1.2)));
@@ -411,69 +427,81 @@ export function encodeCapture(cap, { maxChars = CAPTURE_MAX_CHARS } = {}) {
       s = build(frames, tasks, counters);
     }
   };
-  const shedToFit = (floors) => { for (const floor of floors) { shedFrames(floor); if (s.length <= maxChars) return; } };
-  shedToFit(FRAME_FLOORS);
+  const shedFramesToFit = (floors) => { for (const floor of floors) { shedFrames(floor); if (s.length <= maxChars) return; } };
+  // Stage 2 — shed frames down the ladder to its reserved floor (never below it while a task remains).
+  shedFramesToFit(FRAME_FLOORS);
+
+  /* ⛔ NEW-1 (B1317824) — TASKS NOW TRIM OLDEST-FIRST, THE SAME DIRECTION THE FRAME TRACK ALREADY
+   * TRIMS IN, so a reader can say "the most recent N tasks" the same way it already says "the most
+   * recent N frames." The FLOOR (4) is the smallest set still worth naming — this is unchanged from
+   * the old code, only the direction of what gets dropped first has changed (oldest, not shortest). */
+  const TASK_FLOOR = 4;
+  const shedTasks = (floor) => {
+    while (s.length > maxChars && tasks.length > floor) {
+      tasks = tasks.slice(1);
+      trimmedTasks++;
+      s = build(frames, tasks, counters);
+    }
+  };
+  // Stage 3 — shed the long-task table oldest-first into whatever room the frame reserve left.
+  shedTasks(TASK_FLOOR);
 
   const stampFrames = () => { base.framesKept = frames.length; base.framesDropped = trimmedFrames; };
   const stampTasksCounters = () => {
     if (trimmedTasks) base.tasksDropped = trimmedTasks;
     if (trimmedCounters) base.countersDropped = trimmedCounters;
   };
+  /* ⛔ NEW-1 (B1317824) — THE NOTE NAMES WHICH LIST WAS CUT, NEVER A BARE "trimmed". A reader used
+   * to have to cross-check `framesKept` against `frames` to learn whether the frame track survived
+   * at all; now the note says so directly. */
+  const stampNote = () => {
+    if (trimmedFrames && trimmedTasks) base.note = "trimmed-both";
+    else if (trimmedTasks) base.note = "trimmed-tasks";
+    else if (trimmedFrames) base.note = "trimmed-frames";
+    else if (trimmedCounters) base.note = "trimmed-counters";
+  };
   /* Stamping the trim onto the row makes the row LONGER, which can push it back over the budget —
-   * so the accounting keys go on first and the frame shed runs again underneath them. Getting this
+   * so the accounting keys go on first and both sheds run again underneath them. Getting this
    * order wrong is what made a capture fall all the way through to the bare last-resort row while
    * a perfectly good frame track was available. */
   if (trimmedFrames || trimmedTasks || trimmedCounters) {
-    stampFrames(); stampTasksCounters();
-    base.note = "trimmed";
+    stampFrames(); stampTasksCounters(); stampNote();
     s = build(frames, tasks, counters);
-    shedToFit(FRAME_FLOORS);
-    stampFrames(); stampTasksCounters();
+    shedFramesToFit(FRAME_FLOORS);
+    shedTasks(TASK_FLOOR);
+    stampFrames(); stampTasksCounters(); stampNote();
     s = build(frames, tasks, counters);
   }
 
-  /* ⛔ NEW-2 (B846385) — FRAMES GO TO ZERO BEFORE THE LONG-TASK TABLE LOSES A SINGLE ROW BELOW ITS
-   * OWN FLOOR. The ladder above stops at `FRAME_FLOORS`' last rung (8); if the row still does not
-   * fit, cut the frame track the rest of the way to nothing — it is the cheap, summarised part —
-   * before ever reducing `tasks` past the floor of 4 the loop below protects. */
+  /* ⛔ NEW-1 (B1317824) — THE FRAME RESERVE OUTRANKS THE TASK FLOOR NOW: the long-task table gives
+   * up its remaining entries, ALL THE WAY TO ZERO, before the frame track is ever asked to drop
+   * below its own reserved floor. This is the exact inversion of the B846385 order (which sacrificed
+   * the frame track to zero before touching the task floor) — that direction is precisely how a
+   * capture came back with `framesKept:0` while a full long-task table survived untouched. */
+  if (s.length > maxChars && tasks.length > 0) {
+    shedTasks(0);
+    stampFrames(); stampTasksCounters(); stampNote();
+    s = build(frames, tasks, counters);
+  }
+
+  /* Only now, with the long-task table already empty, does the frame reserve itself give way —
+   * the last-resort case where even 8 frames plus the base fields will not fit. */
   if (s.length > maxChars && frames.length > 0) {
     trimmedFrames += frames.length;
     frames = [];
-    stampFrames(); stampTasksCounters();
-    base.note = "trimmed";
+    stampFrames(); stampTasksCounters(); stampNote();
     s = build(frames, tasks, counters);
   }
 
-  /* Only now, with the frame track already empty, does the long-task table give up its smallest
-   * entries — protecting a floor of 4, the smallest set still worth naming. */
-  while (s.length > maxChars && tasks.length > 4) {
-    let min = 0;
-    for (let i = 1; i < tasks.length; i++) if (tasks[i][1] < tasks[min][1]) min = i;
-    tasks.splice(min, 1); trimmedTasks++; s = build(frames, tasks, counters);
-  }
-  if (trimmedTasks) { stampFrames(); stampTasksCounters(); base.note = "trimmed"; s = build(frames, tasks, counters); }
-
-  /* ⛔ B265541 — BEFORE GIVING UP THE EPISODE, GIVE UP THE REMAINING COUNTERS. The floor under them
-   * (6) could consume room the long-task table needs on a tight budget, so drop the rest before the
-   * task table is cut below its own floor. */
+  // Give up whatever counters remain — should already be at floor from Stage 1, kept for parity.
   if (s.length > maxChars && counters.length) {
     trimmedCounters += counters.length;
     counters = [];
-    stampFrames(); stampTasksCounters();
-    base.note = "trimmed";
+    stampFrames(); stampTasksCounters(); stampNote();
     s = build(frames, tasks, counters);
   }
-  /* Last rung before the bare row: give up the rest of the long-task table one entry at a time
-   * (worst-first retained, smallest-dropped-first still), rather than wiping it in one step — a
-   * severely over-budget row still keeps whatever attribution it can afford. */
-  while (s.length > maxChars && tasks.length > 0) {
-    let min = 0;
-    for (let i = 1; i < tasks.length; i++) if (tasks[i][1] < tasks[min][1]) min = i;
-    tasks.splice(min, 1); trimmedTasks++; s = build(frames, tasks, counters);
-  }
-  if (s.length > maxChars || trimmedTasks) {
-    stampFrames(); stampTasksCounters();
-    base.note = s.length > maxChars ? "trimmed-hard" : "trimmed";
+  if (s.length > maxChars) {
+    base.note = "trimmed-hard";
     s = build(frames, tasks, counters);
   }
   /* Last resort: the row still does not fit (a pathological attribution table). Drop the series

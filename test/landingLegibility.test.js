@@ -1,20 +1,19 @@
-/* LANDING LEGIBILITY — the static half of the guard. (B1384 / NEW-1.)
+/* LANDING LEGIBILITY — the static half of the guard. (B1384 / NEW-1; page rebuilt B1315632.)
  *
  * The rendered half lives in ui-audit/verify-landing-legibility.mjs, which drives a real
  * browser at several viewport heights and reads computed opacity. That needs Chromium, so
- * it is not a CI step; this file asserts the invariant that made the bug possible in the
- * first place, on every build, with no browser:
+ * it is not a CI step; this file asserts the invariant that made the original bug possible,
+ * on every build, with no browser:
  *
  *   THE LANDING PAGE'S COPY MUST NEVER DEPEND ON JAVASCRIPT OR ON AN ANIMATION RUNNING.
  *
- * The live page shipped for four weeks with `.reveal { opacity: 0 }` as the RESTING state,
- * so every word on it — headline included — was invisible until a 72 KB vendor animation
- * library downloaded, parsed, and ran. A slow connection, a blocked file, a JS error or
- * JS-off made the page permanently wordless, and nothing caught it because the existing
- * checks asserted a readiness FLAG rather than a rendered PIXEL.
- *
- * So: any start state that hides copy must be scoped to `html.anim`, the class the <head>
- * gate adds and then releases the moment the animation is either running or not coming.
+ * The 2026-08-03 page shipped with `.reveal { opacity: 0 }` as the RESTING state, so every
+ * word on it — headline included — was invisible until a 72 KB vendor animation library
+ * downloaded, parsed, and ran. The B1315632 rebuild (2026-09-07) removed that whole
+ * mechanism rather than re-gating it: the page is now plain, always-visible HTML with a
+ * purely decorative canvas behind it, so the simplest way to hold the invariant is to have
+ * NO rule anywhere that hides text pending JS — this file asserts exactly that, plus the
+ * cost/pricing-language ban B1315632 added (owner hard rule, 2026-09-06).
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -32,8 +31,8 @@ const CSS_RAW = (HTML.match(/<style>([\s\S]*?)<\/style>/) || [, ""])[1];
 const CSS = CSS_RAW.replace(/\/\*[\s\S]*?\*\//g, "");
 
 /* Rules, as { selector, body } pairs. The stylesheet is flat apart from @media blocks,
- * whose inner rules this picks up too — which is what we want, since a hidden start state
- * inside a media query hides copy just as effectively. */
+ * whose inner rules this picks up too — a hidden start state inside a media query hides
+ * copy just as effectively as one at the top level. */
 function rules(css) {
   const out = [];
   const re = /([^{}]+)\{([^{}]*)\}/g;
@@ -48,67 +47,77 @@ function rules(css) {
 
 const RULES = rules(CSS);
 
-/* Purely decorative surfaces that carry no words: the WebGL fallback mark and the
- * self-measuring viewport dimension line. Hiding these hides nothing a reader needs. */
-const DECORATIVE = [/^#bg-fallback$/, /^#vp-dim(\.hide)?$/];
+/* Purely decorative, wordless surfaces: the contour canvas and its scrim, and the fine-print
+ * cursor hint (its resting `display: none` is a POINTER-TYPE gate — `@media (pointer: fine)`
+ * turns it on — never a JS-readiness gate; it carries no information the page depends on). */
+const DECORATIVE = [/^#bg$/, /^\.scrim$/, /^\.cursor-hint$/, /^\.cursor-hint\.faded$/];
 
-/* Selectors that are the animation's own opt-in state. */
-const isGated = (sel) => sel.split(",").every((s) => s.trim().startsWith("html.anim"));
-
-describe("landing page copy is legible without JavaScript (B1384 / NEW-1)", () => {
+describe("landing page copy is legible without JavaScript (B1384, rebuilt B1315632)", () => {
   it("has a <style> block the parser could read", () => {
     expect(CSS.length).toBeGreaterThan(1000);
-    expect(RULES.length).toBeGreaterThan(50);
+    expect(RULES.length).toBeGreaterThan(20);
   });
 
-  it("the .reveal resting state is fully opaque, not hidden", () => {
-    const base = RULES.filter((r) => /(^|,)\s*\.reveal\s*$/.test(r.sel));
-    expect(base.length, "expected a bare `.reveal` rule").toBeGreaterThan(0);
-    for (const r of base) {
-      expect(r.body, `\`${r.sel}\` must not hide copy`).not.toMatch(/opacity:\s*0\s*(;|$)/);
-      expect(r.body).toMatch(/opacity:\s*1/);
-    }
-  });
-
-  it("no un-gated rule hides text with opacity: 0", () => {
+  it("no rule hides text with opacity: 0 or visibility: hidden/collapse", () => {
     const offenders = RULES.filter(
       (r) =>
-        /(^|;)\s*opacity:\s*0(\.0+)?\s*(;|$)/.test(r.body) &&
-        !isGated(r.sel) &&
+        (/(^|;)\s*opacity:\s*0(\.0+)?\s*(;|$)/.test(r.body) ||
+          /(^|;)\s*visibility:\s*(hidden|collapse)\s*(;|$)/.test(r.body)) &&
         !DECORATIVE.some((d) => r.sel.split(",").every((s) => d.test(s.trim())))
     );
     expect(
       offenders.map((o) => o.sel),
-      "these hide copy before JS runs — scope them to `html.anim` instead"
+      "these hide copy before JS runs — the page has no reveal mechanism to scope them behind"
     ).toEqual([]);
   });
 
-  it("the reveal gate is installed in <head>, ahead of the body", () => {
-    const head = HTML.slice(0, HTML.indexOf("</head>"));
-    expect(head).toContain("__landingArmAnim");
-    expect(head).toMatch(/classList\.remove\("anim"\)/);
-    // A watchdog, so a vendor script that never arrives cannot hold the words hostage.
-    expect(head).toMatch(/setTimeout\(function \(\) \{ release\("watchdog"\); \}, \d+\)/);
-    // …and a reduced-motion path that never arms the gate at all.
-    expect(head).toMatch(/prefers-reduced-motion: reduce/);
-    expect(head).toMatch(/if \(reduce\) return;/);
+  it("the body's real content is plain HTML text, not injected by a script", () => {
+    // The hero H1, sub-copy, matrix and CTAs must all be literal text in the document —
+    // never built up by JS at runtime, which is exactly what a JS-off / slow-network visitor
+    // would never see. Comments stripped first: this file's own <head> comment EXPLAINS the
+    // non-blocking pattern in prose containing the literal string "<script>", which would
+    // otherwise fool a naive indexOf into slicing an empty range (the same trap
+    // bootRenderBlocking.test.js's stripComments exists for).
+    const noComments = HTML.replace(/<!--[\s\S]*?-->/g, "");
+    const bodyHtml = noComments.slice(noComments.indexOf("<body>"), noComments.lastIndexOf("<script>"));
+    expect(bodyHtml).toContain("A workspace that starts with the site.");
+    expect(bodyHtml).toContain("Open Planyr");
+    expect(bodyHtml).toContain("Create an account");
   });
 
-  it("build() refuses to animate copy the gate has already put on screen", () => {
-    expect(HTML).toMatch(/var ANIM =[\s\S]{0,120}__landingArmAnim/);
-    expect(HTML).toMatch(/if \(REDUCE \|\| !ANIM\)/);
-  });
-
-  it("the reduced-motion stylesheet still forces every reveal visible", () => {
-    const rm = CSS.slice(CSS.indexOf("@media (prefers-reduced-motion: reduce)"));
-    expect(rm).toMatch(/\.reveal \{ opacity: 1 !important/);
+  it("fonts load non-blocking (media=print + onload), same pattern B1384 required", () => {
+    // The <noscript> fallback is a plain blocking link BY DESIGN — it only applies when
+    // scripts are off, where the onload promotion could never fire anyway.
+    const offenders = [...HTML.matchAll(/<link\b[^>]*rel\s*=\s*["']stylesheet["'][^>]*>/gi)]
+      .map((m) => m[0])
+      .filter((tag) => /fonts\.googleapis\.com/.test(tag))
+      .filter((tag) => !/media\s*=\s*["']print["']/i.test(tag))
+      .filter((tag) => !HTML.includes(`<noscript>${tag}`));
+    expect(offenders).toEqual([]);
   });
 });
 
-describe("landing page advertises only what is built (B1385 / NEW-2)", () => {
-  it("carries no Cost Estimating claim anywhere, including meta and structured data", () => {
-    expect(HTML).not.toMatch(/cost estimat/i);
-    expect(HTML).not.toMatch(/investment committee/i);
+describe("landing page never mentions cost in any direction (owner hard rule, 2026-09-06)", () => {
+  // Whole-word / whole-phrase matches only, so this can't false-positive on an unrelated word
+  // that merely contains one of these as a substring (e.g. "freeboard", "planyr" itself).
+  const BANNED_WORDS = /\b(price|prices|priced|pricing|plan|plans|tier|tiers|free|paid|cost|costs|costing|charge|charges|billing|subscription|trial)\b/i;
+  const BANNED_PHRASES = [/credit card/i, /investment committee/i, /cost estimat/i];
+
+  it("carries none of the banned cost/pricing words or phrases anywhere in the built file", () => {
+    const hits = [];
+    HTML.split("\n").forEach((line, i) => {
+      if (BANNED_WORDS.test(line)) hits.push(`line ${i + 1} (word): ${line.trim().slice(0, 90)}`);
+      for (const p of BANNED_PHRASES) {
+        if (p.test(line)) hits.push(`line ${i + 1} (phrase ${p}): ${line.trim().slice(0, 90)}`);
+      }
+    });
+    expect(hits, `cost/pricing language found on the landing page:\n${hits.join("\n")}`).toEqual([]);
+  });
+
+  it("the structured data (JSON-LD) carries no offers/price block", () => {
+    const ld = (HTML.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/) || [, ""])[1];
+    expect(ld).not.toMatch(/"offers"/);
+    expect(ld).not.toMatch(/"price"/i);
   });
 
   it("avoids the banned marketing words", () => {
@@ -116,14 +125,16 @@ describe("landing page advertises only what is built (B1385 / NEW-2)", () => {
     const hit = HTML.split("\n").find((l) => banned.test(l));
     expect(hit, `banned word on: ${hit}`).toBeUndefined();
   });
+});
 
-  it("does not repeat the hero badges verbatim in the feature list", () => {
-    const proof = (HTML.match(/<div class="proof-row reveal">([\s\S]*?)<\/div>/) || [, ""])[1];
-    const badges = [...proof.matchAll(/<span>([^<]+)<\/span>/g)].map((m) => m[1].trim());
-    expect(badges.length).toBeGreaterThan(0);
-    const spec = HTML.slice(HTML.indexOf('<div class="spec-table"'));
-    for (const b of badges) {
-      expect(spec, `hero badge "${b}" is already a numbered feature`).not.toContain(b);
-    }
+describe("the account fact is stated once, quietly, in the fine print (owner spec, 2026-09-06)", () => {
+  it("the fine print under the buttons carries the account sentence, and nothing else does", () => {
+    const FINE_PRINT = "Sign up only when you want to keep your work.";
+    expect(HTML).toContain(FINE_PRINT);
+    const occurrences = HTML.split(FINE_PRINT).length - 1;
+    expect(occurrences).toBe(1);
+    // Never in the eyebrow, never as a standalone banner.
+    const eyebrow = (HTML.match(/<p class="eyebrow">([\s\S]*?)<\/p>/) || [, ""])[1];
+    expect(eyebrow).not.toMatch(/sign up|account|sign in/i);
   });
 });

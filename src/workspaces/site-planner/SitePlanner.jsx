@@ -35,7 +35,7 @@ import { groupCasEnabled } from "./lib/groupCas.js";
 import { extendMergeSelection } from "./lib/parcelSelect.js";
 import { measuresUnderPoint, nextMeasureSelection } from "./lib/measureHit.js";
 import { nearestBoundaryEdge, constrainToEdgeAngle, edgeLockTolFt } from "./lib/edgeConstrain.js";
-import { markupsUnderPoint, nextMarkupSelection, boxCorners } from "./lib/markupPick.js";
+import { markupsUnderPoint, nextMarkupSelection, boxCorners, closedMarkupSize, openMarkupLength } from "./lib/markupPick.js";
 import {
   CLOUD_ARC_PRESETS, CLOUD_ARC_MIN_FT, CLOUD_ARC_MAX_FT, CLOUD_ARC_DEFAULT_FT, CLOUD_STATUS_OPTIONS,
   clampCloudArcFt, cloudScallopPath, simplifyPath, cloudMetaDefaults,
@@ -149,6 +149,7 @@ import PanelChrome from "../../shared/ui/PanelChrome.jsx";
 import FloatingPanel from "../../shared/ui/FloatingPanel.jsx";
 import { clampToBounds, initialFloatPos, reconcileForNarrow, shouldInspectorTakeDock, dockAfterRelinquish, FLOAT_MIN_WIDTH, FLOAT_SIZE } from "../../shared/ui/floatingPanel.js";
 import { safeAreaInsets } from "../../shared/ui/safeAreaInsets.js";
+import { publishBottomSheetHeight } from "../../shared/ui/bottomSheetTracker.js";
 import { isPhoneSheetMode, heightForSnap, resolveDragSnap, keyboardInsetPx, clampSheetHeightForKeyboard, selectionCoverDeltaPx } from "./lib/propertiesSheet.js";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
 /* NEW-2 — the ONE floor a header crumb may be squeezed to, shared with the project crumb so the
@@ -17641,6 +17642,22 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     sheetRenderH = clampSheetHeightForKeyboard(sheetHeightPx, vh, sheetKbInset);
   }
 
+  /* B1215682/NEW-3 (owner iPhone review) — the global help/report "?" FAB (app/HelpReportControl.jsx)
+   * is fixed bottom-right with no idea this sheet exists, so it used to render on top of the
+   * sheet's own top-right corner, over the "Element" collapse/close row. Lifting it above the
+   * sheet's own top edge (the `data-canvas-corner` contract `cornerClearanceFromBottom` already
+   * offers) was tried and measured to collide with the map's own "View"/"Layers" pills at the
+   * sheet's taller drag detent (cornerClearanceFromBottom only reasons about occupants near the
+   * bottom edge, not chrome pinned near the top competing for the same vertical band) — so the
+   * control hides outright instead, reusing the SAME shared signal FloatingNotice already
+   * subscribes to for the Food module's bottom sheet (`bottomSheetTracker.js`'s own header:
+   * "a floating notice can mount from anywhere... there is no shared ancestor" applies here
+   * identically). Zeroed whenever the sheet is closed or this component unmounts. */
+  useEffect(() => {
+    publishBottomSheetHeight(phoneSheetSolo ? sheetRenderH : 0);
+    return () => publishBottomSheetHeight(0);
+  }, [phoneSheetSolo, sheetRenderH]);
+
   const onSheetHandlePointerDown = (e) => {
     if (e.button != null && e.button !== 0) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -21763,22 +21780,24 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
                 // so a plain "pointer" reads honestly.
                 const mkCursor = { cursor: (tool === "select" && !editingCorners) ? (m.locked ? "pointer" : "move") : "crosshair" };
                 const common = { stroke: nStroke, strokeWidth: vsw, strokeDasharray: da, fill: "none", style: mkCursor, onPointerDown: (e) => startMoveMarkup(e, m.id), onContextMenu: (e) => onMarkupContext(e, m.id) };
-                // B920/NEW-1 — a closed shape (rect/ellipse/polygon) grabs by its whole INTERIOR only
-                // when it is FILLED. An UNFILLED one (fillOpacity 0) grabs on its stroke + a forgiving
-                // buffer ONLY, via a fat transparent hit companion (the line/polyline technique) — so a
-                // big invisible boundary stops blanketing everything under it (the reported bug: an
-                // unfilled ~5,000-ft polygon swallowed every off-road click, and "Send to Back" was
-                // powerless because it's a hit-AREA problem, not paint order). Small FILLED annotations
-                // still select by interior (B155/B156 preserved). markupPick.js reads the SAME
-                // visible-fill rule (solid opacity or supported hatch), so the JS cycle (B921) and
-                // this declarative hit area never diverge.
+                // B920/NEW-1 — a closed shape (rect/ellipse/polygon) grabs by its whole INTERIOR when
+                // it is FILLED, or simply UNLOCKED — the ordinary case: draw a shape, click inside it
+                // to select it, exactly like every other drawing tool (2026-09-07 owner report: "if I
+                // draw a polygon... the properties menu shows up terribly" traced to interior clicks
+                // silently selecting nothing). Only a LOCKED + unfilled shape keeps the original B920
+                // stroke-only grab, via a fat transparent hit companion (the line/polyline technique):
+                // locking is the explicit signal a shape is a passive backdrop reference, and the
+                // reported B920 case was exactly that — a LOCKED ~5,000-ft invisible boundary
+                // swallowing every off-road click. A freshly drawn, unlocked shape is not that case.
+                // markupPick.js reads the SAME fill-or-unlocked rule, so the JS cycle (B921) and this
+                // declarative hit area never diverge.
                 const hasHatch = ["rect", "ellipse", "polygon"].includes(m.kind) && !!m.hatch && m.hatch !== "none";
                 const closedFill = (m.fillOpacity ?? 0) > 0 || hasHatch;
                 const visFill = hasHatch
                   ? { fill: `url(#pat-markup-${m.id})` }
                   : closedFill ? { fill: m.fill, fillOpacity: m.fillOpacity } : { fill: "none" };
                 const visibleStroke = { strokeOpacity: m.strokeOpacity ?? 1 };
-                const closedHitPE = closedFill ? "all" : "stroke"; // whole-body vs stroke-only grab (B920)
+                const closedHitPE = (closedFill || !m.locked) ? "all" : "stroke"; // whole-body vs stroke-only grab (B920/NEW-1)
                 // Top-centre screen anchor for the selected-locked 🔒 cue (B922/NEW-3), per markup kind.
                 const mkLockAnchor = () => {
                   const pts = m.kind === "line" ? [m.a, m.b]
@@ -24447,7 +24466,20 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
                 control INSIDE the sheet is bumped to the new `touch` step via one scoped rule
                 keyed off the token's CSS mirror (`--control-h-touch`, index.css) — never a raw
                 number, and never touching a control anywhere else in the app. */}
-            <style>{`[data-bottom-sheet="properties"] button, [data-bottom-sheet="properties"] input, [data-bottom-sheet="properties"] select, [data-bottom-sheet="properties"] textarea { min-height: var(--control-h-touch); } [data-bottom-sheet="properties"] button { min-width: var(--control-h-touch); }`}</style>
+            <style>{`[data-bottom-sheet="properties"] button, [data-bottom-sheet="properties"] input, [data-bottom-sheet="properties"] select, [data-bottom-sheet="properties"] textarea { min-height: var(--control-h-touch); } [data-bottom-sheet="properties"] button { min-width: var(--control-h-touch); }
+              /* B1215682/NEW-4 — the ▲/▼ number stepper reads as a spinner ATTACHED to its field,
+                 not two loose buttons floating beside it: laid out side-by-side instead of stacked,
+                 each no taller than the input's own touch-floor height, narrower than the blanket
+                 44px button floor above (a stepper half is still ≥32px wide against the input's
+                 full 44px height — an elongated pair, same shape every platform quantity-stepper
+                 uses, not a square-per-button minimum). */
+              [data-bottom-sheet="properties"] [data-num-stepper] { flex-direction: row !important; gap: 3px !important; align-self: stretch; }
+              [data-bottom-sheet="properties"] [data-num-stepper] button { min-width: 32px; }
+              /* B1215682/NEW-5 — label and value sit ADJACENT, not at opposite edges of the full
+                 sheet width: the row's own inline justify-content is overridden (it is set inline,
+                 so this needs the specificity bump) rather than pushing the control flush right
+                 with the whole sheet's width of dead air between the two. */
+              [data-bottom-sheet="properties"] [data-field-group] { justify-content: flex-start !important; }`}</style>
             <div data-testid="properties-sheet-handle" onPointerDown={onSheetHandlePointerDown} onPointerMove={onSheetHandlePointerMove} onPointerUp={endSheetHandleDrag} onPointerCancel={endSheetHandleDrag}
               style={{ flex: "0 0 auto", display: "flex", justifyContent: "center", alignItems: "center", height: CONTROL_H.touch, cursor: "grab", touchAction: "none" }}>
               <span aria-hidden="true" style={{ width: 36, height: 4, borderRadius: RADIUS.pill, background: "var(--border-strong)" }} />
@@ -24529,7 +24561,12 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               // resolve to 2 elements (a Playwright strict-mode violation) any time a multi-selection's
               // Properties was open.
               <div>
-              <Section title={`${multi.length} selected`}>
+              {/* B1215682/NEW-2 — on the phone bottom sheet, the chrome row directly above (the
+                  "Element" collapse header) already reads "N selected" verbatim — an exact
+                  byte-for-byte duplicate, unlike the desktop docked panel where this Section is
+                  the ONLY place that count appears. Suppressing it here (not on desktop) reclaims
+                  a whole card's worth of vertical space with zero information loss. */}
+              <Section title={phoneSheetSolo ? false : `${multi.length} selected`}>
                 {caps.includes("fillOpacity") && (
                   <Field label="Opacity">
                     <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -24662,8 +24699,12 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
             // top, so a hardcoded surface colour blanked every colour chip in these panels: the
             // control you click to change a colour showed no colour. Leave it to ColorField.
             const swatch = { width: 34, height: 26, padding: 0, border: BORDER_1, borderRadius: 6, cursor: "pointer" };
+            // NEW-3 — the same bold/tabular-numeral value style the measurement panel's Area/Length
+            // rows already use, so a markup's size reads exactly like every other size in this app.
+            const valStyle = { fontFamily: NUM_FONT, fontVariantNumeric: TABULAR_NUMS, fontWeight: 700, fontSize: 13, color: PAL.ink };
             const isCloud = selMarkup.kind === "cloud";
             const closed = selMarkup.kind === "rect" || selMarkup.kind === "ellipse" || selMarkup.kind === "polygon" || isCloud;
+            const isOpenPath = selMarkup.kind === "line" || selMarkup.kind === "polyline";
             // Cloud writes its OWN sticky style (mkCloudStyle), never the shared mkStyle every other
             // markup tool draws from next — see MK_CLOUD_DEFAULT.
             const setStyle = isCloud ? setSelMarkupCloud : setSelMarkup;
@@ -24672,32 +24713,34 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               // NEW-1 — plain wrapper (see the multi-select branch above for why the duplicate testid was removed).
               <div>
               <Section title={simpleClosedMarkup ? null : (isCloud ? "Markup · Cloud" : `Markup · ${selMarkup.kind[0].toUpperCase()}${selMarkup.kind.slice(1)}`)}>
-                {simpleClosedMarkup ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", border: BORDER_1, borderRadius: 8, overflow: "hidden" }}>
-                    <div style={{ padding: 12, borderRight: BORDER_1 }}>
-                      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 10 }}>Outline</div>
-                      <Field label="Color"><ColorField value={toHex6(selMarkup.stroke)} {...colorCtl((v) => liveStyle({ stroke: v }))} seed={COLOR_SEED} title="Outline color" style={swatch} /></Field>
-                      <Field label="Line width"><span style={{ display: "flex", alignItems: "center", gap: 4 }}><NumInput style={{ ...numInput, width: 62 }} value={selMarkup.weight ?? 2} min={0.5} step={0.5} coarse={2} onCommit={(n) => setStyle({ weight: n })} /><span style={{ fontSize: 11, color: PAL.muted }}>pt</span></span></Field>
-                      <Field label="Line style">
-                        <select style={{ ...numInput, width: 104, fontFamily: "inherit" }} value={selMarkup.dash || "solid"} onChange={(e) => setStyle({ dash: e.target.value })}>
-                          {DASH_OPTIONS}
-                        </select>
-                      </Field>
-                      <Field label="Opacity"><span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}><input style={{ minWidth: 0, width: "100%" }} type="range" min={0} max={1} step={0.05} value={selMarkup.strokeOpacity ?? 1} {...sliderHistory((e) => liveStyle({ strokeOpacity: +e.target.value }))} /><span style={{ fontSize: 10.5, minWidth: 30, textAlign: "right" }}>{Math.round((selMarkup.strokeOpacity ?? 1) * 100)}%</span></span></Field>
-                    </div>
-                    <div style={{ padding: 12 }}>
-                      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 10 }}>Fill</div>
-                      <Field label="Color"><ColorField value={toHex6(selMarkup.fill)} {...colorCtl((v) => liveStyle({ fill: v }))} seed={COLOR_SEED} title="Fill color" style={swatch} /></Field>
-                      <Field label="Hatch">
-                        <select style={{ ...numInput, width: 122, fontFamily: "inherit" }} value={selMarkup.hatch || "none"} onChange={(e) => setStyle({ hatch: e.target.value })}>
-                          {HATCH_OPTIONS.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
-                        </select>
-                      </Field>
-                      <Field label="Hatch color"><ColorField value={toHex6(selMarkup.hatchColor || selMarkup.stroke || selMarkup.fill)} {...colorCtl((v) => liveStyle({ hatchColor: v }))} seed={COLOR_SEED} title="Hatch color" style={swatch} /></Field>
-                      <Field label="Opacity"><span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}><input style={{ minWidth: 0, width: "100%" }} type="range" min={0} max={1} step={0.05} value={selMarkup.fillOpacity ?? 0} {...sliderHistory((e) => liveStyle({ fillOpacity: +e.target.value }))} /><span style={{ fontSize: 10.5, minWidth: 30, textAlign: "right" }}>{Math.round((selMarkup.fillOpacity ?? 0) * 100)}%</span></span></Field>
-                    </div>
-                  </div>
-                ) : (<>
+                {/* NEW-2 (2026-09-07) — this used to be a 2-column grid crammed into the ~294px
+                    panel: the "pt" unit label overlapped "Hatch" in the next column, the Hatch
+                    dropdown clipped to "None (flat f…", and "Line width"/"Line style" wrapped onto
+                    two lines while their controls stayed on one. A single column always fits the
+                    panel at its real width, with plenty of vertical room to spend (PANEL-BREVITY:
+                    collapsing width for width's sake was the wrong axis — this panel's height was
+                    never the scarce resource). Outline/Fill stay visually grouped via StdSubLabel,
+                    same pattern the measurement panel's own Line/Fill groups already use. */}
+                {simpleClosedMarkup ? (<>
+                  <StdSubLabel>Outline</StdSubLabel>
+                  <Field label="Color"><ColorField value={toHex6(selMarkup.stroke)} {...colorCtl((v) => liveStyle({ stroke: v }))} seed={COLOR_SEED} title="Outline color" style={swatch} /></Field>
+                  <Field label="Line width"><span style={{ display: "flex", alignItems: "center", gap: 4 }}><NumInput style={{ ...numInput, width: 62 }} value={selMarkup.weight ?? 2} min={0.5} step={0.5} coarse={2} onCommit={(n) => setStyle({ weight: n })} /><span style={{ fontSize: 11, color: PAL.muted }}>pt</span></span></Field>
+                  <Field label="Line style">
+                    <select style={{ ...numInput, width: 104, fontFamily: "inherit" }} value={selMarkup.dash || "solid"} onChange={(e) => setStyle({ dash: e.target.value })}>
+                      {DASH_OPTIONS}
+                    </select>
+                  </Field>
+                  <Field label="Line opacity"><span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: "1 1 auto" }}><input style={{ minWidth: 0, flex: "1 1 auto" }} type="range" min={0} max={1} step={0.05} value={selMarkup.strokeOpacity ?? 1} {...sliderHistory((e) => liveStyle({ strokeOpacity: +e.target.value }))} /><span style={{ fontSize: 10.5, minWidth: 30, textAlign: "right", flex: "none" }}>{Math.round((selMarkup.strokeOpacity ?? 1) * 100)}%</span></span></Field>
+                  <StdSubLabel>Fill</StdSubLabel>
+                  <Field label="Color"><ColorField value={toHex6(selMarkup.fill)} {...colorCtl((v) => liveStyle({ fill: v }))} seed={COLOR_SEED} title="Fill color" style={swatch} /></Field>
+                  <Field label="Hatch">
+                    <select style={{ ...numInput, width: 122, fontFamily: "inherit" }} value={selMarkup.hatch || "none"} onChange={(e) => setStyle({ hatch: e.target.value })}>
+                      {HATCH_OPTIONS.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Hatch color"><ColorField value={toHex6(selMarkup.hatchColor || selMarkup.stroke || selMarkup.fill)} {...colorCtl((v) => liveStyle({ hatchColor: v }))} seed={COLOR_SEED} title="Hatch color" style={swatch} /></Field>
+                  <Field label="Fill opacity"><span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: "1 1 auto" }}><input style={{ minWidth: 0, flex: "1 1 auto" }} type="range" min={0} max={1} step={0.05} value={selMarkup.fillOpacity ?? 0} {...sliderHistory((e) => liveStyle({ fillOpacity: +e.target.value }))} /><span style={{ fontSize: 10.5, minWidth: 30, textAlign: "right", flex: "none" }}>{Math.round((selMarkup.fillOpacity ?? 0) * 100)}%</span></span></Field>
+                </>) : (<>
                   <Field label="Outline"><ColorField value={toHex6(selMarkup.stroke)} {...colorCtl((v) => liveStyle({ stroke: v }))} seed={COLOR_SEED} title="Outline color" style={swatch} /></Field>
                   <Field label="Line weight"><NumInput style={numInput} value={selMarkup.weight ?? 2} min={0.5} step={0.5} coarse={2} onCommit={(n) => setStyle({ weight: n })} /></Field>
                   <Field label="Dash">
@@ -24712,7 +24755,9 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
                 {/* B620 — inline label riding the line (open paths only; double-click the line also opens this in
                     place). NON-sticky (direct setMarkups, never setMkStyle) so the text can't bleed into the next
                     drawn shape; onFocus pushes ONE undo frame per edit (not one per keystroke). */}
-                {(selMarkup.kind === "line" || selMarkup.kind === "polyline") && (<>
+                {isOpenPath && (<>
+                  {/* NEW-3 — the drawn line/polyline's LENGTH, off the same points the renderer draws. */}
+                  <Field label="Length"><span style={valStyle}>{fmtFeet(openMarkupLength(selMarkup) || 0)}</span></Field>
                   <Field label="Inline label"><input value={selMarkup.inlineLabel || ""} maxLength={120}
                     onFocus={() => pushHistory()}
                     onChange={(e) => setMarkups((a) => a.map((m) => (m.id === selMarkup.id ? { ...m, inlineLabel: e.target.value } : m)))}
@@ -24724,6 +24769,19 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
                   <Field label="Fill"><ColorField value={toHex6(selMarkup.fill)} {...colorCtl((v) => liveStyle({ fill: v }))} seed={COLOR_SEED} title="Fill color" style={swatch} /></Field>
                   <Field label="Fill opacity"><input type="range" min={0} max={1} step={0.05} value={selMarkup.fillOpacity ?? 0} {...sliderHistory((e) => liveStyle({ fillOpacity: +e.target.value }))} /></Field>
                 </>}
+                {/* NEW-3 — a closed shape's SIZE, read off the SAME geometry the canvas draws (never
+                    a second calculation): reuses markupPick.js's `closedMarkupSize`, which derives
+                    from the identical ring/area the hit-test already computes. Same place + format
+                    the building Footprint line and the measurement panel's Area row already use. */}
+                {closed && (() => {
+                  const size = closedMarkupSize(selMarkup);
+                  if (!size) return null;
+                  return (<>
+                    <StdSubLabel>Size</StdSubLabel>
+                    <Field label="Area"><span style={valStyle}>{fmtSf(size.area)} · {fmtAcres(size.area / SQFT_PER_ACRE)}</span></Field>
+                    <Field label="Perimeter"><span style={valStyle}>{fmtFeet(size.perimeter)}</span></Field>
+                  </>);
+                })()}
                 {isCloud && (() => {
                   const cs = { display: "flex", gap: 5, width: 150 };
                   const fmtWhen = (iso) => { try { return iso ? new Date(iso).toLocaleString() : "—"; } catch (_) { return "—"; } };
@@ -25005,9 +25063,17 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               row above already reads "ELEMENT · DETENTION POND" and carries the collapse chevron, so
               a repeated "DETENTION POND" section header was a double title. The title string
               "DETENTION POND" now appears exactly once (in the chrome). Other element types keep
-              their "Selected · {label}" section header. */}
+              their "Selected · {label}" section header — desktop has the vertical room to spare and
+              a few types (e.g. "Paving / Drive") carry a qualifier the chrome row's own shortened
+              label drops.
+              ⛔ B1215682/NEW-2 (owner iPhone review) — ON THE PHONE SHEET the pond exception above
+              generalizes to every type whose full label matches what the chrome already shows: the
+              sheet's own screenshot showed "ELEMENT · BUILDING" then "SELECTED · BUILDING" stacked
+              with two cards' worth of padding between them and only two fields left on screen. Never
+              drop a type whose label carries a " / " qualifier (paving) — that text exists nowhere
+              else, so suppressing it there would be a real information loss, not just tidying. */}
           {!multiStyleable && selEl && (
-            <Section title={selEl.type === "pond" ? false : `Selected · ${TYPE[selEl.type].label}`}>
+            <Section title={selEl.type === "pond" || (phoneSheetSolo && !(TYPE[selEl.type]?.label || "").includes(" / ")) ? false : `Selected · ${TYPE[selEl.type].label}`}>
               {/* NEW-1/B872 — a RESHAPED building (footEdit: points + a dock frame) keeps the full building
                   inspector (Footprint reshape controls, dock zones, structure, column grid), routed through
                   the isBuilding branch below whose Footprint group handles the polygon case. A hand-CLICK-
@@ -29366,7 +29432,13 @@ function NumInput({ value, onCommit, min, max, style, placeholder, step, coarse,
   return stack(
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
       {input}
-      <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {/* B1215682/NEW-4 (owner iPhone review) — `data-num-stepper` is a plain marker, invisible
+          outside the phone sheet: the touch-floor rule above (`min-height`/`min-width:
+          var(--control-h-touch)`) bumps EVERY button uniformly, so this 18×12 desktop pair became
+          two stacked 44×44 boxes — taller than the 44px input beside them and read as two loose
+          buttons rather than a spinner attached to the field. The scoped stylesheet re-lays this
+          one marked span into a side-by-side pair sized to the input's own height instead. */}
+      <span data-num-stepper="1" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         <button type="button" style={spinBtn} aria-label="Increase" title="Increase (↑ · Shift for a larger step)"
           onMouseDown={(e) => e.preventDefault()} onClick={() => nudge(step)}>▲</button>
         <button type="button" style={spinBtn} aria-label="Decrease" title="Decrease (↓ · Shift for a larger step)"

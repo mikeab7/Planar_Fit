@@ -164,6 +164,94 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V948848 — B1310208-B1310211: the redesigned site-plan panel, at Michael's own 1191×465 window `Blocker: auth`
+
+**Why this needs its own real pass, and why it can't run today.** All four items are a re-layout of `SitePlansSection.jsx`, driven by a real signed-in comp + a real placed `site_plan_overlays` row — this sandbox's egress proxy hard-blocks the real production Supabase project (`lyeqzkuiwngunutlkkmi.supabase.co`): confirmed directly via `curl` (`CONNECT tunnel failed, response 403`, and the agent-proxy's own status endpoint logs it as `gateway answered 403 to CONNECT`), the same wall this repo's own `e2e/auth.setup.js` hits. This is a hard proxy-level CONNECT rejection, not a TLS-handshake quirk WebKit can route around (the B1215536 note elsewhere in this file about WebKit reaching hosts Chromium can't is about a DIFFERENT failure shape — `ws_closed_mid_exchange` after the tunnel opens — and does not apply to a 403 the gateway returns before any handshake starts).
+
+**What was verified here (this session, sandbox — mocked signed-in, not the real thing).** `ui-audit/verify-site-plan-adjust-panel.mjs` (new) launches the real built app and intercepts the Supabase REST/auth endpoints at the network layer (Playwright `ctx.route`, which fires before a request leaves the browser regardless of auth state) to serve one throwaway comp ("Core 5 - West Hardy" — the same name Michael's own real comp carries, deliberately reused as the fixture name since the dispatch named it, but this is FABRICATED DATA, not his real row: `id: "throwaway-comp-1"`) and one throwaway placed site-plan overlay, at his own reported 1191×465 viewport. 24/24 checks pass:
+1. The comp's own name renders in a real, unclipped box (not cut off by the scroll region).
+2. The resting plan card shows only identity (thumbnail, name, date/page, status) plus one "Adjust" button — no Move/resize, Pin comp here, Change page, Delete, or overflow "⋯" visible until Adjust is pressed.
+3. Pressing Adjust opens a panel docked within 15px of the map's true right edge, ≥30px clear of the Leaflet scale bar, never off the top of the map, never overlapping the Comps rail — `position:absolute`, `border-radius:12px`, matching the Layers panel's own chrome exactly.
+4. The panel body carries Opacity (bold, prominent), Rotation (a visibly quieter weight, distinct from Opacity's), Move/resize, Crop, Pin comp here, Change page; the footer carries Delete (inline confirm, never a native dialog) and Done.
+5. **A genuine cross-cutting defect this same pass found and this session fixed:** the global help/report FAB also lives bottom-right and measures the real DOM to clear that corner's real occupants (`shared/ui/cornerClearance.js`) — the new panel wasn't declaring itself, so the FAB sat over its Done button and ate the click in the harness before the fix (`data-canvas-corner="site-plan-adjust"`). Re-run after the fix: Done is clickable and closes the panel.
+
+`npm run lint` clean; `npm run build` clean; `npx vitest run test/comps.test.js test/compLocationText.test.js test/siteplanOverlayCrop.test.js test/breadcrumbPrivacyLock.test.js` 148/148 green (regression check on the touched file, unaffected by this item); `node ui-audit/design-drift-audit.mjs --check` and `node scripts/build-map.mjs --check` both pass.
+
+**Steps, each with a named expected result — on a real signed-in account, window resized to 1191×465, using a THROWAWAY comp + plan (never `site_plan_overlays` row `aa2d8163-7d45-4929-8a05-dad94ba2528d` or comp `ddb5a9e5-76c5-49e6-88b0-4a842f1b0a46` — his real Airtex plan and Core 5 - West Hardy comp):**
+1. Create a throwaway comp with a throwaway placed site plan. Open that comp's detail view at the 1191×465 window. **Expect:** the comp's own name renders whole, not clipped by the scroll region, before the plan card.
+2. Look at the plan card at rest. **Expect:** thumbnail, name, date/page, the Site dropdown, and exactly one "Adjust" button — no visible Move/resize, Pin comp here, Change page, Delete, or "⋯" menu.
+3. Click Adjust. **Expect:** a small panel docks to the bottom-right corner of the map, matching the Layers panel's look, never overlapping the Comps rail (left) or Imagery & layers (right).
+4. In the panel, compare Opacity and Rotation. **Expect:** Opacity reads visually heavier/more prominent; Rotation reads quieter/smaller. Lock the plan (or note it's already locked) and confirm Rotation shows "N° · locked — unlock to rotate" rather than an editable field.
+5. Click "Delete site plan…" in the footer. **Expect:** an inline confirm appears next to Done, never a native browser dialog; Cancel backs out cleanly.
+6. Click Done. **Expect:** the panel closes; nothing on the map or in the rail is left in a stuck/armed state.
+7. Clean up: delete (soft-delete) the throwaway comp and plan created for this check.
+
+**Result:** ⏳ pending — needs a real signed-in account. `Cadence: once`.
+### V655696 — B1167200: the Schedule tab boots on the owner's own machine with no boot task attributed to `babel.min.js` `Blocker: real-device`
+
+**Why this needs its own real pass, and why it can't run today.** The bug this closes was found from `public.client_errors` boot-capture telemetry on the OWNER'S OWN signed-in machine (`bootTaskMs 2379.7`, attributed to `babel.min.js` at `DOMContentLoaded`) — a real-hardware, real-network timing measurement. This sandbox's headless Chromium runs behind a proxy with its own network characteristics (confirmed this session: the SAME comparison run here read ~15.1s vs ~8.8s median boot, dominated by this sandbox's own slow `supabase-js` CDN round-trip, not representative of his machine's absolute numbers) — so the only thing that actually closes this item is a fresh boot capture landing from his own browser, showing the babel task gone.
+
+**What was verified here (this session, sandbox).**
+1. `npm run build` produces `dist/sequence/index.html` with **zero** occurrences of `@babel/standalone`, `babel.min.js`, or `type="text/babel"` — confirmed by direct grep of the built output, not inferred.
+2. Booted the actual built `dist/sequence/index.html` in a real headless Chromium (this sandbox's own CDN-vendoring harness pattern, pointed at `dist/` instead of `public/`): it renders the real 49-row Goose Creek seed schedule, `window.Babel === undefined`, `React.version === "18.3.1"` (the locally vendored copy loading and executing correctly) — a genuine, content-verified render, not a byte-absence check alone.
+3. Head-to-head boot comparison, same sandbox, same network conditions, 3 runs each: raw source (pre-fix, still has the CDN babel transpile) median 15,128 ms vs. the compiled build median 8,816 ms, measured DOMContentLoaded→first rendered task row via `performance.now()` inside the page (not wall-clock around Playwright calls). Consistent across all 3 runs each way.
+4. `test/sequenceCompiledBuild.test.js` (7 tests, new) proves the compile transform itself is correct and mutation-proven (see B1167200's own writeup for detail) — this is the SOURCE-side proof; this V# is specifically about the boot-capture telemetry confirming the real-world effect.
+
+**Steps, each with a named expected result — on the owner's own machine, on `planyr.io`, after this PR deploys:**
+1. Open the Schedule tab (any project) on a normal, not-recently-visited tab (a cold or recently-navigated load, the same shape the original capture caught — a warm same-tab reload may serve from the browser's HTTP cache and under-represent the old cost too, though the fix removes the cost either way).
+2. **Expect:** the tab visibly renders the grid/Gantt at least as fast as before — no perceptible new stall.
+3. Check the next boot-capture row that lands in `public.client_errors` for this session (module `scheduler`, `source: event:perfcap`). **Expect:** `ltNames` no longer contains `"DOMWindow.onDOMContentLoaded:babel.min.js"` anywhere, and the single largest boot task (whatever it now is) reads meaningfully below the pre-fix `2317.2 ms` — the whole point being that the ~2.3s blocking task this item was filed against is simply gone from the trace, not just smaller.
+4. Confirm the Schedule tab is otherwise fully functional — grid/Gantt render, a task edit saves, switching Grid/Split/Gantt works — since this is a build-pipeline change touching the page's entire delivery mechanism, not a UI change, and a boot-capture win that came with a broken app would not be a fix.
+
+**Result:** ⏳ pending — needs a real boot-capture landing from the owner's own machine after this PR deploys to `planyr.io`. `Cadence: once`.
+
+### V942464 — B1303824: deleting a project through the product UI actually issues the soft-delete write, on the owner's own two real stuck projects `Blocker: auth` `Blocker: real-data`
+
+**Why this needs its own real pass.** The bug only manifests against a real, signed-in, RLS-scoped Supabase account whose local browser cache is missing the project being deleted — this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can reproduce or confirm the actual network write landing. The FIX ITSELF — `storage.js`'s `deleteSiteGroup` falling back to a new `cloudSync.cloudDeleteGroup` whenever the local plan list is empty — is proven end to end against a real mocked Supabase client (`test/deleteSiteGroupCloudFallback.test.js`), including a red-proof (reverting the fix reproduces the exact `removed:0`-with-no-write shape the owner measured live).
+
+**What was verified here (this session, sandbox + code reading, never the live app).**
+1. Reproduced the reported network shape exactly in a unit test: `deleteSiteGroup(groupId)` against a group with a live cloud row but zero locally-cached plans returned `{ok:true, removed:0}` with the pre-fix code, and `{ok:true, removed:1}` with a confirmed write (`deleted_at` stamped) after the fix.
+2. Ruled out PR #1519 (`cloudCheckDeleted`/`purgeProjectFoldersFor`, merged 20 minutes before the first reproduction) as the cause — traced every call site of both functions and confirmed neither is in `deleteSiteGroup`'s call graph.
+3. Found and fixed the same silent-no-op class a second time in `SitePlannerApp.jsx`'s map-list "Delete project…" path (`if (!rec) return;`, with no error/toast/network call at all).
+4. `npx vitest run` — full suite green (773 files / 15,641 tests). `npm run lint` / `npm run build` clean.
+
+**DO NOT repair `smtqp3fp3e06`/`smtqml10v4l1`'s data — deleting them through the fixed UI is this verification's whole proof, and is also the disposal the owner explicitly asked for** ("those two projects are the live reproduction — they were created by the assistant last night, contain nothing of the owner's, and he has asked for them to be gone").
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner, network tab open:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Open the project switcher (breadcrumb dropdown) → the kebab beside "Untitled site" (group `smtqp3fp3e06`) → Delete → confirm. **Expect:** a real `PATCH`/`OPTIONS` preflight hits `rest/v1/sites`, the confirm dialog names the project (never a blank "Delete ?"), and the project leaves the switcher list immediately.
+3. Query (or have a Cowork session query) `sites.deleted_at` for group `smtqp3fp3e06` immediately after. **Expect:** it is no longer `null`.
+4. Hard reload. **Expect:** the project stays gone from the switcher (it now appears under Recently deleted, restorable for 30 days).
+5. Repeat steps 2–4 for the second project, group `smtqml10v4l1`.
+6. Confirm both are gone — this closes the owner's original blocking request as well as the verification.
+
+**Result:** ⏳ pending — needs a real signed-in browser session on production; not reachable from this sandbox. `Cadence: once`.
+### V946304 — B1307664: the Library folder tree's decorative folder emoji is actually gone on a real signed-in project's populated tree `Blocker: auth`
+
+**Why this needs its own real pass.** `FolderTree.jsx` only renders real, populated rows against a signed-in project's actual folder data (`listFolders`) — this sandbox's proxy CORS-blocks the Supabase auth handshake, so the populated-row branch this fix touches can never execute here. What's proven without a browser: the empty-project template-preview branch (the other place the emoji lived) renders correctly with no emoji, with a precondition proving the render actually reached that branch before trusting the negative assertion; a source sweep confirms neither glyph (📁/📂) appears anywhere else in the module; and the full test suite, lint, build, and `ci-parity`'s visual-regression gate (which captures the `library` surface signed-out, so it can't see this change either way) are all green.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, in the Library workspace, inside any project with an existing folder tree:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Open the Library tab for any project that already has its standard folder structure created. **Expect:** every row in the left-rail folder tree shows only the ▸/▾ disclosure triangle and the folder name — no 📁 or 📂 glyph anywhere in the tree, at any depth, open or collapsed.
+3. Right-click empty tree space → **New folder**, or expand a branch with subfolders. **Expect:** newly-created and nested rows are equally emoji-free — this isn't just the top-level rows.
+4. Open a brand-new (or never-scaffolded) project's Library. **Expect:** the "Create the standard N-folder structure" preview below the button also shows no folder emoji on any of its dimmed preview rows.
+5. Confirm nothing else on the row shifted or misaligned — the disclosure triangle, the indentation per depth, and the row height should look exactly as before, just without the icon.
+
+**Result:** ⏳ pending — needs a real signed-in browser session; not reachable from this sandbox. `Cadence: once`.
+
+### V946305 — B1307665: the muted per-folder file-count mark reads clearly now that the emoji is gone, on a real project's folder tree `Blocker: auth`
+
+**Why this needs its own real pass.** The brief explicitly asked for a live look, not a unit-test-only close-out: *"Verify both by opening a real project's Library on production and looking at it, not by unit test alone."* The underlying mechanism (a muted rolled-up subtree file count, shown only when `count > 0`) was audited and found to already exist and already be wired into this exact row — see B1307665's own note — so this check is about the RESULT reading clearly to a human eye now that the emoji it used to compete with is gone, not about whether the number is computed correctly (that part is unchanged, pre-existing code).
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, in the Library workspace, inside a project with files filed into at least one folder and at least one genuinely empty folder:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Open that project's Library and look at the left-rail folder tree. **Expect:** a folder that has files somewhere in its own subtree shows a small, muted (grey, not accent-colored) number beside its name; a genuinely empty folder (and empty scaffolding elsewhere in the tree) shows nothing at all beside its name — no dot, no zero, no placeholder.
+3. Expand a branch two or more levels deep where a file sits in a leaf folder. **Expect:** every ancestor folder up to the top level also shows a count that includes that file — the mark is a true subtree roll-up, not a direct-children-only count.
+4. Compare the overall first impression to before this change. **Expect:** with the folder emoji gone (B1307664), the muted count is now the one thing that visually distinguishes a folder with work in it from empty scaffolding — confirm it actually reads that way to the eye, not just that the number is technically present.
+5. Star (pin) a folder that has files. **Expect (pre-existing, unchanged behavior — not a defect to fix here):** the row shows the ★ pin marker instead of the count. Note whether this reads as confusing in practice; it's filed as a known, deliberately out-of-scope edge case on B1307665, not something this check should fail on.
+
+**Result:** ⏳ pending — needs a real signed-in browser session with real filed data; not reachable from this sandbox. `Cadence: once`.
+
 ### V652688 — B1164192: Richfield (and Woods Road) open normally, with every live plan visible, instead of showing a deleted-project notice `Blocker: auth`
 
 **Why this needs its own real pass.** The route gate this bug lived in (`Shell.jsx`'s deletion-check effect) only ever fires against the real, signed-in, RLS-scoped `sites` table — this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can sign in as the owner and watch the actual notice appear or not appear. The FIX ITSELF — `cloudSync.cloudCheckDeleted` now asking about the whole plan group instead of one row — is proven end to end against the real production data SHAPE (Richfield's and Woods Road's real ids, group memberships, and deletion timestamps, pulled read-only via the Supabase MCP connector) in `test/deletedProjectGate.test.js`, and red-proofed: 11 of the file's tests were confirmed to FAIL against the pre-fix single-row query before the fix, and all 26 pass with it.
@@ -624,6 +712,25 @@ RED-PROVEN throughout: every new case reproduces the correct-behavior claim only
 7. If step 2 (or any variant) DOES still show the app sliding, bare page background appearing at an edge, or the header/tab row overlapping/colliding: note roughly which step reproduced it, the project, and the zoom level. Independently of this manual check, a real recurrence should also produce a `client_errors` row with `source = 'event:page-containment-drift'` — worth a glance if this is ever chased further.
 
 **Result:** ⏳ pending — needs a real iPhone Safari session; unreproducible by any means available to this sandbox (see B1168128's entry in `BACKLOG.md` for the full red-proof). `Cadence: once`.
+
+### V952192 — B1313552: the hardened phone Properties bottom sheet, on a real iPhone `Blocker: real-device`
+
+**Why this needs its own real pass.** Same standing gap as V888832 below, which this item hardens rather than replaces: this sandbox has no physical device and no WebKit build, so real finger-drag physics, a real on-screen keyboard, and the real notch/home-indicator safe-area value are all out of reach here. Everything else — the single (no longer double) heading, the side-by-side number stepper, the label/value adjacency, and the help-FAB hide-while-open behavior — is verified this session against Chromium's device-emulation mode (a real touch-capable browser engine, a simulated iPhone 13 descriptor) with real DOM measurements, not a screenshot read by eye.
+
+**What was verified here (this session, sandbox, headless Chromium + device emulation, seeded with a Building on a plan named to match the owner's report — "Goose Creek" / "Phase II - Revision").** Selecting the Building and opening Properties: ONE heading ("Element · Building"), not two; the Length/Depth number fields render with their ▲/▼ pair side-by-side (32×44 each) directly beside a 44-tall input rather than stacked into a ~90px column; the label and its field sit adjacent (a ~10px gap) rather than at opposite ends of the sheet's full width; four field rows are visible without scrolling where two were before. The global help/report "?" button is fully absent (not merely repositioned) the instant the sheet opens, at BOTH the default ("half") and dragged-up ("tall") detents, with zero measured overlap against the sheet or against the canvas's own View/Layers pills. A Paving element (whose type label carries a "/ Drive" qualifier the chrome row's own text drops) correctly KEEPS its second heading — nothing was lost chasing defect #1. A 2-element multi-selection shows its "N selected" count once, not twice. Desktop (1440×900, mouse): the full `npm run ci-parity` visual-regression gate matched its approved baseline at **0 differing pixels** across all 16 desktop/phone × light/dark surface pairs it covers.
+
+**Steps, each with a named expected result — on `planyr.io`, on Michael's own iPhone, in Safari (not the sandbox, not desktop Chrome):**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged (MERGED ≠ LIVE).
+2. Open a real plan and select a Building (or any element). Tap the "✎ Properties" pill. **Expect:** the sheet opens with ONE heading reading "Element · [type]" — no second, near-identical heading directly below it — and more than two fields are comfortably visible before you need to scroll.
+3. Look at a numeric field with a stepper (e.g. Length or Depth). **Expect:** the up/down arrows sit right beside the number box, roughly the same height as it, reading as one attached control — not a tall stack of two big boxes floating to the side.
+4. Look at any field's label and its value/box. **Expect:** the label sits close to its value, not way over on the opposite edge of the screen with a wide gap between them.
+5. While the sheet is open, look at the bottom-right corner of the screen (where the "?" help button normally lives). **Expect:** it is NOT there, and it is not sitting on top of anything in the sheet. Drag the sheet's handle up to its taller height and check again — still not there, and not covering the "View"/"Layers" buttons on the map either.
+6. Close the sheet (✕ or drag it down). **Expect:** the "?" button reappears in its usual spot.
+7. Select a Paving element and open Properties. **Expect:** you should still see a line naming it as paving/drive (this one keeps its own label, unlike Building).
+8. Rotate the phone to landscape. **Expect:** the app switches to its normal desktop-style layout (rail on the left, tools on the right) rather than showing a broken or half-sized bottom sheet — this is expected, existing behavior, not something this fix changed.
+
+**Result:** ⏳ pending — needs Michael's own iPhone; this sandbox has no physical device. `Cadence: once`.
+
 ### V888832 — B1223120: the phone Properties bottom sheet, on a real iPhone `Blocker: real-device`
 
 **Why this needs its own real pass.** Every mechanical piece (the coarse-pointer + narrow-width gate, the half/tall snap heights, the drag-to-dismiss threshold, the 44×44 control floor, the map panning to keep the selection clear of the sheet, the keyboard-inset math) is verified this session against Chromium's device-emulation mode (a real touch-capable browser engine driven with a simulated iPhone 13 descriptor) and unit-tested in isolation — but emulation cannot raise a real on-screen keyboard, cannot report a real notch/home-indicator safe-area inset (this sandbox always reads 0), and cannot reproduce real finger-drag physics. Those three are the concrete gap a real device closes.
