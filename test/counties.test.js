@@ -240,6 +240,20 @@ describe("countyIdentity / noParcelSourceNote (B209502)", () => {
       .toBe("Mesa — no parcel data wired here yet.");
   });
 
+  // B1361425 — every state OTHER than Texas now carries geometry from the nationwide Esri source,
+  // whose names already include their own correct designation ("Orleans Parish", "Denali Borough",
+  // "Fairfax city") — appending " County" universally (the pre-B1361425 rule: "every state but
+  // Colorado gets County") would misname a parish as a county. The suffix is TX-only now, not
+  // "every state but CO"; this proves the fix directly against the specific defect it closes.
+  it("never double-suffixes a name that already carries its own designation (a parish, a borough, an independent city)", () => {
+    expect(noParcelSourceNote({ status: "no-source", key: null, name: "Orleans Parish", state: "LA" }))
+      .toBe("Orleans Parish — no parcel data wired here yet.");
+    expect(noParcelSourceNote({ status: "no-source", key: null, name: "Denali Borough", state: "AK" }))
+      .toBe("Denali Borough — no parcel data wired here yet.");
+    expect(noParcelSourceNote({ status: "no-source", key: null, name: "Fairfax city", state: "VA" }))
+      .toBe("Fairfax city — no parcel data wired here yet.");
+  });
+
   it("is actually WIRED into the click path (B1120 — an unused export ships nothing)", () => {
     const src = readFileSync(new URL("../src/workspaces/site-planner/MapFinder.jsx", import.meta.url), "utf8");
     expect(src).toMatch(/import \{[^}]*countyIdentity[^}]*\} from "\.\/lib\/counties\.js"/s);

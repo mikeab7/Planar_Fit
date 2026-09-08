@@ -19,3 +19,19 @@ export async function fetchCompsCounts() {
     return null;
   }
 }
+
+/* NEW-1 (Locations map card) — comps carry a real, top-level lat/lon (comps_parcel_anchor_has_identity's
+ * NOT NULL anchor, see shared/comps/lib/comps.js's own header) regardless of anchor kind (pin /
+ * parcel / site_plan), so this is a plain column read — no jsonb path, unlike sites' `origin`.
+ * Deliberately lighter than fetchAllComps(): the map only ever draws a quiet, unlabeled dot per
+ * comp, so id + position is the whole shape it needs. */
+export async function fetchCompsForMap() {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase.from("comps").select("id, lat, lon").is("deleted_at", null);
+    if (error || !Array.isArray(data)) return [];
+    return data;
+  } catch (_) {
+    return [];
+  }
+}
