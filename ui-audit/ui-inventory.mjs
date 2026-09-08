@@ -69,10 +69,28 @@
  *
  * USAGE (preview server must be running — `npx vite build && npx vite preview --port 4173`):
  *   node ui-audit/ui-inventory.mjs                        → regenerate docs/UI-INVENTORY.md
- *   node ui-audit/ui-inventory.mjs --check                → CI gate (diff against the committed file,
- *                                                            AND fails if any surface's signature count
- *                                                            exceeds its BUDGET — see signature-budget.json,
- *                                                            NEW-1/B1038016)
+ *   node ui-audit/ui-inventory.mjs --check                → full gate (diff against the committed
+ *                                                            file, AND the signature-budget check
+ *                                                            below). No longer wired into the
+ *                                                            required `build` check (see
+ *                                                            --budget-only) — kept for the scheduled
+ *                                                            regen workflow and local use.
+ *   node ui-audit/ui-inventory.mjs --budget-only          → CI gate (NEW-1, B<PENDING>, 2026-09-08):
+ *                                                            runs the same live crawl and fails if
+ *                                                            any surface's signature count exceeds
+ *                                                            its BUDGET (signature-budget.json,
+ *                                                            NEW-1/B1038016) — the real design-drift
+ *                                                            rule — but never diffs the committed
+ *                                                            docs/UI-INVENTORY.md against the fresh
+ *                                                            crawl and never writes the file. A PR
+ *                                                            touching only UI (no generated-doc
+ *                                                            change) used to have to also regenerate
+ *                                                            and commit this file, so any two such
+ *                                                            PRs open at once conflicted on it by
+ *                                                            construction — see .github/ci-gates.yml's
+ *                                                            "Generated-index touch guard." The file
+ *                                                            itself is now refreshed by a scheduled
+ *                                                            job instead of every PR that touches UI.
  *   BASE_URL=http://localhost:4173/ node ui-audit/ui-inventory.mjs
  *   DUMP_SIGNATURES=<path> node ui-audit/ui-inventory.mjs → also write the full per-surface signature
  *                                                            list (radius/height/padding/fontSize +
@@ -1717,16 +1735,25 @@ async function run() {
     "",
   ].join("\n");
 
-  if (process.argv.includes("--check")) {
-    const existing = existsSync(OUT_MD) ? readFileSync(OUT_MD, "utf8") : null;
-    const docStale = existing !== md;
-    if (docStale) {
-      console.error("docs/UI-INVENTORY.md is out of date — regenerate with `node ui-audit/ui-inventory.mjs`.");
-      console.error(diffLines(existing ?? "", md, 400));
-    }
+  const budgetOnly = process.argv.includes("--budget-only");
+  if (process.argv.includes("--check") || budgetOnly) {
+    // --budget-only (NEW-1, B<PENDING>) skips the docs/UI-INVENTORY.md freshness comparison
+    // entirely — see the USAGE block above for why: that comparison is what forced every PR
+    // touching UI to also regenerate and commit this file.
+    const docStale = !budgetOnly && (() => {
+      const existing = existsSync(OUT_MD) ? readFileSync(OUT_MD, "utf8") : null;
+      if (existing !== md) {
+        console.error("docs/UI-INVENTORY.md is out of date — regenerate with `node ui-audit/ui-inventory.mjs`.");
+        console.error(diffLines(existing ?? "", md, 400));
+        return true;
+      }
+      return false;
+    })();
     if (!signatureCheck.ok) console.error("Signature BUDGET check FAILED (NEW-1, B1038016):\n" + signatureCheck.problems.map((p) => "  • " + p).join("\n"));
     if (docStale || !signatureCheck.ok) process.exit(1);
-    console.log("docs/UI-INVENTORY.md is up to date and every surface is within its signature budget.");
+    console.log(budgetOnly
+      ? "Every crawled surface is within its signature budget (docs/UI-INVENTORY.md content not checked — see --budget-only)."
+      : "docs/UI-INVENTORY.md is up to date and every surface is within its signature budget.");
     return;
   }
 

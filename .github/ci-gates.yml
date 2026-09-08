@@ -23,6 +23,20 @@
 jobs:
   build:
     steps:
+      # Generated-index touch guard (NEW-1, B<PENDING>, 2026-09-08). MAP.md, BACKLOG_OPEN.md, and
+      # docs/UI-INVENTORY.md are wholly rewritten by their own generator on every regen, so the old
+      # regime — every PR that touched their inputs also regenerates and commits them — meant any
+      # two such PRs open at once conflicted on the same generated file by construction, and GitHub
+      # can't even compute a test-merge for a conflicted PR, so the required check never runs at
+      # all ("Expected — waiting for status to be reported" forever). Measured 2026-09-08: PR #1529
+      # re-conflicted on these exact files three times in one hour with zero workflow runs while
+      # conflicted. Replaces the three per-file drift gates that used to live here (MAP.md drift
+      # guard, BACKLOG_OPEN.md drift + tag-legend guard, the Signature-budget gate's own doc-diff
+      # half) — this branches must simply never touch them; see scripts/generated-doc-touch-guard.mjs
+      # and .github/workflows/regen-derived-docs.yml for the replacement refresh mechanism. Runs
+      # before "Install dependencies" (needs no node_modules) so it fails fast either way.
+      - name: Generated-index touch guard (branches must never touch MAP.md / BACKLOG_OPEN.md / docs/UI-INVENTORY.md — NEW-1)
+        run: node scripts/generated-doc-touch-guard.mjs
       - name: Install dependencies
         run: npm ci
       - name: Lint (fails the build on a dangling/undefined identifier)
@@ -47,10 +61,11 @@ jobs:
         run: node ui-audit/required-check-audit.mjs
       - name: GIS source registry guard (no test/non-authoritative endpoint, no inline URLs — B369)
         run: node ui-audit/gis-source-audit.mjs
-      - name: MAP.md drift guard (regenerate with `node scripts/build-map.mjs` — B637)
-        run: node scripts/build-map.mjs --check
-      - name: BACKLOG_OPEN.md drift + tag-legend guard (regenerate with `node scripts/build-backlog-index.mjs` — B638)
-        run: node scripts/build-backlog-index.mjs --check
+      # MAP.md's own drift-vs-source-tree check (B637) is no longer a per-PR gate — see the
+      # Generated-index touch guard above and .github/workflows/regen-derived-docs.yml. It still
+      # exists (`node scripts/build-map.mjs --check`) for that scheduled job and for local use.
+      - name: BACKLOG.md tag-legend guard (every #tag must be in the legend — B638; narrowed by NEW-1)
+        run: node scripts/build-backlog-index.mjs --tags-only
       # Per-folder CLAUDE.md pointer freshness (CLAUDE.md's "Keep the per-folder pointers fresh").
       # Previously reachable only through `npm test` (test/docPointers.test.js) — pulled out as its
       # own gate (2026-09-02, the GitHub Actions cost cut) so the docs-only fast path below can run
@@ -137,8 +152,13 @@ jobs:
       # required `build` check on purpose — "~15 minutes on every pull request... a gate people
       # route around is worse than one that runs nightly"): this crawl only reads computed style
       # off 12 already-known surfaces, no login, no schedule wait — measured at ~90s on its own.
-      - name: Signature-budget gate (per-surface distinct control shapes — NEW-1, B1038016)
-        run: node ui-audit/ui-inventory.mjs --check
+      # --budget-only (narrowed by this file's own NEW-1, B<PENDING>, 2026-09-08) runs the real
+      # crawl and the real budget check below but no longer diffs docs/UI-INVENTORY.md against the
+      # committed file — that diff is what forced every UI-touching PR to also regenerate and
+      # commit this generated file. It's refreshed by a scheduled job instead; see the
+      # Generated-index touch guard near the top of this job and .github/workflows/regen-derived-docs.yml.
+      - name: Signature-budget gate (per-surface distinct control shapes, budget-only — NEW-1, B1038016)
+        run: node ui-audit/ui-inventory.mjs --budget-only
       - name: Visual regression baselines (pixel diff against approved baselines — NEW-1)
         env:
           BASE_URL: "http://localhost:4173/"
