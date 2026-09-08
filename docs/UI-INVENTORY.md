@@ -688,7 +688,7 @@ _(nothing matched in this theme/scenario)_
 | 8px | 27px | 12px | 650 | `rgb(194, 65, 12)` | `1px solid rgba(0, 0, 0, 0)` | Select V ×1 | unattributed (no source match — best-effort text search) |
 | 0px | 15px | 12px | 650 | `rgba(0, 0, 0, 0)` | `0px none rgb(255, 255, 255)` | [object SVGAnimatedString] ×1 | unattributed (no source match — best-effort text search) |
 | 0px | 13px | 10.5px | 500 | `rgba(0, 0, 0, 0)` | `0px none rgb(255, 255, 255)` | V ×1 | unattributed (label too short to search) |
-| 0px | 54px | 10.5px | 600 | `rgba(0, 0, 0, 0.06)` | `0px none rgb(27, 30, 38)` | Yield ×1 | src/workspaces/dashboard/Dashboard.jsx:57:import { fetchElementsForSites } from "./lib/dashboardYieldFetch.js"; (+more matches elsewhere, best-effort) |
+| 0px | 54px | 10.5px | 600 | `rgba(0, 0, 0, 0.06)` | `0px none rgb(27, 30, 38)` | Yield ×1 | src/workspaces/dashboard/Dashboard.jsx:58:import { fetchElementsForSites } from "./lib/dashboardYieldFetch.js"; (+more matches elsewhere, best-effort) |
 | 6px | 21px | 13px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(53, 59, 73)` | Detach panel ×1 | src/shared/ui/PanelChrome.jsx:79:        <IconBtn title="Detach to a floating window" aria-label="Detach panel" onClick={onDetach} data-testid={testId ? `${testId}-detach` : undefined}> |
 | 6px | 19px | 13px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(53, 59, 73)` | Close panel ×1 | src/shared/ui/PanelChrome.jsx:83:      <IconBtn title="Close" aria-label="Close panel" onClick={onClose} data-testid={testId ? `${testId}-close` : undefined}>✕</IconBtn> |
 | 0px | 31px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(0, 0, 0)` | ▶Land use ×1 | unattributed (no source match — best-effort text search) |
@@ -714,7 +714,7 @@ _(nothing matched in this theme/scenario)_
 | 8px | 27px | 12px | 650 | `rgb(242, 107, 58)` | `1px solid rgba(0, 0, 0, 0)` | Select V ×1 | unattributed (no source match — best-effort text search) |
 | 0px | 15px | 12px | 650 | `rgba(0, 0, 0, 0)` | `0px none rgb(21, 23, 28)` | [object SVGAnimatedString] ×1 | unattributed (no source match — best-effort text search) |
 | 0px | 13px | 10.5px | 500 | `rgba(0, 0, 0, 0)` | `0px none rgb(21, 23, 28)` | V ×1 | unattributed (label too short to search) |
-| 0px | 54px | 10.5px | 600 | `rgba(255, 255, 255, 0.09)` | `0px none rgb(236, 239, 244)` | Yield ×1 | src/workspaces/dashboard/Dashboard.jsx:57:import { fetchElementsForSites } from "./lib/dashboardYieldFetch.js"; (+more matches elsewhere, best-effort) |
+| 0px | 54px | 10.5px | 600 | `rgba(255, 255, 255, 0.09)` | `0px none rgb(236, 239, 244)` | Yield ×1 | src/workspaces/dashboard/Dashboard.jsx:58:import { fetchElementsForSites } from "./lib/dashboardYieldFetch.js"; (+more matches elsewhere, best-effort) |
 | 6px | 21px | 13px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(202, 208, 218)` | Detach panel ×1 | src/shared/ui/PanelChrome.jsx:79:        <IconBtn title="Detach to a floating window" aria-label="Detach panel" onClick={onDetach} data-testid={testId ? `${testId}-detach` : undefined}> |
 | 6px | 19px | 13px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(202, 208, 218)` | Close panel ×1 | src/shared/ui/PanelChrome.jsx:83:      <IconBtn title="Close" aria-label="Close panel" onClick={onClose} data-testid={testId ? `${testId}-close` : undefined}>✕</IconBtn> |
 | 0px | 31px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(0, 0, 0)` | ▶Land use ×1 | unattributed (no source match — best-effort text search) |
