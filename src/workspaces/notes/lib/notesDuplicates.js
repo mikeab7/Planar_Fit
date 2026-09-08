@@ -148,28 +148,91 @@ export function findCrossProjectDuplicates(pages, {
   return out.sort((a, b) => b.similarity - a.similarity);
 }
 
+/** Small counts read as WORDS in prose, never a bare digit (NEW-1, the banner-wording fix —
+ *  owner report, verbatim: "the wording... [is] not even proper english"). Anything this
+ *  detector could plausibly report — a handful of copies — fits; past that a numeral is the
+ *  honest, no-longer-awkward choice rather than spelling out "twenty-three". */
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+export function numberWord(n) {
+  return (Number.isInteger(n) && n >= 0 && n < NUMBER_WORDS.length) ? NUMBER_WORDS[n] : String(n);
+}
+
+/** Sentence-initial capital for a word that is not always the first word — `numberWord` reads
+ *  right lowercase mid-sentence ("filed in two places") and needs this only when it opens one. */
+export function sentenceCase(word) {
+  return word ? word.charAt(0).toUpperCase() + word.slice(1) : word;
+}
+
+/** How much of a title a duplicate mention shows before trailing off — long enough to still be
+ *  recognizable, short enough that two mentions plus their project names still read as one line
+ *  at a normal window width. */
+const MENTION_TITLE_MAX = 48;
+
+/** A title, cut at a WORD boundary with ONE real ellipsis character — never mid-word, never a
+ *  space-plus-three-literal-periods (NEW-1: the owner's exact complaint about the old cut).
+ *  Falls back to a hard cut only when a single word alone exceeds the budget, which has nothing
+ *  to break on. */
+export function truncateMention(title, max = MENTION_TITLE_MAX) {
+  const t = String(title || "").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  const kept = lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+  return `${kept.trimEnd()}…`;
+}
+
+/** One page, named the way a person would actually say it.
+ *
+ *  ⛔ THE NO-PROJECT CASE NEVER GOES THROUGH "in <place>" (NEW-1, the headline defect the owner
+ *  reported: "in Not in a project"). `NO_PROJECT_LABEL` is already a full phrase ("Not in a
+ *  project"), so slotting it into "in <X>" produces "in Not in a project" — a phrase inside a
+ *  phrase. Every no-project mention gets its OWN wording instead: never call `nameOf` for it.
+ *  `nameOf` (supplied by the caller) resolves a real project id to its name. */
+export function pageMention(p, nameOf) {
+  const title = truncateMention(p.title);
+  const place = p.projectId == null ? "with no project" : `in ${nameOf(p.projectId)}`;
+  const bin = p.where === "bin" ? " (in the bin)" : "";
+  return `“${title}” ${place}${bin}`;
+}
+
+/** The button that keeps exactly this copy — same no-project rule as `pageMention` above, so
+ *  the label never reads "Keep only the one in Not in a project". */
+export function keepCopyLabel(p, nameOf) {
+  return p.projectId == null ? "Keep the unfiled copy" : `Keep the ${nameOf(p.projectId)} copy`;
+}
+
+/** A natural English list — "A, and B" / "A, B, and C" — never a bullet separator like " · ",
+ *  which reads as a table row rather than a sentence. */
+export function joinMentions(mentions) {
+  if (mentions.length <= 1) return mentions.join("");
+  if (mentions.length === 2) return `${mentions[0]}, and ${mentions[1]}`;
+  return `${mentions.slice(0, -1).join(", ")}, and ${mentions[mentions.length - 1]}`;
+}
+
 /** ONE short line for the banner — the whole finding, in the fewest words that stay true
  *  (PANEL-BREVITY). Detail belongs behind the "Show me", never in the default view.
  *
  *  ⛔ THE WORDING IS HONEST ABOUT WHAT WAS ACTUALLY PROVEN (NEW-1, the notes-reconciler
- *  stale-index fix). "One note appears in 2 different projects" asserts that two entries ARE
- *  one note — which similarity alone never proves, only byte-identical text does (`identical`).
- *  A near-duplicate (same topic, one word different, a shared boilerplate paragraph — anything
- *  short of exact text) is worded as what it is: two notes that read alike, not confirmed as
- *  copies. The severity is judged off `groups[0]` (the worst finding, sorted first), which is
- *  also the one the banner shows the pages and buttons for — see `IntegrityBanner.jsx`, which
- *  gates the destructive "Keep only…" actions on that same `identical` flag. */
+ *  stale-index fix). "The same note is filed in two places" asserts that two entries ARE one
+ *  note — which similarity alone never proves, only byte-identical text does (`identical`). A
+ *  near-duplicate (same topic, one word different, a shared boilerplate paragraph — anything
+ *  short of exact text) is worded as what it is: nearly identical, not confirmed as copies. The
+ *  severity is judged off `groups[0]` (the worst finding, sorted first), which is also the one
+ *  the banner shows the pages and buttons for — see `IntegrityBanner.jsx`, which gates the
+ *  destructive "Keep…" actions on that same `identical` flag.
+ *
+ *  ⛔ AND NO RESTATED PARENTHETICAL (NEW-1): the old "(2 copies)" repeated a fact the sentence
+ *  already gave, which is exactly what PANEL-BREVITY forbids. */
 export function duplicateNotice(groups) {
   const n = (groups || []).length;
   if (!n) return null;
-  const pages = groups.reduce((t, g) => t + g.pages.length, 0);
   const top = groups[0];
   if (!top.identical) {
     return n === 1
-      ? "Two notes in different projects read almost the same — not confirmed as the same note."
-      : `${n} pairs of notes in different projects read almost the same — not confirmed as copies.`;
+      ? "Two notes are nearly identical."
+      : `${sentenceCase(numberWord(n))} pairs of notes are nearly identical.`;
   }
   return n === 1
-    ? `One note appears in ${top.projectIds.length} different projects (${pages} copies).`
-    : `${n} notes appear in more than one project (${pages} copies).`;
+    ? `The same note is filed in ${numberWord(top.pages.length)} places.`
+    : `${sentenceCase(numberWord(n))} notes are each filed in more than one place.`;
 }

@@ -8,8 +8,7 @@
  * moment late is exactly as useful, and a rail that paints a moment sooner is the thing this
  * route's byte budget exists to protect.
  */
-import { NO_PROJECT_LABEL } from "../lib/notesModel.js";
-import { duplicateNotice } from "../lib/notesDuplicates.js";
+import { duplicateNotice, joinMentions, keepCopyLabel, numberWord, pageMention, sentenceCase } from "../lib/notesDuplicates.js";
 import { absoluteStamp } from "../lib/notesTime.js";
 
 const RADIUS = { control: 8, pill: 999 };
@@ -36,7 +35,7 @@ export default function IntegrityBanner({ duplicates, unreachable, recovered, pr
   const lost = (recovered || []).length;
   const stillLost = (unreachable || []).length;
   if (!dupLine && !lost && !stillLost) return null;
-  const nameOf = (id) => (id == null ? NO_PROJECT_LABEL : projectNames.get(id) || "a project that no longer exists");
+  const nameOf = (id) => projectNames.get(id) || "a project that no longer exists";
   const first = duplicates?.[0] || null;
   const pill = (extra = {}) => ({
     flex: "0 0 auto", border: "1px solid var(--warn-text)", borderRadius: RADIUS.pill,
@@ -51,55 +50,28 @@ export default function IntegrityBanner({ duplicates, unreachable, recovered, pr
       data-unreachable={stillLost}
       data-recovered={lost}
       style={{
-        flex: "none", display: "flex", flexDirection: "column", gap: 6, padding: "7px 14px",
+        flex: "none", display: "flex", flexDirection: "column", gap: 6, padding: "8px 16px",
         background: "var(--warn-bg)", borderBottom: "1px solid var(--border-default)",
         color: "var(--warn-text)", fontSize: 12.5, fontWeight: 600,
       }}
     >
       {dupLine ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            {`${dupLine} ${first ? first.pages.map((p) => `“${p.title}” in ${nameOf(p.projectId)}` + (p.where === "bin" ? " (in the bin)" : "")).join(" · ") : ""}`}
-          </span>
-          {first ? <button type="button" data-testid="notes-integrity-open" onClick={() => onOpen(first)} style={pill()}>Show me</button> : null}
-        </div>
-      ) : null}
-      {/* ⛔ THE RESOLUTION IS HERE, NOT SOMEWHERE ELSE (NEW-4). A finding whose only exit is
-          Dismiss is a finding that teaches you to dismiss findings. Every copy can be kept on
-          its own — the others go to the BIN, so the choice is undoable — or both can be kept
-          and the pair remembered so it stops asking.
-          ⛔ AND THE ONE-CLICK "Keep only…" BUTTONS ARE PROOF-GATED (NEW-1, the
-          notes-reconciler-stale-index fix). They bin whichever copy is NOT kept — real, if
-          undoable, damage — so they only appear when the two entries are provably the same
-          text (`identical`), never on a near-duplicate a similarity score merely suspects. A
-          near-duplicate still gets "Show me" above and a way to say it is not the same note;
-          it never gets a button that could bin the wrong side of a guess. */}
-      {first && first.identical ? (
-        <div data-testid="notes-dupe-actions" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {first.pages.map((p) => (
-            <button
-              key={p.pageId}
-              type="button"
-              data-testid={`notes-dupe-keep-${p.pageId}`}
-              onClick={() => onKeepOne(first, p.pageId)}
-              style={pill()}
-            >Keep only the one in {p.projectId == null ? NO_PROJECT_LABEL : (projectNames.get(p.projectId) || "that project")}</button>
-          ))}
-          <button type="button" data-testid="notes-dupe-keep-both" onClick={() => onKeepBoth(first)} style={pill()}>Keep both, stop telling me</button>
-        </div>
-      ) : first ? (
-        <div data-testid="notes-dupe-actions-unconfirmed" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ flex: "1 1 auto", minWidth: 0, fontWeight: 500 }}>Not proven to be the same note — nothing is changed automatically.</span>
-          <button type="button" data-testid="notes-dupe-keep-both" onClick={() => onKeepBoth(first)} style={pill()}>Not the same, stop telling me</button>
-        </div>
+        <span>
+          {dupLine} {first ? joinMentions(first.pages.map((p) => pageMention(p, nameOf))) + "." : ""}
+        </span>
       ) : null}
 
       {lost ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-          {/* ⛔ PLURAL-CORRECT, and it says what ALREADY HAPPENED rather than what could. */}
+          {/* ⛔ ONE SENTENCE, WHAT HAPPENED AND WHAT TO DO (NEW-1, the banner-wording fix). The
+              old three-clause version explained the mechanism ("its name lived on the entry
+              that went missing") — implementation detail nobody asked for — and routed the
+              no-project case through the same "under Not in a project" template as the
+              duplicate banner's headline defect. Neither is stated here at all. */}
           <span data-testid="notes-recovered-summary">
-            {lost === 1 ? "One note had lost its place" : `${lost} notes had lost their place`} and {lost === 1 ? "has" : "have"} been put back under “{NO_PROJECT_LABEL}”.
-            {" "}Nothing was lost — but {lost === 1 ? "its name lived on the entry that went missing, so it is named" : "their names lived on the entries that went missing, so they are named"} from {lost === 1 ? "its" : "their"} first line.
+            {lost === 1
+              ? "One note lost its filing and is back below — open it and file it if it belongs somewhere."
+              : `${sentenceCase(numberWord(lost))} notes lost their filing and are back below — open them and file the ones that belong somewhere.`}
           </span>
           {(recovered || []).map((r) => (
             <div key={r.pageId} data-testid={`notes-recovered-${r.pageId}`} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -133,11 +105,47 @@ export default function IntegrityBanner({ duplicates, unreachable, recovered, pr
 
       {stillLost ? (
         <span data-testid="notes-integrity-stuck">
-          {stillLost === 1 ? "One note is" : `${stillLost} notes are`} filed nowhere and could NOT be put back — this browser refused the write, so nothing was changed.
+          {stillLost === 1 ? "One note is" : `${sentenceCase(numberWord(stillLost))} notes are`} filed nowhere and could NOT be put back — this browser refused the write, so nothing was changed.
         </span>
       ) : null}
 
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      {/* ⛔ THE RESOLUTION IS HERE, NOT SOMEWHERE ELSE (NEW-4). A finding whose only exit is
+          Dismiss is a finding that teaches you to dismiss findings. Every copy can be kept on
+          its own — the others go to the BIN, so the choice is undoable — or both can be kept
+          and the pair remembered so it stops asking.
+          ⛔ AND THE ONE-CLICK "Keep…" BUTTONS ARE PROOF-GATED (NEW-1, the
+          notes-reconciler-stale-index fix). They bin whichever copy is NOT kept — real, if
+          undoable, damage — so they only appear when the two entries are provably the same
+          text (`identical`), never on a near-duplicate a similarity score merely suspects.
+          ⛔ AND EVERY CONTROL LIVES IN ONE ROW, ALIGNED TO ONE EDGE (NEW-1, the banner-wording
+          fix — owner report, verbatim: "the wording and formatting of the warning need
+          improvement". "Show me" used to float top-right of the summary line while "Dismiss"
+          sat alone on its own row below the buttons — two corners of the same bar. One finding,
+          one control group, wrapping together as a unit rather than splitting across rows at a
+          narrow width. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        {first && first.identical ? (
+          <span data-testid="notes-dupe-actions" style={{ display: "contents" }}>
+            {first.pages.map((p) => (
+              <button
+                key={p.pageId}
+                type="button"
+                data-testid={`notes-dupe-keep-${p.pageId}`}
+                onClick={() => onKeepOne(first, p.pageId)}
+                style={pill()}
+              >{keepCopyLabel(p, nameOf)}</button>
+            ))}
+            <button type="button" data-testid="notes-dupe-keep-both" onClick={() => onKeepBoth(first)} style={pill()}>Keep both</button>
+          </span>
+        ) : first ? (
+          // A near-duplicate never gets a button that could bin the wrong side of a guess —
+          // only a way to say it is not a match, kept non-destructive like every other control
+          // here (`onKeepBoth` records the pair and stops asking; nothing is deleted).
+          <span data-testid="notes-dupe-actions-unconfirmed" style={{ display: "contents" }}>
+            <button type="button" data-testid="notes-dupe-keep-both" onClick={() => onKeepBoth(first)} style={pill()}>Not the same</button>
+          </span>
+        ) : null}
+        {first ? <button type="button" data-testid="notes-integrity-open" onClick={() => onOpen(first)} style={pill()}>Show me</button> : null}
         <button type="button" onClick={onDismiss} style={pill({ border: "1px solid var(--border-default)" })}>Dismiss</button>
       </div>
     </div>
