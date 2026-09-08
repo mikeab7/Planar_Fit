@@ -38,6 +38,7 @@ import "react-grid-layout/css/styles.css";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
 import { Button, ToggleChip } from "../../shared/ui/controls.jsx";
 import DashboardCard from "./components/DashboardCard.jsx";
+import DashboardTopoBackground from "./components/DashboardTopoBackground.jsx";
 import {
   JumpBackInCard, PipelineCard, GoingQuietCard, CompsSummaryCard, ScheduleHealthCard,
   CardSkeleton,
@@ -100,6 +101,12 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   const saveTimerRef = useRef(null);
   const [gridWrapRef, gridWidth] = useMeasuredWidth();
   const isNarrow = gridWidth != null && gridWidth < NARROW_BREAKPOINT_PX;
+  // NEW-1 (dashboard-topo-background) — true for the duration of a react-grid-layout drag or
+  // resize gesture, so DashboardTopoBackground can stop its animation loop dead rather than
+  // repainting a full-viewport canvas every frame underneath the gesture (that is how a drag
+  // gets janky). react-grid-layout fires the matching Stop callback even if the gesture ends
+  // off the grid, so this can't get stuck true.
+  const [gridInteracting, setGridInteracting] = useState(false);
 
   // Load the saved layout once per mount (this component is not kept alive — see Shell.jsx).
   useEffect(() => {
@@ -233,7 +240,14 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", position: "relative" }}>
+      {/* NEW-1 (dashboard-topo-background) — fixed full-viewport, behind everything else on
+          this screen. AppHeader below stacks itself above this on its own (it's already
+          position:relative + a high z-index); the scrollable content wrapper further down gets
+          its own explicit stacking context at zIndex:1 so its cards (plain position:static)
+          paint above this canvas regardless of DOM order — same pattern Shell.jsx's own
+          `main`(zIndex:0)/workspace-wrapper(zIndex:1) pair already uses. */}
+      <DashboardTopoBackground paused={gridInteracting} />
       <AppHeader
         // Not a real module id — no tab in AppHeader's fixed six matches "dashboard", so none
         // of them highlight (B1213312's "no module tab active" requirement, satisfied for free).
@@ -243,7 +257,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         authControl={authControl}
         accountActive={accountActive}
       />
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "18px 22px 40px" }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "18px 22px 40px", position: "relative", zIndex: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, maxWidth: 1040, margin: "0 auto 16px" }}>
           <h1 style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", margin: 0, flex: 1 }}>Dashboard</h1>
           {customizing && saveNote && (
@@ -284,6 +298,10 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
               resizeHandles={["se"]}
               compactType="vertical"
               onLayoutChange={onGridLayoutChange}
+              onDragStart={() => setGridInteracting(true)}
+              onDragStop={() => setGridInteracting(false)}
+              onResizeStart={() => setGridInteracting(true)}
+              onResizeStop={() => setGridInteracting(false)}
             >
               {layout.map((entry) => (
                 <div key={entry.key}>{cardEl(entry)}</div>
