@@ -100,12 +100,20 @@ export const ANCHOR_MIN_HEIGHT = 48;
  *  in the move path for somebody to re-enable. A move cannot resize because there is no width in
  *  the function at all.
  *
- *  The left/top guard is kept: a drag past the top-left of the page is not a place. */
-export function moveAnchorPoint({ x, y, edgePad = ANCHOR_EDGE_PAD } = {}) {
-  return {
-    x: Math.round(Math.max(edgePad, num(x))),
-    y: Math.round(Math.max(0, num(y))),
-  };
+ *  ⛔ AND THE LEFT/TOP WALL IS GONE (NOTES-FREE-PLACEMENT, owner report 2026-09-08). It used to
+ *  read `max(edgePad, x)` / `max(0, y)`, which is exactly the defect he measured: a box dragged
+ *  434px past the page's left edge landed at `left: 4px` and the page did not grow, while the
+ *  same gesture to the RIGHT grew the page from 580 to 1212 and shrank it back again. The offset
+ *  was positive-only and floored, so growth existed in two of four directions.
+ *
+ *  ⛔ THE FLOOR WAS NEVER THE THING KEEPING A BOX REACHABLE — THE PAGE GROWING IS. Right and down
+ *  never needed a floor because `anchorExtentX`/`anchorExtent` grow the sheet to hold whatever
+ *  overhangs. Left and up now have the same pair (`anchorExtentLeft`/`anchorExtentTop`), so the
+ *  clamp has nothing left to protect and a negative coordinate is an ordinary position rather
+ *  than data from before a floor existed. `repairOffPageAnchors` — which used to drag such boxes
+ *  back onto the page on every load — is retired for the same reason. */
+export function moveAnchorPoint({ x, y } = {}) {
+  return { x: Math.round(num(x)), y: Math.round(num(y)) };
 }
 
 /** ⛔ HOW FAR DOWN THE PAGE THE ANCHORED BLOCKS REACH (NEW-RIGHT-EDGE's vertical sibling, moved
@@ -142,6 +150,43 @@ export function anchorExtentX(blocks = [], { pad = 16 } = {}) {
     if (x + w > right) right = x + w;
   }
   return right > 0 ? Math.ceil(right + pad) : 0;
+}
+
+/** ⛔ HOW FAR **LEFT** OF THE PAGE'S ORIGIN THE BLOCKS REACH, and its vertical twin below
+ *  (NOTES-FREE-PLACEMENT, owner report 2026-09-08: *"only works on the right, not the left"*).
+ *
+ *  These are the two functions whose ABSENCE was the whole bug. `anchorExtentX`/`anchorExtent`
+ *  answer *"how far past the page's right/bottom edge does anything reach"*, and the page grew to
+ *  hold it. Nothing asked the same question of the other two edges, so instead of growing, the
+ *  placement was floored — a box stopped dead at the margin and the page stayed the size it was.
+ *
+ *  ⛔ THEY RETURN A **POSITIVE DISTANCE**, never a negative coordinate, so every caller does the
+ *  same arithmetic in the same direction: `0` means nothing overhangs that edge, `N` means the
+ *  page needs `N` more pixels on that side. Reporting `minX` raw and leaving each call site to
+ *  negate it is how the two halves of a symmetry end up disagreeing about a sign.
+ *
+ *  The pad matches `anchorExtentX`'s for the same reason — a box placed deliberately at the edge
+ *  wants a hairline of room, not a margin. */
+export function anchorExtentLeft(blocks = [], { pad = 16 } = {}) {
+  let left = 0;
+  for (const b of blocks || []) {
+    const x = num(b?.x);
+    if (x < left) left = x;
+  }
+  return left < 0 ? Math.ceil(-left + pad) : 0;
+}
+
+/** How far ABOVE the page's origin the blocks reach — `anchorExtentLeft`'s vertical twin, and the
+ *  half that makes the title band reachable (NOTES-FREE-PLACEMENT / NEW-5). Unlike `anchorExtent`
+ *  it needs no measured height: the top of a box is its own `y`, which the document already
+ *  carries, so this one answer is identical on screen and on paper. */
+export function anchorExtentTop(blocks = [], { pad = 16 } = {}) {
+  let top = 0;
+  for (const b of blocks || []) {
+    const y = num(b?.y);
+    if (y < top) top = y;
+  }
+  return top < 0 ? Math.ceil(-top + pad) : 0;
 }
 
 /** Every handle, in the order they are painted. `""` would be the box itself and is not one. */
@@ -261,17 +306,12 @@ export function resizeBox({
   let x = west ? right - w : x0;
   let y = hasHeight && north ? bottom - hh : y0;
 
-  /* ⛔ AND THE PAGE'S OWN LEFT EDGE IS STILL A WALL, exactly as it is for placement: the one
-   * thing that ever moves a left edge in this module is a click left of the page, which is not a
-   * place. Past it the box stops growing rather than growing off the sheet. */
-  if (x < edgePad) {
-    if (west) w = Math.max(minWidth, right - edgePad);
-    x = edgePad;
-  }
-  if (y < 0) {
-    if (hasHeight && north) hh = Math.max(minHeight, bottom);
-    y = 0;
-  }
+  /* ⛔ THE PAGE'S LEFT AND TOP EDGES ARE NO LONGER WALLS (NOTES-FREE-PLACEMENT). This used to
+   * clamp `x` to `edgePad` and `y` to 0 and spend the WIDTH to get there — the resize half of
+   * the positive-only floor `moveAnchorPoint`'s header describes. A west or north drag past the
+   * page's own corner now simply keeps going and the SHEET grows to hold it, which is what the
+   * east and south handles have always done. `edgePad` is still a parameter because callers pass
+   * it; it no longer decides anything here. */
 
   return {
     x: Math.round(x),

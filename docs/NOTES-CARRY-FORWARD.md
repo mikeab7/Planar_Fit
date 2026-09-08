@@ -69,8 +69,9 @@ Two more found since, each worth its own line because each returned a confident 
    it and the harness reported *"the group drag moves only one box"* about working code.
 9. **A BOX'S TOP-LEFT CORNER IS THE DRAG GRIP, NOT ITS CONTENT (2026-08-28).** A harness that
    clicks `boxEl.x + 10, boxEl.y + 10` to "enter" an anchored box is aiming at
-   `.planyr-anchor-grip` (`left: 3px; top: 5px; width: 9px; height: 14px` in `NoteEditor.jsx`'s
-   `EditorStyles`), which has its OWN mousedown handling for dragging the box and never reaches
+   `.planyr-anchor-grip` (`left: 3px; top: 4px; width: 12px; height: 20px` in `NoteEditor.jsx`'s
+   `EditorStyles` — it was 9×14 when this trap was written), which has its OWN mousedown handling
+   for dragging the box and never reaches
    `focusFromMat` at all. This produced a completely convincing false positive: a caret that
    looked permanently stuck on "click a different row inside an already-entered box", an
    every-other-click toggle in the trace, and a plausible-sounding root cause in the app's own
@@ -79,6 +80,30 @@ Two more found since, each worth its own line because each returned a confident 
    the box's content) not matching what a mousedown-capture trace on `window` actually saw
    (nothing, for the corner clicks). **Click the box's actual visible content** (the center of a
    real cell/word), never a fixed offset from the box's own bounding rect corner.
+   > **⛔ AMENDED 2026-09-08 (NOTES-FREE-PLACEMENT) — the trap is NARROWER now but is NOT gone.**
+   > The whole box body is a drag surface, so the grip is no longer the only way to move a box and
+   > the two behave the same on a press that travels. What is unchanged, and is why this stays:
+   > the grip still owns its own press, still sits at the box's top-left, and still is not content
+   > — so a fixed offset from the corner is still not a way to reach a word.
+
+10. **A DRAG THAT LEAVES ITS OWN ELEMENT STOPS BEING DELIVERED TO IT (2026-09-08).** A body drag
+   wired with `pointerdown` + `pointermove` on the box, capturing the pointer only once a movement
+   THRESHOLD was crossed, moved nothing at all — because a 150px drag leaves a 180px box within a
+   few pixels, and `pointermove` stops targeting an element the pointer is no longer over. The
+   gesture never reached its own threshold. It reads exactly like the defect being fixed (the box
+   does not move, silently), and it reported as one. **Capture the pointer at the PRESS**, and use
+   the threshold only to decide whether the gesture COUNTS as a drag; capturing does not swallow
+   the press, so a deferred drag can still coexist with a `mousedown` handler that selects.
+11. **A HARNESS THAT KEEPS PRESSING THE SAME BOX ENDS UP INSIDE IT (2026-09-08).** The two-stage
+   model means press 1 selects and press 2 puts the caret IN the box — so a harness that clicks a
+   box to select it, then runs several gestures in sequence, is measuring a box in EDITING state by
+   the second gesture, where a body drag correctly stands down in favour of text selection. Four
+   consecutive "the drag does nothing" rows came from that and from nothing else. Open a fresh page
+   per case, or drive the grip, which drags unconditionally.
+12. **A CLICK IN THE MAT NOW CREATES A NOTE, so "click away" is not a neutral act (2026-09-08).**
+   A harness that dismisses something by clicking elsewhere on the grey mat has placed another
+   note, and a count that was 1 before and 1 after may be a different box entirely. Click away onto
+   the page, or count identities rather than nodes.
 
 See also `ui-audit/TRAPS.md`, and the named rules **FOREGROUND-OR-VOID** (a background tab cannot
 be measured — not its clock, not its pixels) and **COUNT-EVERY-KIND**.
@@ -153,6 +178,17 @@ position**.
 ---
 
 ## 5 · The recurring bug families — suspect these first
+
+0. **⛔ A RULE SHIPPED ON SOME OF ITS EDGES AND CLAMPED ON THE REST (added 2026-09-08,
+   NOTES-FREE-PLACEMENT).** The page-grows-to-fit feature grew RIGHT and DOWN and floored LEFT and
+   UP, and shipped, and read as working — because everything anybody tried first happened to go
+   right or down. The owner found it in one gesture. **The tell is an asymmetric pair of helpers:**
+   `anchorExtentX`/`anchorExtent` existed and `anchorExtentLeft`/`anchorExtentTop` did not, so the
+   only available answer on two of four edges was a clamp. Whenever you add a rule with a
+   direction in it, write down all of its directions and check each one; a single-direction check
+   is exactly what shipped last time. Same species as **B539648** (the page grew down but crushed
+   content sideways) and **B421490** (the vertical half existed, the horizontal half did not) —
+   three instances now, all in this one feature.
 
 1. **A GLOBAL KEY BINDING LEAKING INTO TEXT.** Escape handled twice (B434418); the arrow-nudge
    swallowed arrows while typing (B519681). The guard is a **PROPERTY** — every globally-bound key
