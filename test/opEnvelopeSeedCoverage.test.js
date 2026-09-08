@@ -126,17 +126,30 @@ describe("B727936 (widened) · wiring — every non-gesture reconcile seam opens
   });
 
   it("undo and redo each mint their own operation rather than riding whatever was last begun", () => {
-    const undoLine = SP.split("\n").find((l) => l.trim().startsWith("const undo = ()"));
-    const redoLine = SP.split("\n").find((l) => l.trim().startsWith("const redo = ()"));
-    expect(undoLine, "const undo = () => {...} not found").toBeTruthy();
-    expect(redoLine, "const redo = () => {...} not found").toBeTruthy();
-    for (const line of [undoLine, redoLine]) {
+    // B472048 (NEW-7 · NEW-4) — undo/redo now route through an ownership check first (a foreign
+    // session's recent write may need confirmation, via a non-blocking toast — see that item's
+    // header comment on `undo`/`redo` in SitePlanner.jsx), so the actual snapshot-apply moved into
+    // `applyUndo`/`applyRedo` helpers that both the silent path and the toast's "anyway" button
+    // call. The invariant this test guards — beginOperation() before applySnapshot(), so an
+    // undo/redo never rides whatever operation happened to still be open — is unchanged; only
+    // WHICH single-line function it lives on moved.
+    const applyUndoLine = SP.split("\n").find((l) => l.trim().startsWith("const applyUndo = ()"));
+    const applyRedoLine = SP.split("\n").find((l) => l.trim().startsWith("const applyRedo = ()"));
+    expect(applyUndoLine, "const applyUndo = () => {...} not found").toBeTruthy();
+    expect(applyRedoLine, "const applyRedo = () => {...} not found").toBeTruthy();
+    for (const line of [applyUndoLine, applyRedoLine]) {
       const begin = line.indexOf("opTrackerRef.current.beginOperation(");
       const apply = line.indexOf("applySnapshot(");
       expect(begin, `${line} must call beginOperation`).toBeGreaterThan(-1);
       expect(apply, `${line} must still call applySnapshot`).toBeGreaterThan(-1);
       expect(begin).toBeLessThan(apply);
     }
+    // And undo()/redo() must actually REACH those helpers — either directly or via the toast's
+    // confirm action — or the invariant above is proven about dead code.
+    const undoBody = slice("const undo = () => {", "const redo = () => {");
+    const redoBody = slice("const redo = () => {", "const applyUndoN = ");
+    expect(undoBody).toMatch(/\bapplyUndo\b/);
+    expect(redoBody).toMatch(/\bapplyRedo\b/);
   });
 
   it("mergeParcels passes the real \"merge\" op kind, not the generic \"edit\" fallback", () => {
