@@ -45,9 +45,9 @@ backstop, not the headline — see "Known, deliberately-not-fixed findings".
 
 | surface | light | dark | budget | exemptions | effective ceiling |
 |---|---|---|---|---|---|
-| Map landing page (no project selected) | 23 | 23 | 18 | 5 | 23 |
-| Map landing page (comp mode) | 23 | 23 | 18 | 5 | 23 |
-| Map landing page (selecting parcels) | 23 | 23 | 18 | 5 | 23 |
+| Map landing page (no project selected) | 22 | 22 | 18 | 5 | 23 |
+| Map landing page (comp mode) | 22 | 22 | 18 | 5 | 23 |
+| Map landing page (selecting parcels) | 22 | 22 | 18 | 5 | 23 |
 | App header | 8 | 8 | 7 | 1 | 8 |
 | Main menu — File ▾ | 1 | 1 | 1 | — | 1 |
 | Main menu — Undo history | 0 | 0 | 0 | — | 0 |
@@ -63,7 +63,7 @@ backstop, not the headline — see "Known, deliberately-not-fixed findings".
 **Named, dated exemptions (printed every run — this is the permanent cost of every signature
 left outside its surface's own budget):**
 
-- **B842864-global-help-report-control** (2026-09-05) — +1 on "Map landing page (no project selected)", "Map landing page (comp mode)", "Map landing page (selecting parcels)", "Left rail + panels (Yield)", "Library", "Doc Review (empty state)": The global help/report control (src/app/HelpReportControl.jsx) is a persistent, fixed bottom-right FAB the app shell mounts once, on every route — the owner's own request, so the control being everywhere is the point, not drift. It renders one uniform signature (radius:999px, height:44px, padding:0px, fontSize:12px) on every whole-page surface this crawl visits; the surfaces that scope to a sub-region only (App header, the Main menu popovers, Tool rail) don't see it because it lives outside that DOM subtree, which is why only the whole-page surfaces above needed a budget lift. A single shared implementation, one exemption line per affected surface, never a per-surface variant.
+- **B842864-global-help-report-control** (2026-09-05) — +1 on "Map landing page (no project selected)", "Map landing page (comp mode)", "Map landing page (selecting parcels)", "Left rail + panels (Yield)", "Library", "Doc Review (empty state)": The global help/report control (src/app/HelpReportControl.jsx) is a persistent, fixed bottom-right FAB the app shell mounts once, on every route — the owner's own request, so the control being everywhere is the point, not drift. It renders one uniform signature (radius:8px/RADIUS.md since B1176976, padding:0px, fontSize:12px) on every whole-page surface this crawl visits — height is 30px (CONTROL_H.lg) under this crawl's fine-pointer, no-touch context since B1162016, 44px only under a coarse/touch pointer, never both at once; the surfaces that scope to a sub-region only (App header, the Main menu popovers, Tool rail) don't see it because it lives outside that DOM subtree, which is why only the whole-page surfaces above needed a budget lift. A single shared implementation, one exemption line per affected surface, never a per-surface variant.
 
 - **B1038016-leaflet-chrome** (2026-09-01) — +3 on "Map landing page (no project selected)", "Map landing page (comp mode)", "Map landing page (selecting parcels)": Leaflet's own bundled zoom stack (+/− at its vendor font-size), "Find my location" locate button, and the scale bar are third-party chrome — docs/DESIGN.md's radius section (Documented exceptions #4) already carries the zoom-stack/locate-button radius override and the scale-bar non-exception as the accepted boundary of what this token scale reaches. Their child <a>/<div> nodes are deliberately radius:0 BY THE APP'S OWN CSS (the rounded corner the user sees comes from the parent .leaflet-bar container's overflow:hidden clip, not the button), so a per-button override here would fight the exact mechanism that already unified their visible shape with the app's own RADIUS.md. The one thing left off-scale (the zoom glyphs' 22px font) is Leaflet's own vendor CSS (.leaflet-touch .leaflet-control-zoom-in/-out), not an app literal.
 
@@ -351,7 +351,7 @@ _None found on this run._
 | 6px | 17px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(53, 59, 73)` | Reorder the Pursuit group ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 30px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(225, 229, 235)` | ▼Imagery & layers ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 28px | 12px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(27, 30, 38)` | Imagery & layers ×1 | src/app/HelpReportControl.jsx:29: * the screen, tucked under "Imagery & layers", nowhere near the corner he asked for. Fixed by (+more matches elsewhere, best-effort) |
-| 8px | 44px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 
 **dark** — 30 distinct style signature(s) over 36 matched element(s):
 
@@ -386,7 +386,7 @@ _None found on this run._
 | 6px | 17px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(202, 208, 218)` | Reorder the Pursuit group ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 30px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(42, 46, 55)` | ▼Imagery & layers ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 28px | 12px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(232, 235, 240)` | Imagery & layers ×1 | src/app/HelpReportControl.jsx:29: * the screen, tucked under "Imagery & layers", nowhere near the corner he asked for. Fixed by (+more matches elsewhere, best-effort) |
-| 8px | 44px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 
 
 ---
@@ -426,7 +426,7 @@ _None found on this run._
 | 6px | 17px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(53, 59, 73)` | Reorder the Pursuit group ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 30px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(225, 229, 235)` | ▼Imagery & layers ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 28px | 12px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(27, 30, 38)` | Imagery & layers ×1 | src/app/HelpReportControl.jsx:29: * the screen, tucked under "Imagery & layers", nowhere near the corner he asked for. Fixed by (+more matches elsewhere, best-effort) |
-| 8px | 44px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 
 **dark** — 30 distinct style signature(s) over 36 matched element(s):
 
@@ -461,7 +461,7 @@ _None found on this run._
 | 6px | 17px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(202, 208, 218)` | Reorder the Pursuit group ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 30px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(42, 46, 55)` | ▼Imagery & layers ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 28px | 12px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(232, 235, 240)` | Imagery & layers ×1 | src/app/HelpReportControl.jsx:29: * the screen, tucked under "Imagery & layers", nowhere near the corner he asked for. Fixed by (+more matches elsewhere, best-effort) |
-| 8px | 44px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 
 
 ---
@@ -500,7 +500,7 @@ _None found on this run._
 | 6px | 17px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(53, 59, 73)` | Reorder the Pursuit group ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 30px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(225, 229, 235)` | ▼Imagery & layers ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 28px | 12px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(27, 30, 38)` | Imagery & layers ×1 | src/app/HelpReportControl.jsx:29: * the screen, tucked under "Imagery & layers", nowhere near the corner he asked for. Fixed by (+more matches elsewhere, best-effort) |
-| 8px | 44px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 | 12px | 48px | 12px | 400 | `rgba(255, 255, 255, 0.94)` | `1px solid rgb(225, 229, 235)` | Click any lot on the map to add it (＋) — ×1 | src/workspaces/site-planner/MapFinder.jsx:3950:                ? "Click any lot on the map to add it (＋) — it works even before the purple outlines appear. Zoom in a little to see the lines." |
 
 **dark** — 30 distinct style signature(s) over 36 matched element(s):
@@ -535,7 +535,7 @@ _None found on this run._
 | 6px | 17px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(202, 208, 218)` | Reorder the Pursuit group ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 30px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(42, 46, 55)` | ▼Imagery & layers ×1 | unattributed (no source match — best-effort text search) |
 | 8px | 28px | 12px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(232, 235, 240)` | Imagery & layers ×1 | src/app/HelpReportControl.jsx:29: * the screen, tucked under "Imagery & layers", nowhere near the corner he asked for. Fixed by (+more matches elsewhere, best-effort) |
-| 8px | 44px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 | 12px | 48px | 12px | 400 | `rgba(24, 27, 33, 0.93)` | `1px solid rgb(42, 46, 55)` | Click any lot on the map to add it (＋) — ×1 | src/workspaces/site-planner/MapFinder.jsx:3950:                ? "Click any lot on the map to add it (＋) — it works even before the purple outlines appear. Zoom in a little to see the lines." |
 
 
@@ -679,7 +679,7 @@ _(nothing matched in this theme/scenario)_
 | 8px | 27px | 12px | 500 | `rgba(0, 0, 0, 0)` | `1px solid rgba(0, 0, 0, 0)` | Parcel tools, Measure modes, Dock layout (+3 more) ×6 | src/workspaces/site-planner/MapFinder.jsx:3947:                  empty state and its Parcel tools ▾ menu use for this same job (get a parcel from (+more matches elsewhere, best-effort) |
 | 0px | 54px | 10.5px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(53, 59, 73)` | Land, Analysis, Drainage (+1 more) ×4 | src/app/Shell.jsx:22:import { isFreshRoutelessBoot, firstLandingRedirect, resolveHasAnyProjects } from "./firstLanding.js"; (+more matches elsewhere, best-effort) |
 | 0px | 30px | 14px | 600 | `rgba(255, 255, 255, 0.94)` | `0px none rgb(27, 30, 38)` | Zoom out, Zoom to fit ×2 | src/workspaces/doc-review/DocReview.jsx:1999:    { kind: "tool", id: "zoomOut", label: "Out", title: "Zoom out (or scroll the wheel over the sheet)", icon: <MkIcon id="zoomOut" />, onClick: () => zoom(1 / 1.2) }, (+more matches elsewhere, best-effort) |
-| 0px | 52px | 10.5px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(53, 59, 73)` | Properties, Standards ×2 | src/app/HelpReportControl.jsx:168:  // B1215682/NEW-3 — a mobile bottom sheet (Food's own, or the Site Planner's phone Properties (+more matches elsewhere, best-effort) |
+| 0px | 52px | 10.5px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(53, 59, 73)` | Properties, Standards ×2 | src/app/HelpReportControl.jsx:121: * Properties sheet and Food's FoodMap.jsx already use — see `coarsePointer` below), never by (+more matches elsewhere, best-effort) |
 | 0px | 32px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(0, 0, 0)` | ▶Buildings1 · 75,600 SF, ▶Costsnot priced yet ×2 | unattributed (no source match — best-effort text search) |
 | 0px | 31px | 12px | 700 | `rgba(0, 0, 0, 0)` | `0px none rgb(27, 30, 38)` | What's shown on this drawing — hide groups temporarily, plus grid & snap ×1 | src/workspaces/site-planner/components/ViewMenu.jsx:128:        title="What's shown on this drawing — hide groups temporarily, plus grid & snap" |
 | 0px | 32px | 12px | 700 | `rgba(0, 0, 0, 0)` | `0px none rgb(27, 30, 38)` | Layers — map data layers (flood, utilities, parcels, aerial…) ×1 | src/workspaces/site-planner/SitePlanner.jsx:23570:              <button onClick={() => setLayersOpen((o) => !o)} aria-expanded={layersOpen} aria-label="Layers — map data layers (flood, utilities, parcels, aerial…)" (+more matches elsewhere, best-effort) |
@@ -693,7 +693,7 @@ _(nothing matched in this theme/scenario)_
 | 0px | 31px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(0, 0, 0)` | ▶Land use ×1 | unattributed (no source match — best-effort text search) |
 | 999px | 19px | 10.5px | 700 | `rgba(0, 0, 0, 0)` | `1px solid rgb(194, 65, 12)` | Drainage → ×1 | src/workspaces/site-planner/SitePlanner.jsx:20103:                      <span style={{ color: PAL.muted, fontWeight: 600, fontSize: 10.5, whiteSpace: "nowrap" }}>in Drainage →</span> (+more matches elsewhere, best-effort) |
 | 0px | 12px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(75, 82, 99)` | About Screening disclaimer ×1 | unattributed (no source match — best-effort text search) |
-| 8px | 44px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 
 **dark** — 21 distinct style signature(s) over 72 matched element(s):
 
@@ -705,7 +705,7 @@ _(nothing matched in this theme/scenario)_
 | 8px | 27px | 12px | 500 | `rgba(0, 0, 0, 0)` | `1px solid rgba(0, 0, 0, 0)` | Parcel tools, Measure modes, Dock layout (+3 more) ×6 | src/workspaces/site-planner/MapFinder.jsx:3947:                  empty state and its Parcel tools ▾ menu use for this same job (get a parcel from (+more matches elsewhere, best-effort) |
 | 0px | 54px | 10.5px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(166, 173, 186)` | Land, Analysis, Drainage (+1 more) ×4 | src/app/Shell.jsx:22:import { isFreshRoutelessBoot, firstLandingRedirect, resolveHasAnyProjects } from "./firstLanding.js"; (+more matches elsewhere, best-effort) |
 | 0px | 30px | 14px | 600 | `rgba(24, 27, 33, 0.93)` | `0px none rgb(232, 235, 240)` | Zoom out, Zoom to fit ×2 | src/workspaces/doc-review/DocReview.jsx:1999:    { kind: "tool", id: "zoomOut", label: "Out", title: "Zoom out (or scroll the wheel over the sheet)", icon: <MkIcon id="zoomOut" />, onClick: () => zoom(1 / 1.2) }, (+more matches elsewhere, best-effort) |
-| 0px | 52px | 10.5px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(166, 173, 186)` | Properties, Standards ×2 | src/app/HelpReportControl.jsx:168:  // B1215682/NEW-3 — a mobile bottom sheet (Food's own, or the Site Planner's phone Properties (+more matches elsewhere, best-effort) |
+| 0px | 52px | 10.5px | 600 | `rgba(0, 0, 0, 0)` | `0px none rgb(166, 173, 186)` | Properties, Standards ×2 | src/app/HelpReportControl.jsx:121: * Properties sheet and Food's FoodMap.jsx already use — see `coarsePointer` below), never by (+more matches elsewhere, best-effort) |
 | 0px | 32px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(0, 0, 0)` | ▶Buildings1 · 75,600 SF, ▶Costsnot priced yet ×2 | unattributed (no source match — best-effort text search) |
 | 0px | 31px | 12px | 700 | `rgba(0, 0, 0, 0)` | `0px none rgb(232, 235, 240)` | What's shown on this drawing — hide groups temporarily, plus grid & snap ×1 | src/workspaces/site-planner/components/ViewMenu.jsx:128:        title="What's shown on this drawing — hide groups temporarily, plus grid & snap" |
 | 0px | 32px | 12px | 700 | `rgba(0, 0, 0, 0)` | `0px none rgb(232, 235, 240)` | Layers — map data layers (flood, utilities, parcels, aerial…) ×1 | src/workspaces/site-planner/SitePlanner.jsx:23570:              <button onClick={() => setLayersOpen((o) => !o)} aria-expanded={layersOpen} aria-label="Layers — map data layers (flood, utilities, parcels, aerial…)" (+more matches elsewhere, best-effort) |
@@ -719,7 +719,7 @@ _(nothing matched in this theme/scenario)_
 | 0px | 31px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(0, 0, 0)` | ▶Land use ×1 | unattributed (no source match — best-effort text search) |
 | 999px | 19px | 10.5px | 700 | `rgba(0, 0, 0, 0)` | `1px solid rgb(242, 107, 58)` | Drainage → ×1 | src/workspaces/site-planner/SitePlanner.jsx:20103:                      <span style={{ color: PAL.muted, fontWeight: 600, fontSize: 10.5, whiteSpace: "nowrap" }}>in Drainage →</span> (+more matches elsewhere, best-effort) |
 | 0px | 12px | 12px | 400 | `rgba(0, 0, 0, 0)` | `0px none rgb(164, 171, 184)` | About Screening disclaimer ×1 | unattributed (no source match — best-effort text search) |
-| 8px | 44px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 
 
 ---
@@ -730,13 +730,13 @@ _(nothing matched in this theme/scenario)_
 
 | radius | height | font | weight | background | border | label(s) | file/line (best-effort) |
 |---|---|---|---|---|---|---|---|
-| 8px | 44px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 
 **dark** — 1 distinct style signature(s) over 1 matched element(s):
 
 | radius | height | font | weight | background | border | label(s) | file/line (best-effort) |
 |---|---|---|---|---|---|---|---|
-| 8px | 44px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 
 
 ---
@@ -749,7 +749,7 @@ _(nothing matched in this theme/scenario)_
 |---|---|---|---|---|---|---|---|
 | 8px | 30px | 12px | 600 | `rgb(255, 255, 255)` | `1px solid rgb(225, 229, 235)` | Open PDF…, ⇄ Compare revisions… ×2 | src/workspaces/doc-review/DocReview.jsx:675:    if (!file) { setOpenErr("No file was received from that drop. Try the Open PDF… button, or drop a single .pdf."); return; } (+more matches elsewhere, best-effort) |
 | 8px | 30px | 12px | 700 | `rgb(14, 116, 144)` | `1px solid rgb(14, 116, 144)` | 🗂 Browse the Library ×1 | src/workspaces/doc-review/DocReview.jsx:2283:                🗂 Browse the Library |
-| 8px | 44px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(255, 255, 255)` | `1px solid rgb(205, 211, 220)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 
 **dark** — 3 distinct style signature(s) over 4 matched element(s):
 
@@ -757,5 +757,5 @@ _(nothing matched in this theme/scenario)_
 |---|---|---|---|---|---|---|---|
 | 8px | 30px | 12px | 600 | `rgb(29, 32, 39)` | `1px solid rgb(42, 46, 55)` | Open PDF…, ⇄ Compare revisions… ×2 | src/workspaces/doc-review/DocReview.jsx:675:    if (!file) { setOpenErr("No file was received from that drop. Try the Open PDF… button, or drop a single .pdf."); return; } (+more matches elsewhere, best-effort) |
 | 8px | 30px | 12px | 700 | `rgb(14, 116, 144)` | `1px solid rgb(14, 116, 144)` | 🗂 Browse the Library ×1 | src/workspaces/doc-review/DocReview.jsx:2283:                🗂 Browse the Library |
-| 8px | 44px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:299:        aria-label="Help and report a problem" |
+| 8px | 30px | 12px | 400 | `rgb(29, 32, 39)` | `1px solid rgb(58, 63, 75)` | Help and report a problem ×1 | src/app/HelpReportControl.jsx:331:        aria-label="Help and report a problem" |
 
