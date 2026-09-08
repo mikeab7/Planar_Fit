@@ -669,8 +669,12 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
    * Deliberately sessionStorage, not localStorage — the exact pattern B848304 established for
    * `planarfit:compAnchorKind:v1` (which this replaces): a sticky answer is a shortcut for the
    * task you are in the middle of, never a mode you can leave armed for tomorrow and be surprised
-   * by. A fresh tab starts over on "Track as site", the safest of the three (a plan is private
-   * scratch work; a comp is a standing market record).
+   * by. A fresh tab starts over on "Plan a site" — `verbLabel`'s own singular wording, and the
+   * safest of the three (a plan is private scratch work; a comp is a standing market record).
+   * ⚠ This sentence named "Track as site" until 2026-09-08: that label was replaced by the owner's
+   * own amendment BEFORE the first commit and exists nowhere in the shipped product, so the
+   * comment was asserting a default the code has never had. `lib/decideBar.js` owns the real
+   * wording (`verbLabel`) — read it there rather than trusting a label quoted in prose here.
    * Bulk comp entry (Paste comps, Import KML) does not come through this toolbar at all and is
    * untouched by any of it. */
   const [lastVerb, setLastVerbRaw] = useState(() => {
@@ -3050,8 +3054,9 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
    * `interactive: false` so it can never eat a press aimed at the parcel underneath it
    * (CHROME-NEVER-EATS-A-PRESS: chrome that paints over its own object's body must not claim the
    * press — the cheapest form of that rule is to not be a hit target at all).
-   * Anchored on the assembly's own bbox centre — the same point "Track as site" would open the
-   * plan on, so the chip marks the spot the verb is about. */
+   * Anchored on the assembly's own bbox centre — the same point "Plan a site" would open the plan
+   * on, so the chip marks the spot the verb is about.
+   * (Also corrected 2026-09-08 from the retired "Track as site" label — see the block above.) */
   const acreChipRef = useRef(null);
   const acreChipKey = asm ? `${asm.totalAc.toFixed(2)}|${asm.origin.lat.toFixed(6)}|${asm.origin.lon.toFixed(6)}` : "";
   useEffect(() => {
