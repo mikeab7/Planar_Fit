@@ -64,7 +64,9 @@ try {
 
   // Helper: add a formula column via the UI.
   async function addFormula(name, formula) {
-    await page.click("button:has-text('Columns')");
+    // NEW-1/B1350080 — the "Columns" pill was replaced by an icon-only ⋯ button in the
+    // header row's trailing gutter; it carries no visible text any more, so target its title.
+    await page.click("button[title='Show, hide, add or reorder table columns']");
     await page.click("text=Formula column");
     await page.waitForSelector("input[placeholder='e.g. Days remaining']", { timeout: 5000 });
     await page.fill("input[placeholder='e.g. Days remaining']", name);
