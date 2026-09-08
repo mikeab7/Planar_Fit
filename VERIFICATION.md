@@ -182,10 +182,11 @@ steps below are for.
 **All steps on THROWAWAY notes created during the check — do not touch site-plan row
 `aa2d8163-7d45-4929-8a05-dad94ba2528d` or comp `ddb5a9e5-76c5-49e6-88b0-4a842f1b0a46` (Core 5 - West Hardy).**
 Signed in, at 1600×465, on the Site Planner map:
-1. **Place by pin** — right-click empty map → "Add a note here", type a body, Save.
+1. **Place by pin** — press **Drop a pin** on the map toolbar, click the ground, then press
+   **Add a note** on the decide bar that appears; type a body, Save.
    *Expected:* the card closes and a magenta bubble marker appears at that exact point immediately, with no
    further clicking. The Notes count goes up by one.
-2. **Place by parcel** — select a parcel, press "Note" in the selection row, type, Save.
+2. **Place by parcel** — select a parcel, press **Add a note** on the same decide bar, type, Save.
    *Expected:* the note saves anchored to the parcel (the card says "On a parcel"), and the selection clears.
 3. **Reopen and edit** — click the pin-anchored marker, change the text, Save, then click it again.
    *Expected:* it opens showing the text you saved, and the edit is still there on the second open.

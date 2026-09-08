@@ -4338,19 +4338,35 @@ release is now also bound to the window. A layer that silently stops repainting 
 class, and the regression arm is in `ui-audit/verify-map-notes-writes.mjs` (a later map click must change
 nothing).
 
-**⛔ THE DECIDE-BAR VERB IS STILL OWED — LOUDLY, per the brief.** "Add a note" is meant to be the fourth
-verb in the parcel-first decide bar being built in `session_016bAcDAEbuLLJ19cbabPxG3`. That work had **not
-landed on `origin/main` at 268f1f1** (checked after merging main into this branch: no decide bar, the
-Site/Comp switch is still in place), so placement here is wired through the existing toolbar path as the
-brief instructed, and this session deliberately did not touch that bar. **Whoever lands the parcel-first
-PR adds the fourth verb**, calling `armAnchor("map", "note")` / `armAnchor("parcel", "note")` — the intent
-parameter exists for exactly that and needs no further plumbing.
+**✅ THE DECIDE-BAR VERB IS NO LONGER OWED — IT SHIPPED IN THIS SAME ITEM.** When this work started,
+the parcel-first toolbar was still unmerged, so placement was wired through the toolbar path the brief
+named as the fallback. It then LANDED mid-session (`origin/main` 4194dda, the ground-first decide bar),
+and its own verb table said so in as many words: *"DELIBERATELY THREE, NOT FOUR: the owner also wants
+'add a note' here. There is no map-anchored note anywhere in this app today — no handler, no record, no
+marker — so it is a new concept rather than a fourth button, and it has its own backlog item. Do not
+invent one here."* That backlog item is this one, and it had by then built the concept — so the fourth
+verb was added HERE, in that one table, which is exactly what that instruction was protecting.
+- **`Add a note` is the fourth verb**, beside Plan a site · Log a comp · Place a site plan. It takes
+  BOTH targets the bar can be about, through the same shared derivations every other verb uses:
+  `parcelAnchorFromSelection` for a selection, the dropped pin's own point otherwise.
+- **`verbLabel("note")` moved into `lib/decideBar.js`** with the other three — no second label source.
+- **`test/decideBar.test.js`'s "has no fourth verb" case is SUPERSEDED, not deleted:** its own words
+  are kept on the replacement, and the property that actually mattered (an unknown key must never get
+  a label, because a label with no feature behind it is a button that lies) is still asserted. Its
+  sibling case used `"note"` as its example of a stale/unreal stored verb; the example moved to a key
+  nothing has ever shipped, and a real stored verb leading the bar is now asserted beside it.
+- **The pin-intent routing this item first built is GONE, deliberately.** Ground-first supersedes it:
+  the pin is dropped first and the bar asks what it is, so a note needs no armed mode of its own —
+  which satisfies the brief's "never a second parallel mechanism" more completely than the rename did.
+  `parcelAnchorFromSelection` stays (with `compAnchorFromSelection` as an alias, so the comp call site
+  and any in-flight branch still resolve).
 
-Verify: **live** — see **V995408** (the signed-in write legs on the owner's own account). Sandbox evidence:
-lint clean · full suite 15,875 green · build green · design-drift ceiling held · `ui-audit/verify-map-notes.mjs`
-23/23 at 1600×465 (the owner's window, logged out) · `ui-audit/verify-map-notes-writes.mjs` 24/24 (real app
-code, server stubbed — proves the client half of place/edit/soft-delete end to end, and explicitly does NOT
-claim RLS or a real reload).
+Verify: **live** — see **V995408** (the signed-in write legs on the owner's own account). Sandbox evidence,
+re-run in full after merging the ground-first toolbar: lint clean · full suite **16,026 green** · build green ·
+design-drift ceiling held · `ui-audit/verify-map-notes.mjs` **27/27 at 1600×465** (the owner's window, logged
+out — including the decide bar's absence before ground is pointed at, as its known-good arm) ·
+`ui-audit/verify-map-notes-writes.mjs` **24/24** (real app code, server stubbed — proves the client half of
+place/edit/soft-delete end to end, and explicitly does NOT claim RLS or a real reload).
 
 
 ### B1368144 — Map toolbar goes GROUND-FIRST: the Site/Comp toggle is gone and the toolbar itself becomes the question `[Site Planner / Map]` (feature) #site-planner #ui #selection #parcel  *(owner decision 2026-09-08, after reviewing three mockups of the second step and picking the one where the toolbar itself becomes the question. Design rationale and the two rejected alternatives are in the Parcel First artifact; the operative spec arrived as a chat block "NEW-1". Owner amendment mid-session, verbatim: the first verb reads **"Plan a site"**, not "Track as site" — applied before the first commit, never shipped under the other wording. Minted **B1368144 / V991408** from this branch's reserved block B1368144–B1368159 · V991408–V991423 against freshly-fetched `origin/main` 7d22afa. DEDUPE-FIRST — searched Open / ⏳ Verify / Done for `SiteCompSwitch`, `mapMode`, "Site/Comp", "Place comp", "decide bar", "ground first", `planSelected`, `placeCompOnSelectedParcel`: the toolbar's own history is B831776–B831781 (the Site/Comp rebuild), B848304 (the "Place comp ▾" split button), B850016 (decoupling the rail tab from `mode`) and B1074768–B1074770 (the caret anchoring) — every one of them is a DIFFERENT item that this one supersedes rather than repeats, and none of them proposes removing the mode. Net-new.)*
