@@ -32,7 +32,7 @@
  * by x/y, never by array storage order, which carries no meaning once cards have x/y positions).
  * Remove / Add / Reset stay live at any width; only the drag/resize gesture is width-gated.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { WidthProvider } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
@@ -51,7 +51,7 @@ import {
 } from "./lib/dashboardLayout.js";
 import { loadDashboardLayout, saveDashboardLayout } from "./lib/dashboardPrefs.js";
 import { fetchSiteSummaries } from "./lib/dashboardSitesFetch.js";
-import { fetchCompsCounts } from "./lib/dashboardCompsFetch.js";
+import { fetchCompsCounts, fetchCompsForMap } from "./lib/dashboardCompsFetch.js";
 import { fetchLastTouchedDoc } from "./lib/dashboardDocFetch.js";
 import { fetchScheduleProjects } from "./lib/dashboardScheduleFetch.js";
 import { fetchAllElementRecency } from "./lib/dashboardElementRecencyFetch.js";
@@ -72,6 +72,12 @@ const GRID_MARGIN_PX = 14;
 const NARROW_BREAKPOINT_PX = 640;
 
 const ReactGridLayout = WidthProvider(GridLayout);
+
+// NEW-1 (Locations map card) — its own lazy chunk, same reasoning as every other Leaflet-carrying
+// module in this repo: the Dashboard is the app's landing page and loads on every session, so
+// Leaflet's real weight (this card's whole point — a real interactive map) must never ride the
+// Dashboard's own static bundle. See that file's own header for the map library / basemap choice.
+const LocationsMapCard = lazy(() => import("./components/LocationsMapCard.jsx"));
 
 function layoutKeyOf(layout) {
   return JSON.stringify([...layout].sort((a, b) => a.key.localeCompare(b.key)));
@@ -145,6 +151,10 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   // ── Data: one fetch per source, in parallel, once per mount. ──────────────────────────────
   const [sites, setSites] = useState([]);
   const [comps, setComps] = useState(null);
+  // NEW-1 (Locations map card) — the raw located-comp rows (id/lat/lon) the map draws as quiet
+  // dots. Separate from `comps` above, which is the aggregated type-count `compsSummary` card
+  // reads — the map needs positions, not a breakdown.
+  const [compsForMap, setCompsForMap] = useState([]);
   const [doc, setDoc] = useState(null);
   const [scheduleProjects, setScheduleProjects] = useState(null);
   // B1161793 (NEW-2) — building elements for each open pursuit's own representative plan, for
@@ -169,13 +179,14 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
       const results = await Promise.allSettled([
         fetchSiteSummaries().then((v) => { if (live) setSites(v); return v; }),
         fetchCompsCounts().then((v) => { if (live) setComps(v); }),
+        fetchCompsForMap().then((v) => { if (live) setCompsForMap(v); }),
         fetchLastTouchedDoc().then((v) => { if (live) setDoc(v); }),
         fetchScheduleProjects().then((v) => { if (live) setScheduleProjects(v); }),
         fetchAllElementRecency().then((v) => v),
       ]);
       if (!live) return;
       const siteRows = results[0].status === "fulfilled" ? results[0].value || [] : [];
-      const elementRecencyRows = results[4].status === "fulfilled" ? results[4].value || [] : [];
+      const elementRecencyRows = results[5].status === "fulfilled" ? results[5].value || [] : [];
       const openPursuits = pursuitsTable(groupProjectsByGroupId(siteRows), {});
       const pursuitSiteIds = [...new Set(openPursuits.map((p) => p.siteId).filter(Boolean))];
       const elementRows = await fetchElementsForSites(pursuitSiteIds).catch(() => []);
@@ -206,10 +217,14 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   const openSchedule = (p) => onNavigate?.({ module: "scheduler", projectId: p.linkedSiteId, cross: false, org: false });
   const openDoc = (d) => onOpenReviewInDocReview?.({ id: d.id, project_id: d.projectId });
   const openTask = (row) => onOpenTaskInScheduler?.({ linkedSiteId: row.linkedSiteId, taskId: row.taskId });
+  // NEW-1 (Locations map card) — "wherever he can fix them": the Site Planner's own project list
+  // (no project id lands on MapFinder, never an auto-resumed last plan — SitePlannerApp.jsx's own
+  // bootActiveId), where every located-or-not project is reachable to open and set a location on.
+  const fixLocations = () => onNavigate?.({ module: "site-planner", projectId: null, cross: false, org: false });
 
   // NEW-1 — while data is still loading every slot renders the SAME stable-height skeleton
   // instead of its real (variable-height) content; see the `dataReady` effect above.
-  const SKELETON_ROWS = { jumpBackIn: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 2, goingQuiet: 3 };
+  const SKELETON_ROWS = { jumpBackIn: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 2, goingQuiet: 3, locationsMap: 6 };
   const CARD_RENDERERS = dataReady ? {
     jumpBackIn: () => <JumpBackInCard {...cardData.jumpBackIn} onOpenProject={openProject} onOpenDoc={openDoc} />,
     pipelineStatus: () => <PipelineCard {...cardData.pipelineStatus} />,
@@ -218,6 +233,11 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     goingQuiet: () => <GoingQuietCard {...cardData.goingQuiet} onOpenProject={openProject} />,
     compsSummary: () => <CompsSummaryCard {...cardData.compsSummary} />,
     scheduleHealth: () => <ScheduleHealthCard {...cardData.scheduleHealth} onOpenSchedule={openSchedule} />,
+    locationsMap: () => (
+      <Suspense fallback={<CardSkeleton rows={SKELETON_ROWS.locationsMap} />}>
+        <LocationsMapCard projects={projects} comps={compsForMap} onOpenProject={openProject} onFixLocations={fixLocations} />
+      </Suspense>
+    ),
   } : Object.fromEntries(Object.keys(CARD_DEFS).map((k) => [k, () => <CardSkeleton rows={SKELETON_ROWS[k]} />]));
 
   const toAdd = availableToAdd(layout);
