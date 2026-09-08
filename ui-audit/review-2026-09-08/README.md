@@ -19,7 +19,17 @@ they were written against the review sandbox — adjust if your checkout lives e
 | `probe-thumbnail-size.mjs` | How large can a plan thumbnail get, and are values escaped into the SVG? | No cap: 300 shapes × 40 vertices → ~185 KB; 600 × 40 → ~380 KB. A quote character in a parcel stroke breaks out of its attribute (rendering corruption, not XSS — the SVG is shown via `<img>`) |
 | `probe-county-label.mjs` | Does `compsCardModel.countyLabel` agree with the county registry? | Agrees for all 18 configured keys today. The exposure is upstream: `MapFinder.resolveCompCounty` calls `countyKeyForName(name)` with **no state**, so a point in Montgomery County PA / Liberty County GA / Chambers County AL resolves to the Texas key and prints "…County, TX" |
 
-## Two findings that need no probe
+## Two findings that need no probe — BOTH RESOLVED after filing
+
+> **Status, 2026-09-08 20:39Z.** PR #1564 pushed a merge of `main` (`10a4368`) that resolved both
+> of the findings below. Re-verified directly against its head, not inferred from the diff:
+> `git grep fetchCompsCounts` on that branch returns nothing (no caller remains), and
+> `push("totalRent"` is absent from `shared/comps/lib/comps.js` (the owner's removal survived).
+> They were true when measured and are kept here as the record — the *pattern* is what matters:
+> when one branch rewrites a shared file that another branch's already-merged code depends on,
+> git has nothing to flag, and building the merge is the only way to see it.
+>
+> PR #1563 is still merge-conflicted against `main` and cannot land unattended.
 
 1. **Merging #1564 breaks the build.** Its branch rewrote `dashboard/lib/dashboardCompsFetch.js`,
    dropping `fetchCompsCounts` — which `Dashboard.jsx` on `main` imports and calls for the merged
