@@ -19,6 +19,7 @@ import { reportClientEvent } from "../../shared/telemetry/clientErrors.js";
 import { scheduleSaveState } from "./lib/saveState.js";
 import { ScheduleCenter, ScheduleActions } from "./components/ScheduleToolbar.jsx";
 import { listProjects, warmProjectsIfEmpty, suggestNameMatch } from "../../shared/projects/projects.js";
+import { resolveControlledId } from "../../shared/projects/projectModel.js";
 import LinkSchedulePanel from "./components/LinkSchedulePanel.jsx";
 import AgendaView from "./components/AgendaView.jsx";
 
@@ -404,11 +405,11 @@ export default function Scheduler({
   // ALREADY active over always picking the first, so a genuinely ambiguous id is at least a
   // STABLE (never-regressing) choice rather than an arbitrary one.
   const selectSchedule = (id) => {
-    let sch = projects.find((p) => p && p.id === id);
-    if (!sch) {
-      const linked = findAllBySiteId(projects, id);
-      sch = linked.find((p) => p.id === activeId) || linked[0] || null;
-    }
+    // B1358128 — this resolution (a registry-standin site id → its one linked schedule) now
+    // lives in projectModel.js's resolveControlledId, shared with ProjectBreadcrumb.jsx's own
+    // rename/delete/duplicate handlers, which needed the identical logic and never had it.
+    const resolvedId = resolveControlledId(projects, id, activeId);
+    const sch = resolvedId != null ? projects.find((p) => p && p.id === resolvedId) : null;
     if (!sch) return; // an id this module cannot resolve at all — nothing to switch to
     dashboardIntentRef.current = false; // a deliberate pick supersedes a pending Dashboard press
     explicitPickRef.current = sch.id; // isPickShowing() lets this override the route-derived empty state
