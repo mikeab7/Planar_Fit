@@ -39,6 +39,9 @@ export const CARD_DEFS = {
   // every account's already-saved layout keeps placing this card without a migration.
   compsSummary:   { title: "Comps",           defaultW: 4, defaultH: 9, minW: 3, minH: 7 },
   goingQuiet:     { title: "Going quiet",     defaultW: 4, defaultH: 6, minW: 3, minH: 4 },
+  // B1366384 (NEW-1) — one merged feed replacing the "reconstruct it from four separate cards"
+  // problem; the largest card on the board, sized accordingly.
+  sinceLastHere:  { title: "Since you were last here", defaultW: 12, defaultH: 11, minW: 5, minH: 5 },
   // NEW-1 (Locations map card, owner chat block 2026-09-08) — a real interactive map needs real
   // room to be legible; minW/minH keep it from being crushed into an unreadable strip.
   locationsMap:   { title: "Locations",       defaultW: 8, defaultH: 9, minW: 5, minH: 6 },
@@ -51,7 +54,7 @@ export const CARD_KEYS = Object.keys(CARD_DEFS);
 // first-run Dashboard must never be empty); a user who wants a leaner view removes what they
 // don't need in Customize mode, rather than building one up from nothing.
 const DEFAULT_ORDER = [
-  "jumpBackIn", "recentPlans", "pipelineStatus", "locationsMap", "needsAttention", "pursuitsTable",
+  "sinceLastHere", "jumpBackIn", "recentPlans", "pipelineStatus", "locationsMap", "needsAttention", "pursuitsTable",
   "scheduleHealth", "compsSummary", "goingQuiet",
 ];
 
