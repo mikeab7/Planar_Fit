@@ -232,7 +232,7 @@ export default function DashboardTopoBackground({ paused = false }) {
     }
     function frame() {
       raf = window.requestAnimationFrame(frame);
-      t += 0.0021;
+      t += 0.0005;
       ptr.x += (ptr.tx - ptr.x) * 0.11;
       ptr.y += (ptr.ty - ptr.y) * 0.11;
       ptr.s += (ptr.ts - ptr.s) * 0.065;
