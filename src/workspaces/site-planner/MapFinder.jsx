@@ -669,8 +669,12 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
    * Deliberately sessionStorage, not localStorage — the exact pattern B848304 established for
    * `planarfit:compAnchorKind:v1` (which this replaces): a sticky answer is a shortcut for the
    * task you are in the middle of, never a mode you can leave armed for tomorrow and be surprised
-   * by. A fresh tab starts over on "Track as site", the safest of the three (a plan is private
-   * scratch work; a comp is a standing market record).
+   * by. A fresh tab starts over on "Plan a site" — `verbLabel`'s own singular wording, and the
+   * safest of the three (a plan is private scratch work; a comp is a standing market record).
+   * ⚠ This sentence named "Track as site" until 2026-09-08: that label was replaced by the owner's
+   * own amendment BEFORE the first commit and exists nowhere in the shipped product, so the
+   * comment was asserting a default the code has never had. `lib/decideBar.js` owns the real
+   * wording (`verbLabel`) — read it there rather than trusting a label quoted in prose here.
    * Bulk comp entry (Paste comps, Import KML) does not come through this toolbar at all and is
    * untouched by any of it. */
   const [lastVerb, setLastVerbRaw] = useState(() => {
@@ -2840,7 +2844,15 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   const resolveCompCounty = async (lat, lon, what) => {
     try {
       const ans = await Promise.race([countyAtPoint(lon, lat), new Promise((res) => setTimeout(() => res(null), 3000))]);
-      const county = ans?.name ? countyKeyForName(ans.name) : null;
+      /* NEW-1 (adversarial review, 2026-09-08) — the name is resolved WITH its state. The
+       * boundary answer is backed by a NATIONAL county roster (`countyPolygons`, 3,144 counties in
+       * 51 states), and `countyKeyForName(name)` with no state means "Texas only" — so a pin
+       * dropped in Montgomery County PA, Liberty County GA or Chambers County AL used to come back
+       * with the TEXAS key of the same name and the comp read "Montgomery County, TX". Passing the
+       * state makes an out-of-state answer a null (the honest "no county" this flag already
+       * handles) and, at the same time, lets a COLORADO pin reach its `co_` key instead of the
+       * null every Colorado comp used to get. */
+      const county = ans?.name ? countyKeyForName(ans.name, ans.state) : null;
       if (!county) console.warn(`[comps] county lookup found no match for a ${what}`, { lat, lon }, ans?.error || "(timed out or unresolved)");
       return county;
     } catch (e) { console.warn(`[comps] county lookup failed for a ${what}`, { lat, lon }, e); return null; }
@@ -2896,7 +2908,8 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
         countyAtPoint(origin.lon, origin.lat),
         new Promise((res) => setTimeout(() => res(null), 3000)),
       ]);
-      county = ans?.name ? countyKeyForName(ans.name) : null;
+      // NEW-1 — state-qualified; see `resolveCompCounty` above for why an unqualified name is a defect.
+      county = ans?.name ? countyKeyForName(ans.name, ans.state) : null;
     } catch (_) { /* the planner resolves it from the origin on load */ }
     onSkip && onSkip({ origin, county, name: parcelInfo?.label || addr.trim() || "Untitled site" });
   };
@@ -2920,7 +2933,8 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
         countyAtPoint(asm.origin.lon, asm.origin.lat),
         new Promise((res) => setTimeout(() => res(null), 3000)),
       ]);
-      const key = ans?.name ? countyKeyForName(ans.name) : null;
+      // NEW-1 — state-qualified; see `resolveCompCounty` above for why an unqualified name is a defect.
+      const key = ans?.name ? countyKeyForName(ans.name, ans.state) : null;
       if (key && key !== county) county = key;
     } catch (_) { /* keep the click-time key */ }
     /* NEW-2 — the plan's NAME is the parcel's SITUS, then what the user actually searched, then its
@@ -3050,8 +3064,9 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
    * `interactive: false` so it can never eat a press aimed at the parcel underneath it
    * (CHROME-NEVER-EATS-A-PRESS: chrome that paints over its own object's body must not claim the
    * press — the cheapest form of that rule is to not be a hit target at all).
-   * Anchored on the assembly's own bbox centre — the same point "Track as site" would open the
-   * plan on, so the chip marks the spot the verb is about. */
+   * Anchored on the assembly's own bbox centre — the same point "Plan a site" would open the plan
+   * on, so the chip marks the spot the verb is about.
+   * (Also corrected 2026-09-08 from the retired "Track as site" label — see the block above.) */
   const acreChipRef = useRef(null);
   const acreChipKey = asm ? `${asm.totalAc.toFixed(2)}|${asm.origin.lat.toFixed(6)}|${asm.origin.lon.toFixed(6)}` : "";
   useEffect(() => {
