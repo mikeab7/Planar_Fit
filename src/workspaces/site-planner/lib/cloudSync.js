@@ -554,6 +554,23 @@ export async function cloudList(uid) {
   }).filter(Boolean);
 }
 
+// NEW-1 (first-time landing, src/app/firstLanding.js) — "does this account have ANY live
+// project ANYWHERE it can see" for the boot-time Map/Dashboard decision. Deliberately NOT
+// `(await cloudList(uid)).length > 0`: that fetches every row's full jsonb `data` payload and
+// normalizes it into a Site Model, none of which this needs — a head-only count costs nothing
+// on the wire and RLS still scopes it to the user's own rows PLUS anything shared with a team
+// they're in, exactly like cloudList. Throws on a real fetch error (never swallows it to
+// `false`) so a transient/offline failure can't misread a real returning account as a
+// first-timer — see firstLanding.js's own safe-default catch.
+export async function hasAnyLiveSites(uid) {
+  if (!supabase || !uid) return false;
+  let { count, error } = await supabase.from("sites").select("id", { count: "exact", head: true }).is("deleted_at", null);
+  if (error && isMissingColumn(error, "deleted_at"))
+    ({ count, error } = await supabase.from("sites").select("id", { count: "exact", head: true }));
+  if (error) throw new Error(error.message || "cloud existence check failed");
+  return !!count;
+}
+
 // B849344 — the network half of "does this site have a boundary, and how big is it" (the Sites
 // panel + the map pin — see MapFinder.jsx's siteBoundaryInfo). `cloudList` above returns each
 // site's SLIM HEADER, whose `parcels` field has been empty since the B672 element-sync cutover;
