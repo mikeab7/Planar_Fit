@@ -19,6 +19,7 @@ import { setTelemetryModule } from "../shared/telemetry/clientErrors.js";
 import { useHashRoute, unknownModuleSlug, isAdminRoute, isDesignRoute, isDashboardRoute, readRoute, buildHash, INITIAL_HASH_EMPTY } from "./route.js";
 import { pageTitle } from "./pageTitle.js";
 import { writeLastRoute, seedBootRoute } from "./lastRoute.js";
+import { isFreshRoutelessBoot, firstLandingRedirect, resolveHasAnyProjects } from "./firstLanding.js";
 import { installBuildSkewWatch, shouldOfferReload, fetchServedBuild, isBuildSkewed, LOADED_BUILD } from "./buildSkew.js";
 import { reloadFresh, isChunkRecoveryStuck, subscribeChunkRecoveryStuck } from "./chunkReload.js";
 import { RADIUS } from "../shared/ui/radius.js";
@@ -53,6 +54,17 @@ seedBootRoute();
 // Site Planner is mounting as part of processing the boot route" from "the Site Planner is
 // mounting because the user just navigated to a project-less route" — see bootResume.js.
 const INITIAL_ROUTE = readRoute();
+
+// FIRST-TIME LANDING (NEW-1) — was THIS load a genuine, route-less arrival at the Dashboard
+// (nothing to resume, no explicit deep link — not even a literal "#/dashboard"), as opposed to
+// a LATER, deliberate visit that happens to produce the identical bare "#/" hash? Captured ONCE
+// here, at module scope, for exactly the same reason INITIAL_ROUTE is: a later click on the
+// wordmark or the breadcrumb's "Dashboard" crumb must never be mistaken for the boot and
+// re-trigger the redirect below. See firstLanding.js for the full "first-timer" definition.
+const BOOT_WAS_ROUTELESS = isFreshRoutelessBoot({
+  initialHashEmpty: INITIAL_HASH_EMPTY,
+  hashAfterSeed: typeof window !== "undefined" && window.location ? window.location.hash : "",
+});
 
 // Workspace registry — each Comp is lazy-loaded (separate bundle chunk).
 const WORKSPACES = [
@@ -340,6 +352,50 @@ export default function Shell() {
       if (event === "PASSWORD_RECOVERY") { setRecovery(true); setAuthOpen(true); }
     });
   }, []);
+
+  /* FIRST-TIME LANDING (NEW-1) — a genuine first boot (BOOT_WAS_ROUTELESS) redirects from the
+   * Dashboard to the Map the instant we know the account/browser has never had a project (see
+   * firstLanding.js for the full rule). Gated on `authKnown` so a signed-in visitor is checked
+   * against the CLOUD (the durable signal that survives a cleared browser), not against an
+   * empty local cache that just hasn't been pulled into yet.
+   *
+   * `firstLandingCheckedRef` — not state — is what makes this run AT MOST ONCE per mount: a
+   * state flag would still let `authKnown`/`user` changing again (a slightly late auth event)
+   * re-enter this effect and re-run the network check a second time for no reason. The two
+   * lookups are dynamic-imported (never a static edge onto the entry chunk this file already
+   * is): `storage.js` for the cheap, always-needed local check, `cloudSync.js` only when signed
+   * in, since a signed-out visitor never needs it.
+   */
+  const firstLandingCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!BOOT_WAS_ROUTELESS || firstLandingCheckedRef.current || !authKnown) return;
+    firstLandingCheckedRef.current = true;
+    let live = true;
+    (async () => {
+      // The safe default on ANY failure (a broken dynamic import, a cloud read error) is "assume
+      // a returning user" — the Dashboard they'd already be looking at, never a wrongly-forced
+      // Map for someone this check simply failed to read.
+      let hasAnyProjects = true;
+      try {
+        const { hasAnyLocalSites, pendingLegacyCount } = await import("../workspaces/site-planner/lib/storage.js");
+        const hasAnyLiveSites = user
+          ? (await import("../workspaces/site-planner/lib/cloudSync.js")).hasAnyLiveSites
+          : async () => false;
+        hasAnyProjects = await resolveHasAnyProjects({ user, hasAnyLocalSites, pendingLegacyCount, hasAnyLiveSites });
+      } catch (_) { hasAnyProjects = true; }
+      if (!live) return;
+      const target = firstLandingRedirect({
+        isFreshRoutelessBoot: BOOT_WAS_ROUTELESS,
+        hasAnyProjects,
+        // A LIVE re-read, not the render-time `isDashboardHash` above — the whole point of this
+        // guard is to catch a navigation that happened WHILE the async check above was in
+        // flight, which a value captured by this effect's own closure could never see.
+        stillOnDashboard: typeof window !== "undefined" && window.location && isDashboardRoute(window.location.hash),
+      });
+      if (target) { try { window.location.replace(target); } catch (_) {} }
+    })();
+    return () => { live = false; };
+  }, [authKnown, user]);
 
   // Landing-page deep link (B1315632): "?auth=signin" / "?auth=signup" opens the auth
   // panel straight on that tab, so /landing/'s "Sign in" and "Create an account" links
