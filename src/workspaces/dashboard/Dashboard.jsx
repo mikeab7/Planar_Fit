@@ -48,6 +48,7 @@ import { NeedsAttentionCard } from "./components/NeedsAttentionCard.jsx";
 import { PursuitsCard } from "./components/PursuitsCard.jsx";
 import { SinceLastHereCard } from "./components/SinceLastHereCard.jsx";
 import { RecentPlansCard } from "./components/RecentPlansCard.jsx";
+import { SinceLastHereCard } from "./components/SinceLastHereCard.jsx";
 import {
   CARD_DEFS, GRID_COLS, normalizeLayout, availableToAdd, addCard, removeCard, resetLayout,
   applyGridChange, narrowOrder, toRglItem,
@@ -61,7 +62,7 @@ import { buildCompsCardData } from "./lib/compsCardModel.js";
 import { fetchRecentComps } from "./lib/dashboardCompsRecentFetch.js";
 import { fetchRecentNotePages } from "./lib/dashboardNotesRecentFetch.js";
 import { fetchLastTouchedDoc } from "./lib/dashboardDocFetch.js";
-import { fetchScheduleProjects } from "./lib/dashboardScheduleFetch.js";
+import { fetchScheduleProjects, fetchScheduleLastWriteAt } from "./lib/dashboardScheduleFetch.js";
 import { fetchAllElementRecency } from "./lib/dashboardElementRecencyFetch.js";
 import { fetchElementsForSites } from "./lib/dashboardYieldFetch.js";
 import { yieldBySite, buildingCountBySite } from "./lib/buildingYield.js";
@@ -109,7 +110,7 @@ function useMeasuredWidth() {
   return [ref, width];
 }
 
-export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenNoteInNotes, onOpenCompInSitePlanner }) {
+export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenCompInSitePlanner, onOpenNoteInNotes }) {
   const [layout, setLayout] = useState(() => normalizeLayout(null));
   const [customizing, setCustomizing] = useState(false);
   const [saveNote, setSaveNote] = useState(null); // null | "saved" | "local" | "error"
@@ -209,6 +210,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         fetchAllElementRecency().then((v) => v),
         fetchRecentComps(sinceIso),
         fetchRecentNotePages(userId, windowStartMs),
+        fetchScheduleLastWriteAt(),
       ]);
       if (!live) return;
       const siteRows = results[0].status === "fulfilled" ? results[0].value || [] : [];
@@ -216,6 +218,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
       const elementRecencyRows = results[5].status === "fulfilled" ? results[5].value || [] : [];
       const recentComps = results[6].status === "fulfilled" ? results[6].value || [] : [];
       const recentNotePages = results[7].status === "fulfilled" ? results[7].value || [] : [];
+      const scheduleLastWriteAt = results[8].status === "fulfilled" ? results[8].value : null;
       const openPursuits = pursuitsTable(groupProjectsByGroupId(siteRows), {});
       const pursuitSiteIds = [...new Set(openPursuits.map((p) => p.siteId).filter(Boolean))];
       const elementRows = await fetchElementsForSites(pursuitSiteIds).catch(() => []);
@@ -233,6 +236,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         comps: recentComps,
         notePages: recentNotePages,
         prevSnapshot: mark.snapshot,
+        scheduleLastWriteAt,
       });
       setSinceLastHere({ feed, headerSpan: spanWords(feed.spanAnchorMs, nowMs), now: nowMs });
       // Fire-and-forget: this visit's own mark for NEXT time. Never blocks dataReady — a failed
@@ -266,9 +270,9 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   const openSchedule = (p) => onNavigate?.({ module: "scheduler", projectId: p.linkedSiteId, cross: false, org: false });
   const openDoc = (d) => onOpenReviewInDocReview?.({ id: d.id, project_id: d.projectId });
   const openTask = (row) => onOpenTaskInScheduler?.({ linkedSiteId: row.linkedSiteId, taskId: row.taskId });
-  // B1366384 reuses this same handler for the "Since you were last here" card's comp-added rows —
-  // both cards hand it a full comp row, and this already knows how to route it (MapFinder's own
-  // effect switches to the Comps tab and highlights it once `focusCompId` arrives).
+  // Deep-links to the comp ITSELF: MapFinder's `focusCompId` effect opens the Comps tab with the
+  // panel on that comp — strictly more specific than landing on its plan. B1366384's "Since you
+  // were last here" card reuses this same handler for its comp-added rows.
   const openComp = (comp) => onOpenCompInSitePlanner?.({ compId: comp.id });
   // Empty-state "add one" — there's no specific comp to deep-link into yet, so this lands the
   // owner on the map/finder view, one click from the Comps tab (MapFinder's own toolbar).
@@ -325,6 +329,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         title={def.title}
         headerRight={entry.key === "sinceLastHere" ? sinceLastHere?.headerSpan : null}
         headerMeta={entry.key === "compsSummary" ? compsHeaderMeta : undefined}
+        headerRight={entry.key === "sinceLastHere" ? sinceLastHere?.headerSpan : null}
         customizing={customizing}
         showDragHandle={!isNarrow}
         onRemove={() => setLayout((l) => removeCard(l, entry.key))}

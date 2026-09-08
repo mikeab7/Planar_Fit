@@ -327,6 +327,16 @@ export default function Shell() {
     setCompIntent({ compId, token: Date.now() });
     navigate({ module: "site-planner", projectId: null, cross: false, org: false });
   };
+  // B1366384 — the Dashboard's "Since you were last here" card clicking through to the exact
+  // note a row describes. Same shape as openReviewInDocReview/openTaskInScheduler above: Notes
+  // isn't kept alive alongside the Dashboard, so the requested page is stashed here (token-stamped
+  // so a repeat click on the same note re-fires) and handed to Notes.jsx once it mounts.
+  const [noteIntent, setNoteIntent] = useState(null);
+  const openNoteInNotes = ({ pageId, projectId, orgScope } = {}) => {
+    if (pageId == null) return;
+    setNoteIntent({ pageId, token: Date.now() });
+    navigate({ module: "notes", projectId: projectId ?? null, cross: false, org: !!orgScope });
+  };
   // Cross-module schedule link (the Schedule + the Site Planner live in SEPARATE cloud backends
   // and can't read each other). When the embedded Schedule app reports a link set/created, mirror
   // the lightweight hint onto the Site Planner side so the Site dashboard can show "has a schedule"
@@ -724,6 +734,7 @@ export default function Shell() {
                     scheduleTaskIntent={scheduleTaskIntent}
                     noteIntent={noteIntent}
                     compIntent={compIntent}
+                    noteIntent={noteIntent}
                     onGoDashboard={goDashboard}
                     onNewProject={newProject}
                     onOpenReviewInDocReview={openReviewInDocReview}
@@ -794,6 +805,7 @@ export default function Shell() {
                   onOpenTaskInScheduler={openTaskInScheduler}
                   onOpenNoteInNotes={openNoteInNotes}
                   onOpenCompInSitePlanner={openCompInSitePlanner}
+                  onOpenNoteInNotes={openNoteInNotes}
                 />
               </Suspense>
             </ErrorBoundary>

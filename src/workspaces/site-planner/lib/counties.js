@@ -1301,9 +1301,20 @@ export const STATEWIDE_PARCEL_LAYER = TXGIO_STATEWIDE_LAYER;
  * Never a statewide PSEUDO-key (`txgio_statewide`/`co_statewide`) — those are excluded below. Pure. */
 /* NEW-5 — the optional `state` argument is what makes this safe across two states. Texas and
  * Colorado BOTH have an El Paso County and a Jefferson County, so an unqualified "El Paso" is
- * genuinely ambiguous. Called with no state (every existing caller — the TxDOT boundary layer only
- * ever names Texas counties) the behaviour is byte-identical to before: Texas keys only, and a
- * Colorado-only name still returns null. Pass a state to reach the Colorado keys. */
+ * genuinely ambiguous. Called with no state the behaviour is Texas keys only, and a Colorado-only
+ * name returns null. Pass a state to reach the Colorado keys.
+ *
+ * ⛔ NEW-1 (adversarial review, 2026-09-08) — CALLING THIS WITHOUT A STATE IS NOW A DEFECT, AND
+ * `test/countyStateQualifier.test.js` FAILS THE BUILD ON ONE. The note this replaces said the
+ * unqualified form was safe because "the TxDOT boundary layer only ever names Texas counties" —
+ * that stopped being true when `countyAtPoint` grew its offline floor (B209502), which answers
+ * from a NATIONAL roster of 3,144 counties across 51 states. Texas shares a county name with
+ * another state 200-plus times, so an unqualified "Montgomery", "Liberty", "Chambers" or "Harris"
+ * resolved a Pennsylvania, Georgia or Alabama point to the TEXAS key of that name — a comp
+ * labelled "Montgomery County, TX" in Norristown, and on a SITE that key also selects the drainage
+ * authority, the detention criteria and the setbacks. Every caller already holds the state
+ * (`countyAtPoint` and `resolveCounty` both return one); pass it. A name whose state has no
+ * configured county returns null, which is the honest answer, never a same-named guess. */
 export function countyKeyForName(name, state = null) {
   if (!name) return null;
   const slug = String(name).toLowerCase().replace(/\bcounty\b/g, "").replace(/\b(city|and|of)\b/g, "").replace(/[^a-z]/g, "");

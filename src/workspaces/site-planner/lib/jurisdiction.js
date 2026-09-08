@@ -1435,9 +1435,15 @@ export async function countyAtPoint(lng, lat, opts = {}) {
      * county line knows the answer is the simplified geometry's, not the state's. */
     const off = resolveCounty(lat, lng);
     if (off && off.status === "ok") {
-      const offMap = off.state === "CO" ? CO_COUNTY_NAME_TO_KEY : COUNTY_NAME_TO_KEY;
+      /* NEW-1 (adversarial review, 2026-09-08) — the name→key map is chosen by the ANSWER'S OWN
+       * state, and a state we have no registry for gets NO key rather than the Texas one. The
+       * offline floor is backed by a NATIONAL roster (3,144 counties, 51 states), so `!== "CO"`
+       * silently meant "look it up in Texas" for every one of the other 49 — the same
+       * name-without-a-state defect that let a Montgomery County PA comp read as Texas. A null key
+       * here is honest: outside TX/CO there is no configured county to route to. */
+      const offMap = off.state === "CO" ? CO_COUNTY_NAME_TO_KEY : off.state === "TX" ? COUNTY_NAME_TO_KEY : null;
       return {
-        name: off.name, key: offMap[off.name.toLowerCase()] || null,
+        name: off.name, key: offMap ? offMap[off.name.toLowerCase()] || null : null,
         fips: off.fips || null, state: off.state,
         source: "offline-geometry", nearEdge: !!off.nearEdge,
         ageMs: r.ageMs, error: r.error ? humanize(r.error) : null,

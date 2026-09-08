@@ -81,7 +81,8 @@ const rowById = (id) => tables.sites.find((r) => r.id === id) || null;
 
 const browser = await chromium.launch({ executablePath: EXEC, args: ["--no-sandbox", "--ignore-certificate-errors"] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
-await installStubSupabase(ctx, { tables, session, wire });
+const control = { failWrites: false };
+await installStubSupabase(ctx, { tables, session, wire, control });
 await ctx.addInitScript(seed);
 const page = await ctx.newPage();
 await assertMeasurable(page, "verify-signed-in-project-delete");
@@ -182,6 +183,30 @@ try {
   // Every plan in a multi-plan group is binned, not just the anchor row.
   ok("both plans of the two-plan project are soft-deleted (not just the anchor row)",
     !!(tables.sites.find((r) => r.id === "zzdel-a")?.deleted_at) && !!(tables.sites.find((r) => r.id === "zzdel-a2")?.deleted_at));
+
+  /* ⛔ A REJECTED DELETE (B1361683) — and an honest note about what this harness CANNOT prove.
+   *
+   * The property is that a delete the server refuses must leave the project in the local list. This
+   * harness can drive the refusal (`control.failWrites`) and confirm the row survives server-side,
+   * and it does so below. It CANNOT discriminate the two orderings through the UI, and that was
+   * measured, not assumed: with the old, broken ordering deliberately restored, every arm here —
+   * including "is it still in the picker" and "is it still there after a reload" — reads GREEN,
+   * because opening the picker runs `reconcileProjects()`, which re-pulls from the (still-serving)
+   * database and restores whatever the local erasure had just dropped. A check that passes on the
+   * defect is worse than no check, so it is not written here.
+   *
+   * Where the property IS observable, and mutation-proven in both directions, is
+   * `test/deleteConfirmedBeforeLocal.test.js` — including the leg that makes the real-world case
+   * dangerous: a rejected delete must leave NO durable tombstone, because a tombstone is exactly
+   * what stops that healing re-pull and turns "vanished" into "vanished for good". */
+  {
+    control.failWrites = true;
+    const r = await attemptDelete("zzdel-c", "a project whose cloud delete is REJECTED");
+    table.push({ id: "zzdel-c", ...r });
+    const rowAfter = tables.sites.find((x) => x.id === "zzdel-c");
+    ok("a REJECTED delete leaves the row alive in the database", !!rowAfter && !rowAfter.deleted_at);
+    control.failWrites = false;
+  }
 
   console.log("\n--- per-case table ---");
   for (const r of table) console.log(`  ${r.id.padEnd(9)} ${String(r.wrote).padStart(2)} soft-delete write(s) · deleted_at=${r.dbDeletedAt} · "${(r.dialog || "").slice(0, 60)}"`);
