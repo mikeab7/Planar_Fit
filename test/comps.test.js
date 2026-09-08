@@ -954,6 +954,70 @@ describe("comps: the cap triangle threaded through draft <-> comp <-> row", () =
   });
 });
 
+describe("comps: NEW-COMPS-CARD — clearHeightFt / yearBuilt (db/comps_building_specs.sql)", () => {
+  it("clear_height_ft / year_built round-trip through compToRow / rowToComp on a building sale", () => {
+    const row = compToRow({
+      compType: "building_sale", compDate: "2026-08-01", anchor: { kind: "pin", lat: 29.7, lon: -95.4 },
+      clearHeightFt: 32, yearBuilt: 2018,
+    });
+    expect(row.clear_height_ft).toBe(32);
+    expect(row.year_built).toBe(2018);
+
+    const comp = rowToComp({
+      id: "c1", user_id: "u1", team_id: null, project_id: null,
+      comp_type: "building_sale", comp_date: "2026-08-01", title: "", notes: "",
+      anchor_kind: "pin", lat: "29.7", lon: "-95.4", county: null, parcel_apn: null, parcel_geom: null,
+      land_price: null, land_size_value: null, land_size_unit: null,
+      bldg_price: null, bldg_size_sf: null, clear_height_ft: "32", year_built: "2018",
+      lease_rate: null, lease_rate_period: null, lease_rate_expense: null, lease_ti: null, lease_term: null,
+      lease_size_sf: null, lease_free_rent_months: null, comp_party_provider: null, comp_party_acquirer: null,
+      created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
+    });
+    expect(comp.clearHeightFt).toBe(32);
+    expect(comp.yearBuilt).toBe(2018);
+  });
+
+  it("round-trip on a lease comp too — a building-spec fact, not deal economics, applies regardless of comp type", () => {
+    const row = compToRow({
+      compType: "lease", compDate: "2026-08-01", anchor: { kind: "pin", lat: 29.7, lon: -95.4 },
+      clearHeightFt: 28.5, yearBuilt: 2005,
+    });
+    expect(row.clear_height_ft).toBe(28.5);
+    expect(row.year_built).toBe(2005);
+  });
+
+  it("compToRow sends null (never omits) when absent, matching every other optional field", () => {
+    const row = compToRow({ compType: "lease", compDate: "2026-08-01", anchor: { kind: "pin", lat: 29.7, lon: -95.4 } });
+    expect(row.clear_height_ft).toBeNull();
+    expect(row.year_built).toBeNull();
+  });
+
+  it("compToDraft/draftToComp/emptyDraft round-trip clearHeightFt/yearBuilt as strings, same shape as every other numeric field", () => {
+    expect(emptyDraft(null).clearHeightFt).toBe("");
+    expect(emptyDraft(null).yearBuilt).toBe("");
+    const draft = compToDraft({ id: "c1", compType: "building_sale", clearHeightFt: 32, yearBuilt: 2018 });
+    expect(draft.clearHeightFt).toBe("32");
+    expect(draft.yearBuilt).toBe("2018");
+    const comp = draftToComp({ ...emptyDraft(null), compType: "building_sale", compDate: "2026-08-01", clearHeightFt: "32", yearBuilt: "2018" });
+    expect(comp.clearHeightFt).toBe(32);
+    expect(comp.yearBuilt).toBe(2018);
+  });
+
+  it("compFieldRows shows Clear height and Year built on a building sale and a lease, and omits them when absent", () => {
+    const bldgRows = compFieldRows({ compType: "building_sale", compDate: "2026-08-01", clearHeightFt: 32, yearBuilt: 2018 });
+    expect(bldgRows.find((r) => r.key === "clearHeight").value).toBe("32 ft");
+    expect(bldgRows.find((r) => r.key === "yearBuilt").value).toBe("2018");
+
+    const leaseRows = compFieldRows({ compType: "lease", compDate: "2026-08-01", clearHeightFt: 28.5, yearBuilt: 2005 });
+    expect(leaseRows.find((r) => r.key === "clearHeight").value).toBe("28.5 ft");
+    expect(leaseRows.find((r) => r.key === "yearBuilt").value).toBe("2005");
+
+    const bare = compFieldRows({ compType: "building_sale", compDate: "2026-08-01" });
+    expect(bare.map((r) => r.key)).not.toContain("clearHeight");
+    expect(bare.map((r) => r.key)).not.toContain("yearBuilt");
+  });
+});
+
 describe("comps: NEW-5 — Executed date optional, Date entered fallback (owner decision 2026-09-02)", () => {
   it("todayIso returns today's date as YYYY-MM-DD, matching the app's own ISO storage format", () => {
     const iso = todayIso();
