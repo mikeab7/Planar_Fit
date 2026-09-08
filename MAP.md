@@ -1,6 +1,6 @@
 # MAP.md — Planyr codebase map
 
-> **Generated 2026-09-07 @ `f593570c` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
+> **Generated 2026-09-08 @ `1c29b9c8` by `scripts/build-map.mjs` — do not hand-edit the inventory.**
 > This file is committed so project-knowledge sync indexes it and a session can orient without
 > cold-searching the repo. Each entry: **path** — one-line responsibility, then its exported symbols.
 >
@@ -15,7 +15,7 @@
 > iframe), **Doc Review**, **Library**. `/server` is listed as folder structure only (below) —
 > never its contents or secrets.
 
-_713 source files mapped._
+_714 source files mapped._
 
 ## infra
 
@@ -604,6 +604,8 @@ _713 source files mapped._
   - _exports_: `default (AppHeader)`, `exitFs`, `fsElement`, `fsSupported`, `MODULE_ACCENT`, `requestFs`, `useNarrow`
 - **`src/shared/ui/bottomSheetTracker.js`** — Module-scope publish/subscribe signal: the open mobile bottom sheet's live height, so a FloatingNotice can sit above it instead of under or over it
   - _exports_: `currentBottomSheetHeight`, `publishBottomSheetHeight`, `subscribeBottomSheetHeight`, `useBottomSheetHeight`
+- **`src/shared/ui/chromeDock.js`** — Registry letting the map/site-planner canvas claim the global Help/Report control as its own furniture (portal target) instead of separate fixed-viewport chrome
+  - _exports_: `activeChromeDock`, `registerChromeDock`
 - **`src/shared/ui/clickDiag.js`** — B1066370 self-instrumenting click diagnostic: a capture-phase listener flags a press with no matching click within a short window, so a "worked on the second click" report captures itself when the owner hits it live
   - _exports_: `describeSuspect`, `installClickDiag`, `labelFor`
 - **`src/shared/ui/CloudSyncBadge.jsx`** — App-wide cloud-sync glyph driven by real saveState (synced/saving/offline/readonly/error/local); loud never-vanish error via crash boundary + retry popover

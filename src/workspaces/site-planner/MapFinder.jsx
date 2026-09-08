@@ -51,6 +51,8 @@ import { siteState } from "./lib/siteRegion.js";
 // z-index 1000; these panels sat at 1000 too, so whether the zoom buttons and the scale bar
 // covered them came down to document order. An open panel now outranks map chrome outright.
 import { MAP_CHROME_Z, panelMaxHeight, ZOOM_CONTROL_CLEARANCE_PX, MAP_OVERLAY_TOP_PX, MAP_OVERLAY_CHIP_H_PX, MAP_OVERLAY_BAR_H_PX } from "./lib/mapChromeStack.js";
+import { registerChromeDock } from "../../shared/ui/chromeDock.js";
+import { cornerClearanceFromBottom } from "../../shared/ui/cornerClearance.js";
 // B848496 — site-plan overlays (upload a site plan, place it on the map, pin comps to it).
 import { useSitePlanOverlayLayers } from "./lib/useSitePlanOverlayLayers.js";
 import { latLonToImagePoint, suggestFtPerPx, feetBetween } from "../../shared/sitePlans/lib/overlayGeoref.js";
@@ -900,6 +902,27 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     const on = () => setNarrow(mq.matches);
     mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
     return () => { mq.addEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
+  }, []);
+
+  /* NEW-B# (owner, 2026-09-07) — "the help/report button ... should be on the map when it is on
+   * the site plan or the map". Dock anchor (shared/ui/chromeDock.js) stacked directly above
+   * Leaflet's own bottom-right control container (attribution + graphic scale) — reusing the
+   * exact `cornerClearanceFromBottom` measurement HelpReportControl.jsx would otherwise apply to
+   * itself as `position:fixed`, just applied to a `position:absolute` node INSIDE this map pane
+   * instead, so the control becomes real furniture belonging to the map (portaled in) rather
+   * than a Shell-level fixed-viewport sibling. Re-measures on mount/resize/orientationchange and
+   * a cheap poll (same cadence as HelpReportControl's own — a couple of `getBoundingClientRect`
+   * reads, no MutationObserver, which would fire on every pan/zoom frame). */
+  const mapHelpDockRef = useRef(null);
+  const [mapHelpDockBottom, setMapHelpDockBottom] = useState(14);
+  useEffect(() => registerChromeDock("map", mapHelpDockRef.current), []);
+  useLayoutEffect(() => {
+    const measure = () => setMapHelpDockBottom(cornerClearanceFromBottom({ right: 14, width: 44, base: 14 }));
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("orientationchange", measure);
+    const id = setInterval(measure, 500);
+    return () => { window.removeEventListener("resize", measure); window.removeEventListener("orientationchange", measure); clearInterval(id); };
   }, []);
   // Sites panel: collapsible (persisted) + per-row hover-reveal of the crosshair/delete actions (B106).
   // On a phone it defaults CLOSED (owner request) so the map isn't buried under the list on open.
@@ -3002,6 +3025,14 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
           the wrapper Leaflet mounts into, matching the fix in the Site Planner's own canvas. */}
       <div style={{ position: "relative", flex: 1, minHeight: 0, touchAction: "none", overscrollBehavior: "none" }}>
         <div ref={elRef} style={{ position: "absolute", inset: 0 }} />
+
+        {/* NEW-B# — dock anchor for the global Help/Report control (chromeDock.js). Stacked
+            directly above Leaflet's own bottom-right corner (attribution + graphic scale); see
+            the mapHelpDockRef effect above for the measurement. HelpReportControl portals its
+            own 44×44 button in here on its own terms when this map is the active route. */}
+        <div data-canvas-dock-slot="map" style={{ position: "absolute", right: 14, bottom: mapHelpDockBottom, zIndex: MAP_CHROME_Z.control }}>
+          <div ref={mapHelpDockRef} data-canvas-dock="map" />
+        </div>
 
         {/* B831781 (NEW-6) — A PERSISTENT MODE NEEDS A VISIBLE ARMED STATE. With Comp mode active
             and an add-action armed (a raw click is about to either drop a comp pin or pick a

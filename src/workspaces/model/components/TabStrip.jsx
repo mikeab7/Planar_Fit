@@ -214,6 +214,12 @@ const TabStrip = forwardRef(function TabStrip({ sheets, activeSheetId, onSelect,
       <button
         type="button"
         data-testid="model-add-sheet"
+        // B1239217 — registers with the shared help/report control's corner-avoidance contract
+        // (shared/ui/cornerClearance.js's `[data-canvas-corner]` scan) so that fixed control
+        // clears this button instead of intercepting its click at short viewport heights. This
+        // button is in normal document flow, not `position:fixed` — cornerClearance measures the
+        // real rendered rect either way, so no positioning change was needed here, only the mark.
+        data-canvas-corner="model-add-sheet"
         onClick={onAdd}
         title="Add sheet"
         aria-label="Add sheet"

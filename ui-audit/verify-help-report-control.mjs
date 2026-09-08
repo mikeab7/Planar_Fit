@@ -92,6 +92,19 @@
  *               `visualViewport` behavior. Nothing here should be read as "confirmed on an
  *               iPhone."
  *
+ * ⛔ NEW-B# (owner, 2026-09-07/08) — PART H is a NEW, GENERIC per-route sweep: "does the control's
+ * box intersect ANY interactive element's box" at every named route's idle state, narrow + wide —
+ * not the hand-picked occupant list PART A already checks. It exists because B1239217 (the Model
+ * workspace's "+ Add sheet" tab-strip button) was never on that list and went unnoticed for a
+ * whole session; see PART H's own header comment for why it is scoped to each route's IDLE state
+ * (a deliberately-opened panel like Comps' entry grid correctly outranks the control by z-index,
+ * which a bbox-only sweep can't tell from a real collision). Same owner dispatch also moved the
+ * control's placement on the MAP and SITE PLANNER routes off `position:fixed` entirely — it now
+ * docks (via `shared/ui/chromeDock.js`) as real furniture inside each pane, portaled in when a
+ * dock is registered; PART A's assertions about clearing specific occupants there still hold
+ * (the docked button still never overlaps the zoom stack / Leaflet controls / the ✎ Tools FAB, by
+ * construction of where the dock anchor sits), they just no longer describe `position:fixed` math.
+ *
  *   node ui-audit/verify-help-report-control.mjs [--url http://localhost:4173/] [--shots]
  */
 import { chromium, webkit, devices } from "playwright";
@@ -162,11 +175,17 @@ try {
   // "chromeFree" routes carry NOTHING that could occupy the bottom-right corner — no Leaflet map,
   // no Site Planner canvas — so a control measuring correctly must sit close to the true corner
   // there. This is the assertion that fails outright against the old 292px constant.
+  // ⛔ NEW-B# (owner, 2026-09-07) — "docked" routes (map + plan) are DELIBERATELY no longer
+  // chrome-free at all: the control now rides the map/canvas chrome stack (chromeDock.js) instead
+  // of floating at the true viewport corner, so on desktop it sits beside the zoom stack / the
+  // Leaflet corner — genuinely further from the true edge than before, which is the ARCHITECTURE
+  // change, not a regression. `plan@1440` therefore drops its old `chromeFree` claim; `docked`
+  // scenes get their own assertion below (same row as the reference furniture) instead.
   const SCENES = [
-    { mode: "map", width: 1440, label: "map@1440" },
-    { mode: "map", width: 390, label: "map@390" },
-    { mode: "plan", width: 1440, label: "plan@1440", chromeFree: true }, // desktop: canvas furniture is inset off the true corner
-    { mode: "plan", width: 390, label: "plan@390" },
+    { mode: "map", width: 1440, label: "map@1440", docked: true },
+    { mode: "map", width: 390, label: "map@390", docked: true },
+    { mode: "plan", width: 1440, label: "plan@1440", docked: true },
+    { mode: "plan", width: 390, label: "plan@390", docked: true },
     { mode: "schedule", width: 1440, label: "schedule@1440", chromeFree: true },
     { mode: "model", width: 1440, label: "model@1440", chromeFree: true },
   ];
@@ -180,9 +199,11 @@ try {
     const { ctx, page } = await openScreen(scene);
     const data = await page.evaluate(() => {
       const rectOf = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; };
+      const fabEl = document.querySelector('[data-testid="help-report-fab"]');
       return {
         viewportH: window.innerHeight,
-        fab: rectOf(document.querySelector('[data-testid="help-report-fab"]')),
+        fab: rectOf(fabEl),
+        docked: fabEl ? fabEl.getAttribute("data-docked") === "1" : false,
         leafletZoom: rectOf(document.querySelector(".leaflet-control-zoom")),
         leafletAttr: rectOf(document.querySelector(".leaflet-control-attribution")),
         leafletScale: rectOf(document.querySelector(".leaflet-control-scale")),
@@ -214,6 +235,14 @@ try {
     if (scene.chromeFree && data.fab) {
       const distanceFromBottom = data.viewportH - data.fab.b;
       check(`${scene.label}: sits close to the true bottom-right corner (no chrome to clear here)`, distanceFromBottom <= SMALL_CLEARANCE_PX, `${Math.round(distanceFromBottom)}px from the bottom edge (would be 292 - fab height against the old constant)`);
+    }
+    // NEW-B# — on the map/plan routes the control is no longer `position:fixed` chrome at all;
+    // it's portaled into the route's own chrome-stack dock (chromeDock.js) and rendered
+    // `position:static`. `data-docked="1"` is the direct, load-bearing proof of that — a build
+    // that regresses to the old always-fixed placement fails this outright (see the mutation
+    // proof in this item's own PR body / session notes).
+    if (scene.docked) {
+      check(`${scene.label}: the control is DOCKED (portaled into the route's own chrome stack), not position:fixed`, data.docked === true, `data-docked=${data.docked}`);
     }
     if (SHOTS) await page.screenshot({ path: `${OUT}/${scene.label}.png` }).catch(() => {});
     await ctx.close();
@@ -597,6 +626,134 @@ try {
     const afterSubmit = await page.evaluate(() => window.pfRec.state().sent);
     check("submitting \"Report a problem\" does NOT take a second capture either — same frozen one", afterSubmit === afterOpen, `${afterOpen} -> ${afterSubmit}`);
     await ctx.close();
+  }
+
+  // ─────────────────────────────────────────── PART H — GENERIC intersection sweep, every named
+  // route, narrow + wide (owner dispatch, 2026-09-08: "audit EVERY route ... the control's box
+  // does not intersect any interactive element's box"). Unlike PART A's hand-picked occupant list
+  // (Leaflet controls, the canvas furniture, the ✎ Tools FAB), this sweep is GENERIC — every
+  // visible button/link/input/select/[role=button] on the page, at each route's IDLE (default)
+  // state — so it catches a class of collision no hand-picked list would. This is exactly how
+  // B1239217 (the Model workspace's own "+ Add sheet" tab-strip button) went unnoticed for a full
+  // session: it was never on any prior harness's occupant list. Deliberately scoped to the IDLE
+  // state of each route — no deliberately-opened panel (Comps' entry grid, the phone Properties
+  // bottom sheet) — those correctly OUTRANK the control by z-index once open (mapChromeStack.js's
+  // own "a panel the user opened wins" rule; the map/plan dock's low `MAP_CHROME_Z.control`
+  // z-index makes this automatic on those two routes now) and a bbox-only sweep taken while one is
+  // open would false-positive on that intended coverage — verified separately by source/z-index
+  // reading, recorded in this item's own PR body rather than reproduced live here.
+  console.log("\nPART H — GENERIC: the control's box does not intersect ANY interactive element's box, every named route, narrow + wide");
+  {
+    const modelSiteId = "verify-hrc-model";
+    const modelSite = {
+      id: modelSiteId, groupId: modelSiteId, site: "ZZ Help/Report verify (throwaway)", name: "ZZ Help/Report verify (throwaway)",
+      origin: null, county: "harris", parcels: [], els: [], markups: [], measures: [], callouts: [],
+      settings: {}, underlay: null, parcelDrawings: [], updatedAt: Date.now(),
+    };
+    const seedModelSite = `(() => { try { localStorage.setItem('planarfit:sites:v1', JSON.stringify({ ${JSON.stringify(modelSiteId)}: ${JSON.stringify(modelSite)} })); } catch (e) {} })();`;
+
+    // Slugs from src/app/route.js's SLUG_BY_MODULE — do not guess these, they've drifted before
+    // (B1231282, this same file's own header).
+    const ROUTES = [
+      { label: "map", hash: "#/site", wait: ".leaflet-container" },
+      { label: "plan", hash: "#/project/s_help/site", wait: 'svg[aria-label="Site plan canvas"]', seedPlan: true },
+      { label: "schedule", hash: "#/schedule", wait: null },
+      { label: "model", hash: `#/project/${modelSiteId}/model`, wait: '[data-testid="model-sheet"]', seedModel: true },
+      { label: "doc-review", hash: "#/markup", wait: null },
+      { label: "library", hash: "#/library", wait: null },
+      { label: "notes", hash: "#/notes", wait: null },
+      { label: "dashboard", hash: "#/", wait: null },
+    ];
+    const WIDTHS = [1440, 390];
+
+    for (const route of ROUTES) {
+      for (const width of WIDTHS) {
+        const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+        if (route.seedPlan) await ctx.addInitScript(seedPlan);
+        if (route.seedModel) await ctx.addInitScript(seedModelSite);
+        const page = await ctx.newPage();
+        await assertMeasurable(page, "verify-help-report-control");
+        await page.goto(URL + route.hash, { waitUntil: "load" });
+        if (route.wait) await page.waitForSelector(route.wait, { timeout: 15000 }).catch(() => {});
+        await page.waitForSelector('[data-testid="help-report-fab"]', { timeout: 15000 }).catch(() => {});
+        await pacedWait(page, 1000);
+
+        const data = await page.evaluate(() => {
+          const rectOf = (el) => { const r = el.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; };
+          const fab = document.querySelector('[data-testid="help-report-fab"]');
+          if (!fab) return { fab: null, hits: [] };
+          const fabRect = fab.getBoundingClientRect();
+          const isVisible = (el) => {
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) return false;
+            const cs = getComputedStyle(el);
+            return cs.visibility !== "hidden" && cs.display !== "none" && Number(cs.opacity || "1") > 0;
+          };
+          // Exclude generic full-surface containers — the Leaflet map container and the Model
+          // workspace's own sheet grid (`model-sheet`, a single roving-tabindex host for keyboard
+          // grid nav, not a discrete control) both span nearly their whole route/pane. A bbox
+          // "overlap" with something that big is meaningless — the FAB is a small button floating
+          // ON TOP of the map/canvas/sheet surface BY DESIGN everywhere in this app (confirmed
+          // live on the Model route: it sits over two blank grid cells in the last visible column,
+          // no data, no control — the same relationship it already has with the Leaflet map and
+          // the Site Planner canvas on every other route).
+          const interactive = Array.from(document.querySelectorAll('button, a[href], input, select, textarea, [role="button"], [tabindex]:not([tabindex="-1"])'))
+            .filter((el) => el !== fab && !fab.contains(el) && isVisible(el)
+              && !el.classList.contains("leaflet-container")
+              && el.getAttribute("data-testid") !== "model-sheet");
+          // getBoundingClientRect() ignores ancestor CLIPPING — a scrollable list's row scrolled
+          // below its own visible scrollport (e.g. a Layers-panel legend row past the fold) still
+          // reports its full, real layout rect even though nothing of it is actually painted on
+          // screen there (measured live: exactly this shape on the map route's Layers panel,
+          // which is open by default on desktop). Intersect the candidate's rect down through
+          // every `overflow:auto/hidden/scroll` ancestor's own visible box; a candidate clipped to
+          // nothing is not really on screen and is not a real collision.
+          const visibleRect = (el) => {
+            let rect = el.getBoundingClientRect();
+            let node = el.parentElement;
+            while (node && node !== document.body) {
+              const cs = getComputedStyle(node);
+              if (/(auto|hidden|scroll)/.test(cs.overflow + cs.overflowX + cs.overflowY)) {
+                const nr = node.getBoundingClientRect();
+                const l = Math.max(rect.left, nr.left), t = Math.max(rect.top, nr.top);
+                const r2 = Math.min(rect.right, nr.right), b = Math.min(rect.bottom, nr.bottom);
+                if (r2 <= l || b <= t) return null; // fully clipped away — not on screen
+                rect = { left: l, top: t, right: r2, bottom: b };
+              }
+              node = node.parentElement;
+            }
+            return rect;
+          };
+          const hits = [];
+          for (const el of interactive) {
+            const r = visibleRect(el);
+            if (!r) continue;
+            const ox = Math.max(0, Math.min(fabRect.right, r.right) - Math.max(fabRect.left, r.left));
+            const oy = Math.max(0, Math.min(fabRect.bottom, r.bottom) - Math.max(fabRect.top, r.top));
+            if (ox <= 0 || oy <= 0) continue;
+            // A bounding-box overlap alone can be a false positive: a scrollable panel's OWN
+            // clipped-out-of-view content (e.g. a legend row scrolled below its list's visible
+            // area) still reports a real getBoundingClientRect() even though nothing is painted
+            // there. The real question is a HIT-TEST one: at the overlap's own center, does the
+            // control (or a descendant of it) actually intercept the press meant for this other
+            // element — the literal B1239217 mechanism? A genuinely higher-z panel legitimately
+            // winning there (mapChromeStack.js's "an opened panel wins" rule) is not a defect
+            // either, so only "the FAB wins where it should not" counts.
+            const ovL = Math.max(fabRect.left, r.left), ovT = Math.max(fabRect.top, r.top);
+            const ovR = Math.min(fabRect.right, r.right), ovB = Math.min(fabRect.bottom, r.bottom);
+            const cx = (ovL + ovR) / 2, cy = (ovT + ovB) / 2;
+            const hitEl = document.elementFromPoint(cx, cy);
+            const fabWinsHere = !!(hitEl && (hitEl === fab || fab.contains(hitEl)));
+            if (!fabWinsHere) continue;
+            hits.push({ tag: el.tagName, testid: el.getAttribute("data-testid"), label: (el.getAttribute("aria-label") || el.textContent || "").trim().slice(0, 40), rect: { l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom) } });
+          }
+          return { fab: rectOf(fab), hits };
+        });
+        check(`${route.label}@${width}: FAB present`, !!data.fab, data.fab ? "" : "missing — route wiring or seed problem");
+        check(`${route.label}@${width}: no interactive element's box intersects the control's box`, data.hits.length === 0, data.hits.length ? JSON.stringify(data.hits) : "");
+        await ctx.close();
+      }
+    }
   }
 
   const failed = results.filter((r) => !r.ok);

@@ -1359,6 +1359,11 @@ const SheetView = forwardRef(function SheetView({
       {onZoomChange && (
         <div
           data-testid="model-zoom-control"
+          // NEW-B# — registers with the shared help/report control's corner-avoidance contract
+          // (shared/ui/cornerClearance.js's `[data-canvas-corner]` scan), the same fix B1239217
+          // applied to this workspace's "+ Add sheet" tab-strip button — this fixed bottom-right
+          // zoom bar was the other, previously-unregistered occupant of the same corner.
+          data-canvas-corner="model-zoom-control"
           style={{
             position: "fixed", bottom: 12 + TAB_STRIP_HEIGHT, right: 16, zIndex: 20,
             display: "flex", alignItems: "center", gap: 2, padding: 3,

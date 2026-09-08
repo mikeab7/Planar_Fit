@@ -164,6 +164,27 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V956256 — B1321888: the Help/Report control rides the map/site-planner chrome stack instead of floating over it, and stays out of the way on every other route `Blocker: live-GIS`-shaped (not GIS specifically)
+
+**Why this needs its own real pass.** Everything reachable without a live deployed page was already driven headlessly this session — 111/111 checks in `ui-audit/verify-help-report-control.mjs` (PART A + the new PART H) across all 10 named routes at a desktop and a phone width, against a real local production-mode build, plus a mutation proof (reverting the two Model-route fixes turns the guard red, naming the exact offenders). What can only be confirmed against the real deployed app: Chromium in this sandbox cannot reach `planyr.io` at all (`net::ERR_CONNECTION_RESET`, the same wall every prior Help/Report item on this file hit) — so nothing here can confirm the DEPLOYED bundle reads this way, or how the control looks/behaves on a real iPhone (this sandbox has no launchable WebKit either — PART F's iPhone-class checks ran on Chromium under real device descriptors instead, per this repo's standing three-tier honesty note).
+
+**What was verified here (this session, against a real local production build, never simulated).**
+1. On the MAP and SITE PLANNER routes, the control is genuinely DOCKED — a real portal into a DOM node inside each route's own furniture layer (`data-docked="1"`), `position:"static"`, not `position:"fixed"` — at both a desktop and a phone width.
+2. Across all 10 named routes (map, plan, schedule, model, doc review, comps, library, notes, dashboard, the phone bottom sheet — the last two by source/z-index reading, the other eight driven live), no interactive element's box is actually EATEN by the control (a real `elementFromPoint` hit-test at each overlap, not bounding-box guesswork alone).
+3. Two previously-unregistered bottom-right occupants on the Model route — the "+ Add sheet" tab-strip button (B1239217) and the workspace's own zoom-control bar — are now registered and clear correctly.
+4. Mutation-proven: reverting those two fixes and rebuilding turns the new guard RED, naming all three real offenders by testid; restoring turns it green again.
+5. `npx vitest run` — 774 files / 15,655 tests, all green. `npm run lint` clean. `npm run build` clean. `node ui-audit/design-drift-audit.mjs --check` passed (ceiling unchanged).
+
+**Steps, each with a named expected result — on `planyr.io`, any account (this control needs no sign-in), network tab / DevTools open:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Open the map (no project selected). **Expect:** the "?" Help/Report button sits near the map's own zoom/scale corner, moving with the map pane rather than floating detached from it; a real DOM inspection of the button shows it is a descendant of the map's own component tree, not a direct child of the app shell.
+3. Open a site plan (the drawing canvas). **Expect:** the same button sits beside the canvas's own zoom stack (+/−/⤢), inside the canvas pane.
+4. Visit Schedule, Model, Doc Review, Library, Notes, and the Dashboard in turn. **Expect:** the button floats at the ordinary bottom-right corner on each, never overlapping that route's own controls (on Model specifically: the sheet-tab "+" button and the zoom bar are both fully clickable at a short window height).
+5. On an iPhone (real device or Safari's own device emulation, not just a narrow desktop window): repeat steps 2–4. **Expect:** the button stays a real 44×44 tap target, inside the safe area, never under the home indicator, with its popover menu never clipped off-screen.
+6. Open Comps' paste-in entry grid (or, on a phone, the site plan's Properties bottom sheet) with something selected. **Expect:** that panel fully covers/wins over the Help/Report button wherever they'd overlap — the button never draws on top of the panel's own fields or buttons.
+
+**Result:** ⏳ pending — needs a real signed-in-or-out browser session on production (and ideally a real iPhone) to confirm the deployed bundle and a physical device match what the local build proved; not reachable from this sandbox. `Cadence: once`.
+
 ### V942464 — B1303824: deleting a project through the product UI actually issues the soft-delete write, on the owner's own two real stuck projects `Blocker: auth` `Blocker: real-data`
 
 **Why this needs its own real pass.** The bug only manifests against a real, signed-in, RLS-scoped Supabase account whose local browser cache is missing the project being deleted — this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can reproduce or confirm the actual network write landing. The FIX ITSELF — `storage.js`'s `deleteSiteGroup` falling back to a new `cloudSync.cloudDeleteGroup` whenever the local plan list is empty — is proven end to end against a real mocked Supabase client (`test/deleteSiteGroupCloudFallback.test.js`), including a red-proof (reverting the fix reproduces the exact `removed:0`-with-no-write shape the owner measured live).

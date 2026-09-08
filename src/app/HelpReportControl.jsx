@@ -20,6 +20,21 @@
  * true viewport edge by the docked tool rail on desktop and stacks the "✎ Tools" FAB at
  * `right:12,bottom:16` on narrow screens).
  *
+ * ⛔ NEW-B# (owner, 2026-09-07) — ON THE MAP AND THE SITE PLANNER, THIS CONTROL NOW RIDES THAT
+ * SAME CANVAS/MAP CHROME STACK INSTEAD OF FLOATING SEPARATELY OVER IT. Owner, verbatim: "it is
+ * also in the wrong place. It should be on the map when it is on the site plan or the map."
+ * `shared/ui/chromeDock.js` is the mechanism: MapFinder.jsx and SitePlanner.jsx each mount a
+ * small dock-anchor DOM node inside their own furniture layer (stacked directly with the zoom
+ * stack / Leaflet's scale+attribution corner) and register it; this control checks
+ * `activeChromeDock()` on the same measurement pass as the corner math above and, when a dock is
+ * active, PORTALS its button into it (`position:"static"`, real DOM child of that pane) instead
+ * of rendering `position:"fixed"`. Everywhere else — schedule, model, doc review, comps, library,
+ * notes, dashboard, the phone bottom sheet — the ordinary fixed-corner + cornerClearance behavior
+ * above is unchanged; the owner did not ask for the control to disappear anywhere, only to stop
+ * being in the way. Folded into the same item: B1239217 (the Model workspace's "+ Add sheet"
+ * tab-strip button, registered with `data-canvas-corner="model-add-sheet"` below so the floating
+ * control clears it there too).
+ *
  * ⛔ B966700 (owner report, 2026-09-05) — THE BOTTOM OFFSET WAS A CONSTANT (292px), SIZED TO
  * CLEAR THE TALLEST THING THAT COULD EVER OCCUPY THIS CORNER, RESERVED ON EVERY ROUTE WHETHER
  * THAT THING WAS THERE OR NOT. Measured on production: byte-identical `bottom:292` on the map
@@ -113,12 +128,14 @@
  * "open, then one more tap," never "open, navigate, then tap."
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import AnchoredMenu from "../shared/ui/AnchoredMenu.jsx";
 import { MenuItem } from "../shared/ui/controls.jsx";
 import { RADIUS } from "../shared/ui/radius.js";
 import { FONT_SIZE } from "../shared/ui/designTokens.js";
 import { cornerClearanceFromBottom } from "../shared/ui/cornerClearance.js";
 import { safeAreaInsets } from "../shared/ui/safeAreaInsets.js";
+import { activeChromeDock } from "../shared/ui/chromeDock.js";
 import { requestPerfCapture, perfCaptureDelivery, perfRecorderArmed } from "../shared/telemetry/perfRecorderHandle.js";
 import { SUPPRESSED_AUTOMATED } from "../shared/telemetry/clientErrors.js";
 import { buildReportContext, submitReport, queuedReportCount } from "../shared/reports/reportsStore.js";
@@ -164,11 +181,19 @@ export default function HelpReportControl({ user }) {
   const [cap, setCap] = useState(null);
   const [fabRight, setFabRight] = useState(FAB_RIGHT);
   const [fabBottom, setFabBottom] = useState(FAB_RIGHT);
+  // NEW-B# (owner, 2026-09-07) — "it should be on the map when it is on the site plan or the
+  // map." `dockEl`, when non-null, is a small DOM node INSIDE that route's own canvas/map pane
+  // (registered via shared/ui/chromeDock.js) that this control portals its button into — real
+  // furniture belonging to the pane, not `position:fixed` app chrome — instead of the ordinary
+  // fixed-corner placement every other route still gets. Re-checked on the SAME poll/resize
+  // cadence as the corner math below (one measurement pass, not two intervals).
+  const [dockEl, setDockEl] = useState(null);
 
   useEffect(() => { setQueued(queuedReportCount()); }, [open]);
 
   useLayoutEffect(() => {
     const measure = () => {
+      setDockEl(activeChromeDock());
       // Fold the real safe-area inset into the offsets BEFORE the occupant-overlap math runs
       // (never a CSS-only calc() — see this file's B1176480 header note for why the overlap
       // check needs the inset as a number).
@@ -278,35 +303,58 @@ export default function HelpReportControl({ user }) {
     : slowNote === "fail" ? "Couldn't record — try again in a moment"
     : null;
 
+  const fab = (
+    <button
+      ref={anchorRef}
+      type="button"
+      data-testid="help-report-fab"
+      data-docked={dockEl ? "1" : undefined}
+      aria-label="Help and report a problem"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      onClick={toggleOpen}
+      style={
+        dockEl
+          // Docked (map / site planner) — real furniture inside the pane's own DOM, positioned
+          // by its dock anchor's parent, not by this control. Same size/shape/tap-target as the
+          // floating case (never shrunk to match the canvas's own 30px zoom-stack rows — see
+          // this control's B1176976 header note on the deliberate 44×44 minimum).
+          ? {
+              // No boxShadow here (deliberately unlike the zoom-stack's own container) — this
+              // control is docked as its own furniture item, not merged into that bordered box,
+              // and the floating case below never had one either; adding a new raw color literal
+              // for a shadow here would be exactly the DESIGN.md drift this repo's own
+              // design-drift-audit gate exists to catch (measured: it does).
+              position: "static", width: FAB_SIZE, height: FAB_SIZE, borderRadius: RADIUS.md,
+              border: "1px solid var(--border-strong)", background: "var(--surface-raised)",
+              color: "var(--text-primary)", display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", padding: 0, font: "inherit", fontSize: FONT_SIZE.control,
+            }
+          : {
+              position: "fixed", right: fabRight, bottom: fabBottom, zIndex: Z_FAB,
+              width: FAB_SIZE, height: FAB_SIZE, borderRadius: RADIUS.md,
+              border: "1px solid var(--border-strong)", background: "var(--surface-raised)",
+              color: "var(--text-primary)", display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", padding: 0, font: "inherit", fontSize: FONT_SIZE.control,
+            }
+      }
+    >
+      <QuestionIcon />
+      {queued > 0 && (
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute", top: -2, right: -2, width: 9, height: 9, borderRadius: RADIUS.pill,
+            background: "var(--warn-text)", border: "1.5px solid var(--surface-raised)",
+          }}
+        />
+      )}
+    </button>
+  );
+
   return (
     <>
-      <button
-        ref={anchorRef}
-        type="button"
-        data-testid="help-report-fab"
-        aria-label="Help and report a problem"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={toggleOpen}
-        style={{
-          position: "fixed", right: fabRight, bottom: fabBottom, zIndex: Z_FAB,
-          width: FAB_SIZE, height: FAB_SIZE, borderRadius: RADIUS.md,
-          border: "1px solid var(--border-strong)", background: "var(--surface-raised)",
-          color: "var(--text-primary)", display: "flex", alignItems: "center", justifyContent: "center",
-          cursor: "pointer", padding: 0, font: "inherit", fontSize: FONT_SIZE.control,
-        }}
-      >
-        <QuestionIcon />
-        {queued > 0 && (
-          <span
-            aria-hidden="true"
-            style={{
-              position: "absolute", top: -2, right: -2, width: 9, height: 9, borderRadius: RADIUS.pill,
-              background: "var(--warn-text)", border: "1.5px solid var(--surface-raised)",
-            }}
-          />
-        )}
-      </button>
+      {dockEl ? createPortal(fab, dockEl) : fab}
 
       <AnchoredMenu open={open} onClose={closeAll} anchorRef={anchorRef} placement="above-left" width={280} zIndex={Z_MENU}>
         {view === "menu" && (
