@@ -3,6 +3,7 @@ import {
   recordSourceResult, isSourceOpen, sourceCooldownMs, filterHealthyCandidates,
   resetSourceHealth, isStatewideBackup, SOURCE_FAIL_THRESHOLD, SOURCE_COOLDOWN_MS,
 } from "../src/workspaces/site-planner/lib/sourceHealth.js";
+import { STATEWIDE_KEYS } from "../src/workspaces/site-planner/lib/counties.js";
 
 // The per-source circuit breaker (B244): after N consecutive failures a county's
 // parcel server is skipped for a cooldown so clicks stop re-hammering a dead host,
@@ -52,6 +53,25 @@ describe("sourceHealth — parcel-server circuit breaker (B244)", () => {
     const cands = [{ county: "harris", url: "u1" }, { county: "txgio_statewide", url: "u2" }];
     const out = filterHealthyCandidates(cands, ["txgio_statewide"], 1000);
     expect(out.map((c) => c.county)).toEqual(["harris", "txgio_statewide"]);
+  });
+
+  it("NEW-1 (2026-09-08) — a brand-new state's statewide source survives its own outage exactly like txgio_statewide does, via the real STATEWIDE_KEYS list, never a hand-typed one", () => {
+    // Mutation-prove one of the 19 states NEW-1 wired (docs/STATEWIDE-PARCELS.md): the outage
+    // path is REUSED, not reimplemented, so this must hold with zero per-state code. Arkansas is
+    // picked because its host (gis.arkansas.gov) is a REAL, confirmed outage from this build
+    // environment's own egress policy — the same "genuine outage, not simulated" standing
+    // e2e/parcel-outage-fallback.spec.js already established for county-level sources.
+    expect(STATEWIDE_KEYS).toContain("ar_statewide");
+    const t = 1000;
+    for (let i = 0; i < SOURCE_FAIL_THRESHOLD; i++) recordSourceResult("ar_statewide", false, t);
+    expect(isSourceOpen("ar_statewide", t)).toBe(true); // the breaker really did open — not a no-op
+    const cands = [{ county: "harris", url: "u1" }, { county: "ar_statewide", url: "u2" }];
+    // Passing the REAL production list (not ["ar_statewide"] by hand) is the point: this is
+    // exactly what MapFinder.jsx / SitePlanner.jsx call with, so a future change that stops
+    // deriving `alwaysKeep` from STATEWIDE_KEYS (e.g. reverting to a literal two-state array)
+    // fails HERE, not silently in production for the 19 states added after that array was written.
+    const out = filterHealthyCandidates(cands, STATEWIDE_KEYS, t);
+    expect(out.map((c) => c.county)).toEqual(["harris", "ar_statewide"]); // open breaker, still never dropped
   });
 
   it("never returns empty even if every candidate's breaker is open (coverage must survive)", () => {
@@ -124,5 +144,16 @@ describe("isStatewideBackup — honest 'statewide backup' labeling (B630)", () =
   it("defends against missing/empty inputs", () => {
     expect(isStatewideBackup("txgio_statewide")).toBe(false);
     expect(isStatewideBackup(undefined, { statewideKeys: SW })).toBe(false);
+  });
+
+  it("NEW-1 — the honest backup badge fires for a newly-wired state's composite exactly like txgio_statewide, using the real STATEWIDE_KEYS list", () => {
+    // A New York click where a real county-level source doesn't exist at all — ny_statewide is
+    // the ONLY source (no per-county entry backs it, unlike Texas/Colorado), so this is the
+    // "statewide-only area" case, not a "backup", by the same rule as a Texas county with no CAD.
+    expect(isStatewideBackup("ny_statewide", {
+      realPrimaries: [],
+      queried: [{ county: "ny_statewide" }],
+      statewideKeys: STATEWIDE_KEYS,
+    })).toBe(false);
   });
 });

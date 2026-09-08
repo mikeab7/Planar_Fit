@@ -1,18 +1,23 @@
-/* BACKLOG_OPEN.md drift + tag-legend guard (B638). Fails CI if the committed repo-root BACKLOG_OPEN.md
- * differs from a fresh parse of BACKLOG.md (someone edited the backlog without regenerating the index),
- * or if an Open/Verify item uses a `#tag` not in the legend. Regenerate with
- * `node scripts/build-backlog-index.mjs`. Mirrors the ui-audit/*-audit.mjs guard pattern. */
+/* BACKLOG.md tag-legend guard (B638; narrowed by NEW-1/B<PENDING>, 2026-09-08). Fails CI if an
+ * Open/Verify item uses a `#tag` not in the legend. This used to ALSO require the committed
+ * repo-root BACKLOG_OPEN.md to byte-match a fresh parse of BACKLOG.md on every PR — dropped
+ * because that meant every PR touching BACKLOG.md (nearly every PR) also had to regenerate and
+ * commit the derived index, so any two such PRs open at once conflicted on it by construction
+ * (see .github/ci-gates.yml's "Generated-index touch guard"). BACKLOG_OPEN.md itself is now
+ * refreshed by a scheduled job instead, so these tests exercise the GENERATOR against fresh
+ * input rather than asserting the currently-committed file is up to date. `--check`/`auditIndex()`
+ * still exist for that job and for local use. Mirrors the ui-audit/*-audit.mjs guard pattern. */
 import { describe, it, expect } from "vitest";
-import { auditIndex, parseBacklog, parseLegend } from "../scripts/build-backlog-index.mjs";
+import { auditTagLegend, parseBacklog, parseLegend, renderIndex } from "../scripts/build-backlog-index.mjs";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-describe("BACKLOG_OPEN.md stays in sync with BACKLOG.md", () => {
-  it("no drift and no off-legend tags", () => {
-    const { ok, problems } = auditIndex();
+describe("BACKLOG.md tags stay within the legend", () => {
+  it("no off-legend tags", () => {
+    const { ok, problems } = auditTagLegend();
     expect(ok, "\n" + problems.join("\n") + "\n").toBe(true);
   });
 
@@ -23,21 +28,22 @@ describe("BACKLOG_OPEN.md stays in sync with BACKLOG.md", () => {
    * (2026-08-08), including **B1121**, the oldest unexplained bug in the speed program and the one
    * `CLAUDE.md` points sessions at. A dropped item is indistinguishable from an item that does not
    * exist, which is the worst failure mode an index can have — and it selected precisely for the
-   * items that matter most. */
+   * items that matter most. Rendered fresh here (never read from the possibly-stale committed
+   * BACKLOG_OPEN.md) so this stays a test of the GENERATOR, not of today's regen state. */
   it("indexes recurrence-marked items, and carries the count into the row", () => {
     const text = readFileSync(join(REPO, "BACKLOG.md"), "utf8");
     const items = parseBacklog(text);
     const headings = [...text.matchAll(/^###\s+(B\d+)\s*\(×(\d+)\)\s*[—-]/gm)].map((m) => m[1]);
     expect(headings.length, "no recurrence-marked heading in BACKLOG.md to test against").toBeGreaterThan(0);
     const indexed = new Set(items.map((i) => i.id));
-    const index = readFileSync(join(REPO, "BACKLOG_OPEN.md"), "utf8");
+    const freshIndex = renderIndex(items);
     for (const id of headings) {
       /* Only Open/Verify items are indexed at all — a recurrence sitting in Later/Roadmap is
        * legitimately absent, so assert the row only for ids the parser actually collected. */
       if (!indexed.has(id)) continue;
       const it_ = items.find((i) => i.id === id);
       expect(it_.recurrences, `${id} lost its recurrence count`).toBeGreaterThan(1);
-      expect(index, `${id} is missing from BACKLOG_OPEN.md`).toMatch(new RegExp(`^\\| ${id} \\(×${it_.recurrences}\\) \\|`, "m"));
+      expect(freshIndex, `${id} is missing from a fresh render of BACKLOG_OPEN.md`).toMatch(new RegExp(`^\\| ${id} \\(×${it_.recurrences}\\) \\|`, "m"));
     }
   });
 
@@ -46,7 +52,7 @@ describe("BACKLOG_OPEN.md stays in sync with BACKLOG.md", () => {
     const plain = items.find((i) => !i.recurrences);
     expect(plain, "no plain item found").toBeTruthy();
     expect(plain.recurrences).toBeNull();
-    expect(readFileSync(join(REPO, "BACKLOG_OPEN.md"), "utf8")).toMatch(new RegExp(`^\\| ${plain.id} \\|`, "m"));
+    expect(renderIndex(items)).toMatch(new RegExp(`^\\| ${plain.id} \\|`, "m"));
   });
 
   it("the legend is non-empty and every tagged item uses only legal tags", () => {
