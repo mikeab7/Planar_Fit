@@ -451,6 +451,35 @@ export async function purgeExpiredDeleted({ days = 30 } = {}) {
   return { ok: failed === 0, purged, failed, cleanupFailed };
 }
 
+/* B1340368 — clear the STALE POINTER at the point its target is actually, permanently gone,
+ * rather than only filtering it at render time everywhere it might be offered.
+ *
+ * `doc_reviews.project_id` mirrors `sites.group_id` and has no foreign key of its own — unlike
+ * `comps.project_id`/`site_plan_overlays.project_id`, which both carry a real `ON DELETE SET
+ * NULL` FK to `sites.id`. A plain FK here would be the WRONG fix anyway: it fires on that exact
+ * ROW being deleted, and `project_id` can equal a group's ANCHOR id while the group (project)
+ * itself stays alive through its other members — exactly the B1164192 anchor-vs-group shape.
+ * So this is called only from storage.js's `purgeProjectFoldersFor`, at the SAME point that
+ * function has already confirmed (via `groupStillHasLivePlans`) the whole group has no live
+ * plan left anywhere — never on an individual row's own delete, and never during a project's
+ * ordinary 30-day soft-delete/restore window (where the project might still come back).
+ *
+ * Nulls project_id (files the document back to "Unfiled" — project_library.sql's own
+ * convention for that field) rather than soft-deleting the document itself: the drawing and its
+ * markup are not what was destroyed, only the project they were filed under. Returns
+ * { ok, unfiled } so the caller can report a failure loudly without it blocking the purge that
+ * already happened (same shape as `purgeProjectFoldersFor`'s own Drive-cleanup call). */
+export async function unfileReviewsForDeletedProject(groupId) {
+  if (!supabase || !groupId) return { ok: true, unfiled: 0 };
+  try {
+    const { data, error } = await supabase.from("doc_reviews").update({ project_id: null }).eq("project_id", groupId).select("id");
+    if (error) return { ok: false, unfiled: 0, error: error.message || "unfile failed" };
+    return { ok: true, unfiled: Array.isArray(data) ? data.length : 0 };
+  } catch (e) {
+    return { ok: false, unfiled: 0, error: (e && e.message) || "unfile threw" };
+  }
+}
+
 // Re-file an existing review under a (different) project/discipline — the one-click
 // confirm out of the "needs filing" holding area (B217). Loads the full record, updates
 // only the filing fields, and re-upserts; the work layer + sources are untouched. (The

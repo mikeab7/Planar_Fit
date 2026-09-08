@@ -330,6 +330,25 @@ was never clicked" quietly ships broken.
 
 **Result:** ⏳ pending — needs the owner (or a Cowork session on his signed-in browser) to check the Dashboard card and the switcher's bin on planyr.io after this PR deploys. `Cadence: once`.
 
+### V973344 — B1340368: the Last-document card, and Library Home's Pinned/Recent lists, never offer a document filed under a dead project `Blocker: auth`
+
+**Why this needs its own real pass.** The mechanism is fully proven headless against synthetic data (`test/dashboardDocFetch.test.js`, `test/docProjectLiveness.test.js`, `test/reviewUnfileOnPurge.test.js`) — every case named in the item's own adjacent-cases table is covered. What can't run here: the ORIGINAL production repro (doc `rvmtov1wtr0459a`) was itself repaired as part of shipping this fix (its `project_id` is now null), so there is no longer a live orphaned document on the owner's account to click and watch fail — a real pass needs either a fresh, deliberately-reproduced case (delete a throwaway project that has a filed document, wait for its 30-day purge, or force one) or simply confirming the two surfaces behave correctly on his real, current data. Library Home's Pinned/Recent lists specifically need a signed-in account with real pins/recents to render at all (`Blocker: auth`, `Blocker: real-data`).
+
+**What was verified here (this session, sandbox + a read-only, then a scoped write, Supabase MCP query against `planyr_production`, never the app).**
+1. Queried the exact reported document (`rvmtov1wtr0459a`): `deleted_at` null, `project_id` (`smtov116eka7`) with zero trace anywhere in `sites` — confirmed the root cause is the stale `project_id`, not either candidate the brief asked to rule out.
+2. Ran the equivalent of the new audit script's query account-wide (not scoped to the reported case): 18 filed, non-deleted `doc_reviews` rows total, exactly 2 with no trace of their project anywhere (the reported one plus a second, previously-unreported "ZZ-VERIFY-TEST" throwaway). Both repaired: `project_id` set to `null`, confirmed by reading the rows back.
+3. `test/dashboardDocFetch.test.js` (9 tests) proves the card's fallback walk against the exact reproduced shape (a dead-project candidate, a live one, an unfiled one, all-dead, an inconclusive check) using the real measured ids. `test/docProjectLiveness.test.js` (13) and `test/reviewUnfileOnPurge.test.js` (5) prove the two shared mechanisms independently.
+4. `npx vitest run` — full suite green. `npm run lint` / `npm run build` clean.
+
+**Steps, each with a named expected result:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Signed in as the owner, open the Dashboard. **Expect:** the "Last document" row (if present) opens normally when clicked — no "This project doesn't exist" notice.
+3. Open the Library workspace with no project selected (Library Home). **Expect:** the Pinned and Recent sections both render; every Pinned/Recent row either opens normally or, if genuinely unresolvable, shows the loud "missing" treatment with an unpin — never a silent dead click.
+4. As a control, deliberately create the reproduced shape: start a throwaway project, file (or open in Review) a document under it, "Delete forever" the project, then reload the Dashboard and Library Home. **Expect:** the document either no longer appears as "Last document"/Recent, or — once the delete's own purge has run — appears correctly re-filed to "Unfiled" rather than dead-ending.
+5. Pin a file, then have another tab/session fully delete its project. **Expect:** the pin shows "missing" ("its project has been deleted") rather than opening to a blocked screen.
+
+**Result:** ⏳ pending — needs the owner (or a Cowork session on his signed-in browser) to check the Dashboard card and Library Home on planyr.io after this PR deploys. `Cadence: once`.
+
 ### V940768 — B1294592: a `Site.*`/`Plan.*` formula reference tracks the OPEN concept/scheme in a multi-concept project, across a switch and a reload `Blocker: auth` `Blocker: real-data`
 
 **Why this needs its own real pass.** V901056 (`docs/archive/VERIFICATION-DONE.md`) proved the whole Site.*/Plan.*/Comp.* mechanism live end to end for a project with exactly ONE concept. This item's own bug report is specifically about a project with TWO — reproduced live on planyr.io production plus a direct database read (`site_elements`), which this sandbox cannot do (no Supabase credentials, no throwaway multi-concept project to point at). The RESOLUTION RULE itself — which concept a `Site.*`/`Plan.*` reference reads, keyed off `getCurrentSiteId()`/`pickResumeTarget`, the exact function the Site Planner tab's own boot-resume and cross-project-switch logic already goes through — is unit-tested end to end against the real storage/bootResume machinery in `test/modelProjectRefs.test.js`, not re-litigated here.
