@@ -48,7 +48,6 @@ import { NeedsAttentionCard } from "./components/NeedsAttentionCard.jsx";
 import { PursuitsCard } from "./components/PursuitsCard.jsx";
 import { SinceLastHereCard } from "./components/SinceLastHereCard.jsx";
 import { RecentPlansCard } from "./components/RecentPlansCard.jsx";
-import { SinceLastHereCard } from "./components/SinceLastHereCard.jsx";
 import {
   CARD_DEFS, GRID_COLS, normalizeLayout, availableToAdd, addCard, removeCard, resetLayout,
   applyGridChange, narrowOrder, toRglItem,
@@ -329,7 +328,6 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         title={def.title}
         headerRight={entry.key === "sinceLastHere" ? sinceLastHere?.headerSpan : null}
         headerMeta={entry.key === "compsSummary" ? compsHeaderMeta : undefined}
-        headerRight={entry.key === "sinceLastHere" ? sinceLastHere?.headerSpan : null}
         customizing={customizing}
         showDragHandle={!isNarrow}
         onRemove={() => setLayout((l) => removeCard(l, entry.key))}
