@@ -238,9 +238,17 @@ export const SHEET_COLUMNS = [
   // to carry the row's identity on its own. Frozen columns must be CONTIGUOUS in visible order —
   // a scrollable column sandwiched between two sticky ones would scroll UNDER them, not past them
   // — which is why Location is reordered here rather than just re-flagged in place.
+  // ⛔ NEW-3(d) (owner report, 2026-09-08: "the Location column is very wide and nearly empty
+  // while Notes starves next to it"). Location used to be a FIXED 188 — it kept every pixel of
+  // that while `computeFlexWidths` squeezed Notes to its 40px floor and the three party/title
+  // columns to theirs, and on an all-types sheet the table STILL overflowed its own scroller by
+  // 53px (measured). A fixed column that never yields is the wrong shape for the widest column on
+  // the sheet: it now flexes like the others, keeping 188 whenever there is room and giving the
+  // difference back first when there isn't. `frozenLeftOffsets` already reads `widthFor`, so the
+  // sticky offsets follow it with no change.
   {
-    key: "location", label: "Location", group: "PROPERTY", width: 188, align: "left", kind: "action",
-    appliesTo: () => true, required: true, frozen: true,
+    key: "location", label: "Location", group: "PROPERTY", width: 188, flexKey: "location",
+    align: "left", kind: "action", appliesTo: () => true, required: true, frozen: true,
   },
   simpleColumn({ key: "title", label: "Title / Address", group: "PROPERTY", width: 108, flexKey: "title", align: "left", kind: "text" }),
   {
@@ -302,14 +310,18 @@ export const SHEET_COLUMNS = [
   // carry `required: true` any more or the mobile sheet's "Needed to save"/footer machinery
   // (compMobileLayout.js, sourced from this flag) re-demands it on its own, contradicting the
   // very save gate it's supposed to describe.
-  simpleColumn({ key: "compDate", label: "Executed", group: "DEAL", width: 68, align: "right", kind: "date", editHint: "mm/dd/yy" }),
+  simpleColumn({ key: "compDate", label: "Executed", group: "DEAL", width: 64, align: "right", kind: "date", editHint: "mm/dd/yy" }),
   simpleColumn({ key: "leaseCommencementDate", label: "Commence", fullLabel: "Commencement", group: "DEAL", width: 68, align: "right", kind: "date", appliesTo: (t) => t === "lease", editHint: "mm/dd/yy" }),
   {
     // HARDENING-10 — the STORED field stays free text (a real term can be "10 yr + 2x5 options",
     // which a bare-months field can't hold) but the CELL only ever shows/accepts a bare month
     // count, mirroring bldgCapRate's %-vs-fraction split below. A stored term this can't reduce to
     // one number shows empty rather than a wrong guess.
-    key: "leaseTerm", label: "Term (mo)", fullLabel: "Term (months)", group: "DEAL", width: 60, align: "right", kind: "number",
+    // ⛔ NEW-3(a) (owner report, 2026-09-08, measured at his own 1600x465 window): this width was
+    // 60 and the header "Term (mo)" needs 60 of the 59 the cell offers once padding and the
+    // hairline border are taken out — ZERO headroom, so it rendered as "Term (..." exactly as
+    // HARDENING-10 rule 4 forbids. 68 leaves a real margin rather than another marginal value.
+    key: "leaseTerm", label: "Term (mo)", fullLabel: "Term (months)", group: "DEAL", width: 68, align: "right", kind: "number",
     appliesTo: (t) => t === "lease",
     getValue: (d) => {
       const months = monthsFromTermText(d.leaseTerm);
@@ -365,7 +377,9 @@ export const SHEET_COLUMNS = [
   // (scrollWidth===clientWidth===99) — exactly the "0px margin" failure class B850016's own header
   // documents, even though it didn't actually clip — so widened to 110 for real headroom rather
   // than a coincidental exact fit, same measured-not-guessed approach that file already documents.
-  simpleColumn({ key: "leaseOpex", label: "OpEx ($/SF/yr)", fullLabel: "Operating expenses ($/SF/yr)", group: "RENT", width: 110, align: "right", kind: "number", appliesTo: (t) => t === "lease" }),
+  // NEW-3(c) — 110 held 25px of headroom over its own header and far more over any real value
+  // ("3.25"); handing that back is part of what closes the sheet's 45px horizontal overflow.
+  simpleColumn({ key: "leaseOpex", label: "OpEx ($/SF/yr)", fullLabel: "Operating expenses ($/SF/yr)", group: "RENT", width: 88, align: "right", kind: "number", appliesTo: (t) => t === "lease" }),
   simpleColumn({ key: "leaseEscalationPct", label: "Escal (%)", fullLabel: "Escalation %/yr", group: "RENT", width: 60, align: "right", kind: "number", appliesTo: (t) => t === "lease" }),
 
   // CONCESSIONS — the other half of the economics: what the landlord gives up, which is exactly
@@ -385,7 +399,7 @@ export const SHEET_COLUMNS = [
   {
     // Follows the row's OWN recorded size unit — $/AC for an acre-quoted land comp, $/SF for an
     // SF-quoted one or a building sale (which has no unit choice at all).
-    key: "salePricePerArea", label: "$/SF or $/AC", group: "DERIVED", width: 84, align: "right", kind: "derived",
+    key: "salePricePerArea", label: "$/SF or $/AC", group: "DERIVED", width: 80, align: "right", kind: "derived",
     appliesTo: (t) => t === "land" || t === "building_sale",
     derive: (comp) => {
       const fmt = (n) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -405,7 +419,9 @@ export const SHEET_COLUMNS = [
     // at 89px real width vs 57px available) — not a "genuinely tight space" case, just undersized.
     // A rate long enough to still clip past 84px falls back to the cell's hover title (SheetCell's
     // `isLongTextCol`), same as the free-text columns.
-    key: "leaseAnnualRate", label: "$/SF/yr", group: "DERIVED", width: 84, align: "right", kind: "derived",
+    // NEW-3(c) — 84 -> 68: this cell prints a rate plus its basis ("6.96 NNN"), measured at 55px,
+    // so 68 keeps a real margin while returning the rest to the columns that were starving.
+    key: "leaseAnnualRate", label: "$/SF/yr", group: "DERIVED", width: 68, align: "right", kind: "derived",
     appliesTo: (t) => t === "lease",
     derive: (comp) => {
       const v = annualLeaseRate(comp);
@@ -603,6 +619,91 @@ export function spillPaste(rows, startRow, startCol, clipboardText, emptyDraftFn
   return next;
 }
 
+/* ---- where a paste LANDS, and whether a band label is worth drawing ------------------------- */
+
+/* ⛔ NEW-1 (owner report, 2026-09-08: "when i paste something, it seems to keep ending up in the
+ * second row"). `commitText` appended unconditionally, so the row a map pick had just created —
+ * an anchor and nothing else — survived ABOVE the pasted deal as a phantom, and the cursor
+ * followed the paste past it. Worse, that phantom is what NEW-2's parcel pick then answered.
+ *
+ * "Unfilled" is defined against `emptyDraft(anchor)` rather than by listing fields: a row is
+ * unfilled iff its draft is EXACTLY what the app itself would have produced for that anchor —
+ * every default, including the anchor-derived `landSizeValue` a parcel pick brings with it. That
+ * makes the test exact (it can never mistake a typed value for a default) and self-maintaining (a
+ * new draft field is covered the day it is added to `emptyDraft`). Nothing a user typed is ever
+ * absorbed over. */
+export function isUnfilledRow(row, emptyDraftFn) {
+  const draft = row?.draft;
+  if (!draft) return false;
+  const baseline = emptyDraftFn(draft.anchor || null);
+  const keys = new Set([...Object.keys(baseline), ...Object.keys(draft)]);
+  for (const k of keys) {
+    if (k === "anchor") continue; // carried, by definition — it is what makes the row worth keeping
+    const a = draft[k];
+    const b = baseline[k];
+    if (a === b) continue;
+    if ((a == null || a === "") && (b == null || b === "")) continue;
+    return false;
+  }
+  return true;
+}
+
+/** Where a paste's rows go. The FIRST unfilled row (see above) absorbs the FIRST parsed row,
+ * keeping its own identity and its anchor, so the location the user already picked ends up on the
+ * deal they just pasted instead of on a phantom beside it; anything else appends exactly as
+ * before. Returns everything the caller needs to be honest about what happened — which row to put
+ * the cursor on, which ids are new (so Undo removes precisely those), and the absorbed row's
+ * PRE-PASTE state (so Undo restores it rather than deleting the anchor with it). */
+export function absorbPasteIntoSheet(rows, newRows, emptyDraftFn) {
+  const appendAll = () => ({
+    rows: [...rows, ...newRows],
+    addedIds: newRows.map((r) => r._id),
+    restore: null,
+    selectRow: rows.length,
+  });
+  if (!newRows.length) return { rows: [...rows], addedIds: [], restore: null, selectRow: Math.max(0, rows.length - 1) };
+  const idx = rows.findIndex((r) => isUnfilledRow(r, emptyDraftFn));
+  if (idx === -1) return appendAll();
+  const target = rows[idx];
+  const first = newRows[0];
+  const merged = {
+    ...target,
+    draft: {
+      ...first.draft,
+      // The absorbed row's anchor wins — a parsed row never carries one, and this is the whole
+      // point of absorbing rather than appending.
+      anchor: target.draft.anchor || first.draft.anchor || null,
+      // A parcel pick brings the lot's own acreage; keep it only where the paste didn't state one.
+      landSizeValue: first.draft.landSizeValue || target.draft.landSizeValue || "",
+    },
+    cellFlags: { ...target.cellFlags, ...(first.cellFlags || {}) },
+    touched: target.touched || false,
+  };
+  const next = rows.map((r, i) => (i === idx ? merged : r));
+  return {
+    rows: [...next, ...newRows.slice(1)],
+    addedIds: newRows.slice(1).map((r) => r._id),
+    restore: { index: idx, row: target },
+    selectRow: idx,
+  };
+}
+
+/* ⛔ NEW-3(e) (owner report, 2026-09-08: "four declared bands are not drawing"). HARDENING-25 item
+ * 2 blanks the band over any run that is one visible column wide, because "PRICE atop Price" is a
+ * doubled label with no second member to justify it. That reasoning is sound where the two words
+ * ARE the same word — and wrong where they are not: DERIVED over "$/SF/yr" tells the reader
+ * something the column header cannot, and blanking it threw information away. The collapse now
+ * tests the actual words rather than the column count: a single-column run whose group name says
+ * the same thing as its own header stays blank (TYPE/Type, NOTES/Notes, PRICE/Price), and one
+ * that says something different keeps its label. */
+export function groupLabelIsRedundant(groupName, columnLabel) {
+  const norm = (t) => String(t || "").toLowerCase().replace(/[^a-z]/g, "");
+  const g = norm(groupName);
+  const c = norm(columnLabel);
+  if (!g || !c) return true;
+  return g === c || g.includes(c) || c.includes(g);
+}
+
 /* ---- dynamic column width — the four `flexKey` columns share whatever horizontal space is left
  * after every fixed-width visible column, so the sheet fits its container with ZERO horizontal
  * scroll rather than a hand-tuned static budget (two static attempts both overflowed the target
@@ -626,12 +727,23 @@ export function spillPaste(rows, startRow, startCol, clipboardText, emptyDraftFn
 // original floor was defending (the overflow fallback below still holds if even that isn't
 // enough), and it gives the common "somewhat squeezed but not extreme" case — the owner's own
 // 1191px report — noticeably more of a real name before the hover title has to carry the rest.
+// ⛔ NEW-3 (owner report, 2026-09-08) — TWO changes here, and the second only fits because of the
+// first. (a) `location` joins the growers (see its column definition above for why a fixed 188 was
+// the wrong shape); its floor of 96 still holds "Set" plus a readable county name, and the 92px of
+// shrink room it contributes is what pays for (b). (b) the three text growers' floors were 58,
+// which is BELOW their own rendered header widths (measured: "Title / Address" 81, "Landlord/
+// Seller" 84, "Tenant/Buyer" 75) — so on a squeezed sheet all three truncated their own headers,
+// the same HARDENING-10 rule-4 violation the owner reported against Term (mo). Floors now sit at
+// the measured header width plus a hair, so rule 4 holds in the tightest regime this file has.
 const FLEX_GROWERS = [
-  { key: "title", nominal: 108, floor: 58, weight: 1 },
-  { key: "partyProvider", nominal: 110, floor: 58, weight: 1 },
-  { key: "partyAcquirer", nominal: 110, floor: 58, weight: 1 },
+  { key: "location", nominal: 188, floor: 90, weight: 1 },
+  { key: "title", nominal: 108, floor: 84, weight: 1 },
+  { key: "partyProvider", nominal: 110, floor: 88, weight: 1 },
+  { key: "partyAcquirer", nominal: 110, floor: 78, weight: 1 },
 ];
-const FLEX_NOTES = { key: "notes", nominal: 80, floor: 40 };
+// NEW-3(b) — the floor was 40 and the word "Notes" itself needs 41, so at full squeeze the Notes
+// column truncated its own header too. 44 is the smallest floor that does not.
+const FLEX_NOTES = { key: "notes", nominal: 80, floor: 44 };
 
 /** Pure: given the horizontal space left over after every FIXED-width visible column (and the
  * remove-row column, and borders — the caller's job to subtract those), returns
