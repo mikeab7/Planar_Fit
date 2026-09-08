@@ -23,6 +23,10 @@ export const GRID_COLS = 12;
 // that doesn't mention it just doesn't place it; see normalizeLayout).
 export const CARD_DEFS = {
   jumpBackIn:     { title: "Jump back in",    defaultW: 8, defaultH: 4, minW: 3, minH: 3 },
+  // NEW-1 (2026-09-08) — the one picture card among six text/number ones (see
+  // components/RecentPlansCard.jsx). minW/minH keep it big enough for a 2x2 grid of
+  // recognizable thumbnails before recentPlansLayout.js drops it to two.
+  recentPlans:    { title: "Recent plans",    defaultW: 6, defaultH: 8, minW: 4, minH: 5 },
   pipelineStatus: { title: "Pipeline",        defaultW: 4, defaultH: 4, minW: 3, minH: 3 },
   // B1161792/B1161793 (NEW-1/NEW-2, Direction C) — the first two real content cards, replacing
   // the placeholder "Pursuits by activity" card (directly superseded by the richer sortable
@@ -44,7 +48,7 @@ export const CARD_KEYS = Object.keys(CARD_DEFS);
 // first-run Dashboard must never be empty); a user who wants a leaner view removes what they
 // don't need in Customize mode, rather than building one up from nothing.
 const DEFAULT_ORDER = [
-  "jumpBackIn", "pipelineStatus", "locationsMap", "needsAttention", "pursuitsTable",
+  "jumpBackIn", "recentPlans", "pipelineStatus", "locationsMap", "needsAttention", "pursuitsTable",
   "scheduleHealth", "compsSummary", "goingQuiet",
 ];
 

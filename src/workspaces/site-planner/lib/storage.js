@@ -499,7 +499,16 @@ export async function pushSiteToCloud(id) {
   if (!activeUid()) return { ok: true, skipped: true };
   const m = loadSite(id);
   if (!m) return { ok: false, error: "missing" };
-  return cloudUpsert(activeUid(), m);
+  const r = await cloudUpsert(activeUid(), m);
+  // NEW-1 (2026-09-08) — refresh the Dashboard's cached plan thumbnail on every REAL save (never
+  // on a skipped/no-op push — cloudUpsertCore returns skipped:true when nothing actually changed).
+  // Fire-and-forget: a thumbnail is a rendering convenience, never user data, so it must not add
+  // latency to — or ever fail — an ordinary save. Dynamically imported so this stays off
+  // storage.js's own dependency graph until a save actually happens.
+  if (r && r.ok && !r.skipped) {
+    import("./siteThumbnail.js").then(({ refreshSiteThumbnailFromModel }) => refreshSiteThumbnailFromModel(m)).catch(() => {});
+  }
+  return r;
 }
 
 /* B1165441 (NEW-2/NEW-3, adversarial review of B1156864/PR 1424) — "Nothing in the app ever
