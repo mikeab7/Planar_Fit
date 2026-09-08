@@ -33,6 +33,17 @@
  * Rename (edits the row label in place) and Delete (a confirm step before acting). In controlled
  * mode (e.g. the Schedule module) the workspace supplies onRenameProject/onDeleteProject to drive
  * its own store over the bridge; uncontrolled (Site Planner / Markup) falls back to the site store.
+ *
+ * ⛔ B1358128 — a row's own `id` is NOT always a controlled caller's own id. `unionProjectLists`
+ * (projectModel.js) shows a site with exactly one linked schedule (or none at all) using the SITE's
+ * registry id, standing in for the schedule — a controlled caller's bridge (Schedule module's
+ * `onDeleteProject`/`onRenameProject`/`onDuplicateProject`) only understands ITS OWN ids and silently
+ * no-ops on anything else (see Scheduler.jsx's `selectSchedule`, which already had to solve this same
+ * resolution for picking a project — this extends the identical fix to manage actions, which never got
+ * it). `resolveControlledId` below does that resolution before calling out to the bridge; when a row
+ * has no controlled entity behind it at all (a project with no linked schedule), rename/delete fall
+ * back to the plain site-store action instead of no-op'ing — duplicate has no such fallback (no
+ * uncontrolled implementation exists) and surfaces a toast instead of doing nothing.
  */
 import { useEffect, useRef, useState } from "react";
 import { RADIUS } from "./radius.js";
@@ -47,7 +58,7 @@ import {
   listDeletedProjects, restoreDeletedProject, purgeDeletedProject, purgeExpiredDeletedProjects,
   DELETED_RETENTION_DAYS, activeUid,
 } from "../projects/projects.js";
-import { resolveCurrentName, withCurrentProject, unionProjectLists } from "../projects/projectModel.js";
+import { resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId as resolveControlledIdPure } from "../projects/projectModel.js";
 
 // Crumbs sit on the chrome bar, which now themes WITH the app (B318) — so these are
 // chrome tokens, not the retired warm-dark hexes (white-on-light was the B341 bug).
@@ -482,27 +493,45 @@ export default function ProjectBreadcrumb({
    * part of the key and the state was dead weight. ⛔ If a second rename editor is ever reintroduced,
    * the discriminator has to come back WITH it — `editingId` alone cannot address two editors. */
   const startRename = (p) => { setMenuFor(null); setEditingId(p.id); setEditVal(p.name || ""); };
+
+  // B1358128 — resolve a switcher row's id to the id a controlled caller's own bridge actually
+  // understands, per this file's own top-of-file note. `controlledProjects` is the caller's raw
+  // list (e.g. Scheduler.jsx's schedules, each optionally carrying `linkedSiteId`) — NOT the
+  // unioned/displayed `projects` above, which is what let a registry-standin id reach the bridge
+  // unresolved in the first place. The pure resolution lives in projectModel.js (shared with
+  // Scheduler.jsx's selectSchedule, which needed the identical logic for picking a project) —
+  // this just supplies `controlled`'s early-out and the current project as the tie-break.
+  // Returns null when the row has no controlled entity behind it at all (a project with no
+  // linked schedule) — callers fall back to the site store or, for duplicate (no store
+  // equivalent), surface a toast instead of silently doing nothing.
+  const resolveControlledId = (id) => (controlled ? resolveControlledIdPure(controlledProjects, id, currentProject?.id) : id);
+
   const commitRename = (id) => {
     const v = (editVal || "").trim();
     setEditingId(null);
     if (!v) return; // reject empty/whitespace-only — keep the prior name
+    const resolvedId = resolveControlledId(id); // no-ops to `id` unchanged when uncontrolled
+    const bridged = controlled && resolvedId != null;
     // NEW-2 — a rename that didn't reach the cloud must SAY so. Both branches now return the
     // store's promise, so a failure surfaces as a toast here instead of the old silent no-op that
     // only showed up later as the name having reverted. (The Site Planner also raises its own
     // header banner; a duplicate line in the dropdown is cheap next to a silent revert.)
-    const done = onRenameProject ? onRenameProject(id, v) : storeRename(id, v);
+    const done = bridged ? onRenameProject(resolvedId, v) : storeRename(id, v);
     Promise.resolve(done).then((res) => {
       if (res && res.ok === false) flashToast(res.error || `“${v}” is saved on this device but couldn't be saved to the cloud — it may come back under its old name when you reload.`);
-      if (!controlled) { refresh(); notifyStoreChange(); }
+      if (!bridged) { refresh(); notifyStoreChange(); }
     }).catch(() => {});
     // Reflect the new name immediately. Uncontrolled mode owns the local `internalProjects`
     // list, and a same-tab store write does NOT fire the native 'storage' event — so without an
     // explicit refresh the just-edited row (and every other planarfit:sites surface) keeps the
     // OLD name and the rename reads as if it reverted. This must run for BOTH branches: the Site
     // Planner supplies onRenameProject yet is still UNcontrolled, and the old code only refreshed
-    // in the bare `else`, so that path never updated. Controlled mode (Schedule) gets its list
-    // pushed back through the bridge prop, so skip it there. (rename-revert)
-    if (!controlled) { refresh(); notifyStoreChange(); }
+    // in the bare `else`, so that path never updated. A controlled row that genuinely bridged
+    // (resolved to a schedule) gets its list pushed back through the bridge prop, so skip it
+    // there — but a controlled row that fell back to the site store (no schedule behind it) needs
+    // the SAME refresh as any other store write, which is why this now keys on `bridged`, not on
+    // `controlled` alone (B1358128). (rename-revert)
+    if (!bridged) { refresh(); notifyStoreChange(); }
   };
   /* ---- WHAT ELSE IS FILED HERE (NEW-3) ---------------------------------------------------
    *
@@ -552,10 +581,20 @@ export default function ProjectBreadcrumb({
         .catch(() => flashToast("Those notes couldn't be moved, so they are still filed under the deleted project."));
     }
     if (onDeleteProject) {
-      onDeleteProject(id); // controlled (Schedule) — the bridge deletes + routes home in the embedded app
-      return;
+      // B1358128 — `id` may be a registry standin (see resolveControlledId's header) that the
+      // bridge cannot resolve on its own; resolve it here rather than pass it through raw, which
+      // is exactly what made Delete a silent no-op for a project with exactly one (or zero)
+      // linked schedules in the Schedule module.
+      const resolvedId = resolveControlledId(id);
+      if (resolvedId != null) {
+        onDeleteProject(resolvedId); // controlled (Schedule) — the bridge deletes + routes home in the embedded app
+        return;
+      }
+      // No controlled entity behind this row (e.g. a project with no linked schedule) — fall
+      // through to the ordinary site-store delete below rather than silently doing nothing.
     }
-    // Uncontrolled (site store): optimistic local removal + an HONEST cloud-failure surface (B439) —
+    // Uncontrolled (site store), or a controlled row with nothing for the bridge to delete:
+    // optimistic local removal + an HONEST cloud-failure surface (B439) —
     // a silent zero-row delete would otherwise reappear on reload claiming it was "deleted".
     // ⛔ B735 (×2) — LOUD-FAILURE, the other reported half: `deleteSiteGroup` (storage.js) resolves
     // `{ ok: true, removed: 0 }`, not an error, when this DEVICE'S local cache holds no plan for the
@@ -954,7 +993,16 @@ export default function ProjectBreadcrumb({
                   <button
                     data-testid="project-duplicate"
                     role="menuitem"
-                    onClick={() => { setMenuFor(null); onDuplicateProject(menuFor.id); }}
+                    onClick={() => {
+                      setMenuFor(null);
+                      // B1358128 — same registry-standin resolution as Rename/Delete; unlike
+                      // those two, Duplicate has no site-store fallback (see this file's own
+                      // top-of-file note), so a row with nothing behind it says so instead of
+                      // silently doing nothing.
+                      const resolvedId = resolveControlledId(menuFor.id);
+                      if (resolvedId != null) onDuplicateProject(resolvedId);
+                      else flashToast("This project has no schedule yet, so there's nothing to duplicate here.");
+                    }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = "var(--hover-ghost)")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                     style={menuItem()}

@@ -213,6 +213,31 @@ export function unionProjectLists(controlledList = [], registryList = []) {
   return [...registryOut, ...extra];
 }
 
+// ⛔ B1358128 — the resolution unionProjectLists' own comments above promise ("the caller
+// resolves a click on it back to the right schedule id") was built exactly ONCE, inside
+// Scheduler.jsx's selectSchedule, for PICKING a project. Rename/Delete/Duplicate never got it —
+// each passed a unioned row's raw id straight through to the controlled bridge (Scheduler's
+// onRenameProject/onDeleteProject/onDuplicateProject), which only understands its OWN ids — so a
+// click on a single-linked-schedule (or zero-linked) registry row resolved to nothing and the
+// bridge silently no-op'd (measured live: the Schedule module's Delete closing the confirm
+// dialog with no project actually removed). This is the one place that resolution now lives;
+// every caller (select, rename, delete, duplicate) uses it instead of reimplementing it ad hoc.
+//
+// `id` may be: (a) already one of `controlledList`'s own ids — returned as-is; (b) a registry
+// standin id (the SITE id unionProjectLists used in place of its one linked schedule) — resolved
+// to that schedule's own id, preferring `preferId` (e.g. the currently-active schedule) on the
+// rare ambiguous case; or (c) a registry row with NO controlled entry behind it at all (a
+// project with no linked schedule at all) — returns null, so callers can fall back to a plain
+// site-store action, or refuse and say so, rather than silently doing nothing.
+export function resolveControlledId(controlledList, id, preferId) {
+  const list = controlledList || [];
+  const direct = list.find((p) => p && p.id === id);
+  if (direct) return direct.id;
+  const linked = list.filter((p) => p && p.linkedSiteId != null && p.linkedSiteId === id);
+  if (!linked.length) return null;
+  return (linked.find((p) => p.id === preferId) || linked[0]).id;
+}
+
 // Case-insensitive name filter for the dropdown search field. Empty query → all.
 export function filterProjects(projects = [], query = "") {
   const q = String(query || "").trim().toLowerCase();
