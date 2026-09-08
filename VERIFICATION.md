@@ -164,6 +164,26 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V965344 — B1332016: 5 newly-wired states' parcel sources actually answer from a real (non-sandboxed) network `Blocker: live-GIS`
+
+**Why this needs its own live pass.** `ui-audit/probe-statewide-parcels.mjs` hit every candidate live from THIS sandbox, whose outbound network is an org egress allowlist (confirmed: `*.arcgis.com` reachable, most state `.gov` domains 403-blocked at the CONNECT tunnel). Five of the 19 newly-wired states sit on hosts this sandbox can't reach at all — they were shipped anyway on the strength of an official ArcGIS Online item's own cached schema/feature-count (the same evidence bar `countiesProvenance.js` already accepts for Chambers/Larimer County), never a guessed URL. What's proven without that network: every one of these five layers is the state's own official service (not a third-party rehost — checked and rejected for Virginia/West Virginia specifically because their only reachable copy WASN'T official), and its field list came from a real, independently-fetched schema, not prose. What can only be confirmed from an unrestricted network: the endpoint answers a real query, right now, with geometry.
+
+**What was verified here (this session, sandbox).**
+1. `node ui-audit/probe-statewide-parcels.mjs` — live-measured, today: 14 of the 19 states answer directly (HTTP 200, real feature count, real field list) from this very sandbox; these 5 return the sandbox's own CONNECT-tunnel policy block, not a host error.
+2. Each of the 5 was independently schema-confirmed via its official ArcGIS Online item (not the blocked origin) — see `docs/STATEWIDE-PARCELS.md`'s per-state notes for the exact item citation.
+3. `npx vitest run` — 15,667/15,667 green, incl. a mutation-proven test (`test/sourceHealth.test.js`) that Arkansas's entry survives its own circuit breaker exactly like the two pre-existing statewide composites.
+4. `npm run lint` / `npm run build` clean; `node ui-audit/gis-source-audit.mjs` clean (18 counties + these composites correctly exempt, matching precedent).
+
+**Steps, each with a named expected result — from a network that isn't behind this build environment's egress allowlist (e.g. planyr.io itself, or any ordinary internet connection):**
+1. `curl "https://gis.arkansas.gov/arcgis/rest/services/FEATURESERVICES/Planning_Cadastre/FeatureServer/6?f=json"`. **Expect:** HTTP 200, a JSON service definition naming real fields (`parcelid`, `ownername`, `adrnum`, `assessvalue`, …).
+2. Same for `https://enterprise.firstmap.delaware.gov/arcgis/rest/services/PlanningCadastre/DE_StateParcels/FeatureServer/0`. **Expect:** HTTP 200, fields including `PIN`/`ACRES`.
+3. Same for `https://gisdata.in.gov/server/rest/services/Hosted/Parcel_Boundaries_of_Indiana_Current/FeatureServer/0`. **Expect:** HTTP 200.
+4. Same for `https://maps.nj.gov/arcgis/rest/services/Framework/Cadastral/MapServer/0`. **Expect:** HTTP 200.
+5. Same for `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0` — this one ALSO needs confirming the `/secure/` path segment does NOT require a login (the item's own `access` field reads public, but the path name is a real yellow flag worth settling explicitly). **Expect:** HTTP 200 with no auth challenge.
+6. On planyr.io, open (or start blank at) a site in each of these 5 states and use "Select parcels" over a real address. **Expect:** a parcel outline renders and is selectable, the same as any Texas/Colorado county today.
+
+**Result:** ⏳ pending — needs a network outside this sandbox's egress allowlist; not reachable from here. `Cadence: once` (re-probe on suspicion of drift via `npm run probe:parcels`, per NEW-2's staleness-date/re-probe path).
+
 ### V959152 — B1320512: opening the owner's real Richfield plan (two Storage-backed PDF overlays, cold IndexedDB) no longer freezes the canvas `Blocker: auth` `Blocker: real-data`
 
 **Why this needs its own real pass.** The reported freeze is on the STORAGE-REHYDRATE path (`SitePlanner.jsx`'s cross-device-reload effect: cold IndexedDB → download from the private `doc-review-files` Supabase Storage bucket → `rasterizeStoredPdf`) against the owner's own two real overlay PDFs on a real, signed-in, RLS-scoped project — this sandbox's proxy CORS-blocks the Supabase auth handshake, so that exact path can't be driven here. What's proven without a browser sign-in: the underlying mechanism this fix touches (`knockoutCanvas`'s per-band loop) is IDENTICAL whichever caller reaches it — a live file drop and the storage rehydrate both end at the same `rasterizePage`/`renderPageCanvas`/`knockoutCanvas` chain — so a headless, logged-out two-overlay **drop** (real PDF, same page dimensions as the owner's Bain/Richfield sheet) exercises the exact code this fix changed, cold, with nothing cached. Measured there: worst single main-thread block cut from 716.2ms to 179.6ms (a 4x reduction) across two overlays dropped back to back; full mechanism writeup and numbers are on B1320512. The worker-vs-main-thread question the dispatch raised is independently settled (a real Worker is confirmed constructed and working — see B1320512), so what remains for a live pass is confirming the SAME improvement shows up in the owner's own perfcap telemetry against his real files, not re-litigating the mechanism.
