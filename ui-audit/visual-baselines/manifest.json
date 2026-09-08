@@ -6,14 +6,14 @@
   "surfaces": {
     "map-landing": {
       "light": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "589db6d7",
+        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
       },
       "dark": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "589db6d7",
+        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
       },
       "light--phone": {
         "approvedAt": "2026-09-06",
@@ -28,14 +28,14 @@
     },
     "site-planner-header": {
       "light": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "589db6d7",
+        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
       },
       "dark": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "589db6d7",
+        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
       },
       "light--phone": {
         "approvedAt": "2026-09-06",
@@ -50,14 +50,14 @@
     },
     "site-planner-left-rail": {
       "light": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "589db6d7",
+        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
       },
       "dark": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "589db6d7",
+        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
       },
       "light--phone": {
         "approvedAt": "2026-09-06",
@@ -72,14 +72,14 @@
     },
     "library": {
       "light": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "589db6d7",
+        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
       },
       "dark": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "589db6d7",
+        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
       },
       "light--phone": {
         "approvedAt": "2026-09-06",
