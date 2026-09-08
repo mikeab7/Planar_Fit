@@ -145,7 +145,7 @@ describe("the derivation changes nothing about enumeration or the statewide pseu
       "ak_statewide", "ar_statewide", "ct_statewide", "de_statewide", "fl_statewide",
       "hi_statewide", "in_statewide", "ma_statewide", "md_statewide", "mn_statewide", "mt_statewide", "nc_statewide",
       "nd_statewide", "ne_statewide", "nh_statewide", "nj_statewide", "ny_statewide", "oh_statewide", "tn_statewide",
-      "ut_statewide", "vt_statewide", "wi_statewide", "wy_statewide",
+      "ut_statewide", "va_statewide", "vt_statewide", "wi_statewide", "wv_statewide", "wy_statewide",
     ]);
   });
 
