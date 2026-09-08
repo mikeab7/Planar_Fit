@@ -79,7 +79,11 @@
      consumer of the pair (cards throughout the app) picks up the wider separation for free. */
   --surface-page:   #E7EBF0;
   --surface-raised: #FFFFFF;
-  --surface-overlay: rgba(255, 255, 255, 0.94); /* frosted floating panels over the map */
+  /* NEW-1 (owner chat, 2026-09-08) — floating panels over the map (Layers/View/Comps/Adjust) used
+     to be TRANSLUCENT ("frosted"), and the owner reported the aerial reading through them as
+     confusing a third time (AnchoredMenu with no background at all, B1263075; this). Fully
+     opaque now, in both themes — the paired blur (FloatingPanel.jsx) is removed with it. */
+  --surface-overlay: rgb(255, 255, 255);
   /* B986096-HARDENING-25 — `--surface-base` was referenced by ~10 components (form inputs inside
      dialogs/panels: CompEntryGrid's cell editors + paste box, PartyNameField, CompDraftsPanel,
      CompsPanel, SitePlansSection, NoteEditor, RoadCrossSectionDialog, SetLocationDialog) but was
@@ -274,10 +278,12 @@
   --canvas-chip-ink:    #15171C;
   /* NEW-1 — the scale bar / north arrow plate background. Map CHROME over the aerial (like the
      Layers/View panels), not drawn site content, so it follows the theme — unlike --canvas-chip-ink
-     just above, which is a deliberate fixed-white exception. Byte-identical to the plate's old
-     hardcoded-only value in light, so this fix changes nothing already visible there. JS mirror:
-     src/shared/theme/palette.js `canvasPlateFill` (SVG attributes can't read var()). */
-  --canvas-plate-fill:  rgba(249, 248, 244, 0.84);
+     just above, which is a deliberate fixed-white exception. JS mirror:
+     src/shared/theme/palette.js `canvasPlateFill` (SVG attributes can't read var()).
+     ⛔ NEW-1 (owner chat, 2026-09-08) — this plate's own comment already calls it out as the SAME
+     class of surface as the Layers/View panels, so it gets the same opacity fix as
+     `--surface-overlay` above, for the same reason: opaque, not "frosted." */
+  --canvas-plate-fill:  rgb(249, 248, 244);
   --canvas-selection:   #C2410C;   /* drafting red-orange — selection + dimension lines */
   --canvas-accent-soft: #f0d9cc;
   --canvas-mat:         #DCE1E8;
@@ -361,7 +367,8 @@
      ground. */
   --surface-page:   #0A0C0F;
   --surface-raised: #1D2027;
-  --surface-overlay: rgba(24, 27, 33, 0.93); /* frosted floating panels over the map */
+  /* NEW-1 — opaque, matching the light-theme fix above (was a translucent "frosted" card). */
+  --surface-overlay: rgb(24, 27, 33);
   --surface-base: #0A0C0F; /* see the light-theme definition's header for why this alias exists */
   --border-default: #2A2E37;
   --border-strong:  #3A3F4B;
@@ -431,9 +438,9 @@
   --canvas-setback:     var(--canvas-parcel);
   --canvas-line-casing: rgba(0, 0, 0, 0.55);
   --canvas-chip-ink:    #15171C;   /* the chip plate stays white on dark too — same near-black ink */
-  /* NEW-1 — a translucent dark card, matching the "frosted floating panel" every other dark-theme
-     overlay panel already uses (--surface-overlay). No prior dark-mode look to preserve here. */
-  --canvas-plate-fill:  rgba(24, 27, 33, 0.93);
+  /* NEW-1 — opaque, matching --surface-overlay's own dark-theme fix (2026-09-08) — was a
+     translucent "frosted" card, same as every other dark-theme overlay panel used to be. */
+  --canvas-plate-fill:  rgb(24, 27, 33);
   --canvas-selection:   #F26B3A;
   --canvas-accent-soft: rgba(242, 107, 58, 0.18);
   --canvas-mat:         #0E1014;
@@ -813,8 +820,9 @@ kbd {
  * same specificity lost to it, because Leaflet's stylesheet is imported from inside the lazy
  * SitePlanner/MapFinder chunks and can land after this file in the bundle. Same specificity
  * discipline the radius rules above already use, just with a belt-and-suspenders margin.
- * `--surface-overlay` (the "frosted floating panel over the map" token the Layers/View panels
- * already use) keeps every piece of bottom map chrome on one consistent look in both themes. */
+ * `--surface-overlay` (the opaque floating-panel-over-the-map token the Layers/View panels
+ * already use — NEW-1, 2026-09-08: no longer "frosted"/translucent) keeps every piece of bottom
+ * map chrome on one consistent look in both themes. */
 :root .leaflet-container .leaflet-bar a {
   background-color: var(--surface-overlay);
   color: var(--chrome-text);

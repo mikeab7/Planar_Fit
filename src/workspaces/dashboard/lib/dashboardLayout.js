@@ -36,6 +36,9 @@ export const CARD_DEFS = {
   scheduleHealth: { title: "Schedule health", defaultW: 8, defaultH: 7, minW: 3, minH: 4 },
   compsSummary:   { title: "Comps",           defaultW: 4, defaultH: 4, minW: 3, minH: 3 },
   goingQuiet:     { title: "Going quiet",     defaultW: 4, defaultH: 6, minW: 3, minH: 4 },
+  // NEW-1 (Locations map card, owner chat block 2026-09-08) — a real interactive map needs real
+  // room to be legible; minW/minH keep it from being crushed into an unreadable strip.
+  locationsMap:   { title: "Locations",       defaultW: 8, defaultH: 9, minW: 5, minH: 6 },
 };
 
 export const CARD_KEYS = Object.keys(CARD_DEFS);
@@ -45,7 +48,7 @@ export const CARD_KEYS = Object.keys(CARD_DEFS);
 // first-run Dashboard must never be empty); a user who wants a leaner view removes what they
 // don't need in Customize mode, rather than building one up from nothing.
 const DEFAULT_ORDER = [
-  "jumpBackIn", "recentPlans", "pipelineStatus", "needsAttention", "pursuitsTable",
+  "jumpBackIn", "recentPlans", "pipelineStatus", "locationsMap", "needsAttention", "pursuitsTable",
   "scheduleHealth", "compsSummary", "goingQuiet",
 ];
 

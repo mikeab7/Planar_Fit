@@ -90,6 +90,24 @@ describe("sourceHealth — parcel-server circuit breaker (B244)", () => {
     expect(out.map((c) => c.county)).toEqual(["harris", "ne_statewide"]); // open breaker, still never dropped
   });
 
+  it("NEW-1 (2026-09-08, continuing B1332016/B1345824) — Virginia and West Virginia survive their own outage exactly like every other statewide composite, via the real STATEWIDE_KEYS list", () => {
+    // Same mutation proof as the AR/NE cases above, for VA/WV — both measured live from the
+    // owner's own browser (their official hosts, corrected from B1345824 round 1's mistaken
+    // third-party-rehost decline), wired through the identical `<state>_statewide` shape and
+    // reusing this exact outage path, zero per-state code. West Virginia is picked because
+    // services.wvgis.wvu.edu is a REAL, confirmed 403 from this build environment's own egress
+    // policy — the same "genuine outage, not simulated" standing e2e/parcel-outage-fallback.spec.js
+    // already established for county-level sources.
+    expect(STATEWIDE_KEYS).toContain("wv_statewide");
+    expect(STATEWIDE_KEYS).toEqual(expect.arrayContaining(["va_statewide", "wv_statewide"]));
+    const t = 1000;
+    for (let i = 0; i < SOURCE_FAIL_THRESHOLD; i++) recordSourceResult("wv_statewide", false, t);
+    expect(isSourceOpen("wv_statewide", t)).toBe(true); // the breaker really did open — not a no-op
+    const cands = [{ county: "harris", url: "u1" }, { county: "wv_statewide", url: "u2" }];
+    const out = filterHealthyCandidates(cands, STATEWIDE_KEYS, t);
+    expect(out.map((c) => c.county)).toEqual(["harris", "wv_statewide"]); // open breaker, still never dropped
+  });
+
   it("never returns empty even if every candidate's breaker is open (coverage must survive)", () => {
     const t = 1000;
     for (let i = 0; i < SOURCE_FAIL_THRESHOLD; i++) { recordSourceResult("harris", false, t); recordSourceResult("fortbend", false, t); }

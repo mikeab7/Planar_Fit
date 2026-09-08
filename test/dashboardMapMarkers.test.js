@@ -1,0 +1,72 @@
+import { describe, it, expect } from "vitest";
+import { openPipelineProjects, mapMarkers, missingLocationCount } from "../src/workspaces/dashboard/lib/dashboardMapMarkers.js";
+
+const active = (id, origin) => ({ groupId: id, name: id, role: "pursuit", status: "active", origin });
+const pursuit = (id, origin) => ({ groupId: id, name: id, role: "pursuit", status: "pursuit", origin });
+const onhold = (id, origin) => ({ groupId: id, name: id, role: "pursuit", status: "onhold", origin });
+const complete = (id, origin) => ({ groupId: id, name: id, role: "pursuit", status: "complete", origin });
+const dead = (id, origin) => ({ groupId: id, name: id, role: "pursuit", status: "dead", origin });
+const tracked = (id, origin) => ({ groupId: id, name: id, role: "tracked", status: "active", origin });
+
+const HERE = { lat: 29.76, lon: -95.37 };
+
+describe("openPipelineProjects", () => {
+  it("keeps active/pursuit/onhold and drops complete/dead/tracked", () => {
+    const projects = [active("a", HERE), pursuit("p", HERE), onhold("o", HERE), complete("c", HERE), dead("d", HERE), tracked("t", HERE)];
+    expect(openPipelineProjects(projects).map((p) => p.groupId)).toEqual(["a", "p", "o"]);
+  });
+
+  it("handles empty/missing input without throwing", () => {
+    expect(openPipelineProjects([])).toEqual([]);
+    expect(openPipelineProjects(null)).toEqual([]);
+  });
+});
+
+describe("mapMarkers", () => {
+  it("active status becomes the loudest weight, pursuit/onhold the lighter weight", () => {
+    const markers = mapMarkers([active("a", HERE), pursuit("p", HERE), onhold("o", HERE)], []);
+    expect(markers.map((m) => [m.id, m.kind])).toEqual([["a", "active"], ["p", "pursuit"], ["o", "pursuit"]]);
+  });
+
+  it("excludes complete/dead/tracked projects entirely, located or not", () => {
+    const markers = mapMarkers([complete("c", HERE), dead("d", HERE), tracked("t", HERE)], []);
+    expect(markers).toEqual([]);
+  });
+
+  it("drops a project with no usable location rather than plotting a wrong point", () => {
+    const markers = mapMarkers([active("a", null), active("b", { lat: null, lon: -95 }), active("c", HERE)], []);
+    expect(markers.map((m) => m.id)).toEqual(["c"]);
+  });
+
+  it("adds one comp weight per located comp, unlabeled (no name field)", () => {
+    const markers = mapMarkers([], [{ id: "comp1", lat: 30, lon: -96 }, { id: "comp2", lat: null, lon: -96 }]);
+    expect(markers).toEqual([{ kind: "comp", id: "comp1", lat: 30, lon: -96 }]);
+  });
+
+  it("a marker carries the coordinates and, for a project, its own name and record", () => {
+    const p = active("a", HERE);
+    const [m] = mapMarkers([p], []);
+    expect(m).toMatchObject({ kind: "active", id: "a", lat: HERE.lat, lon: HERE.lon, name: "a", project: p });
+  });
+});
+
+describe("missingLocationCount", () => {
+  it("counts only open-pipeline projects/pursuits lacking a usable origin", () => {
+    const projects = [
+      active("a", HERE), active("b", null),
+      pursuit("p", null), onhold("o", null),
+      complete("c", null), // settled — not counted, even though it has no location
+      tracked("t", null),  // market record — not counted
+    ];
+    expect(missingLocationCount(projects)).toBe(3);
+  });
+
+  it("zero when every open project/pursuit has a location", () => {
+    expect(missingLocationCount([active("a", HERE), pursuit("p", HERE)])).toBe(0);
+  });
+
+  it("handles empty/missing input without throwing", () => {
+    expect(missingLocationCount([])).toBe(0);
+    expect(missingLocationCount(null)).toBe(0);
+  });
+});

@@ -206,14 +206,14 @@ export const CANDIDATES = {
   VT: { name: "Vermont", wired: true, assessingUnit: "town (247 towns; VT counties have no assessing role)",
     sources: [{ name: "VT Parcel Program (Vermont Center for Geographic Information, joined to the Dept. of Taxes Grand List)", url: "https://services.arcgis.com/XG15cJAlne2vxtgt/ArcGIS/rest/services/VT_Parcel/FeatureServer/665", cite: "arcgis.com item 1c12a80bb16249ae9235525e3525c89f" }],
     note: "One of the richest schemas of the whole probe (full id/owner/situs/area/value), all 247 towns, 339,251 parcels. Layer id is non-standard (665, not 0) — confirmed, not a typo." },
-  VA: { name: "Virginia", assessingUnit: "county/independent city (98 counties + 39 independent cities, each its own assessing jurisdiction)", sources: [],
-    unmeasuredCandidate: "VGIN's own statewide parcel mosaic (host: vginmaps.vdem.virginia.gov) — named, not queried",
-    noSource: "VGIN's official host (vginmaps.vdem.virginia.gov) is blocked in this sandbox; the only reachable copy is a third-party rehost (a university ArcGIS Online account, not VGIN's own), and VGIN's own description says the layer is attribute-light by design (id only) regardless. Not wired: unverified third-party provenance on top of a thin schema — the same 'a copy on someone else's account is worse than the real thing' judgment this repo already applies to Colorado's Arapahoe/Boulder rows." },
+  VA: { name: "Virginia", wired: true, verify: "live", blocker: "vginmaps.vdem.virginia.gov", assessingUnit: "county/independent city (98 counties + 39 independent cities, each its own assessing jurisdiction)",
+    sources: [{ name: "Virginia Parcels (VDEM, VA_Base_Layers)", url: "https://vginmaps.vdem.virginia.gov/arcgis/rest/services/VA_Base_Layers/VA_Parcels/FeatureServer/0", cite: "measured live in the owner's own browser, 2026-09-08 — not this sandbox" }],
+    note: "MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-08), not this sandbox — vginmaps.vdem.virginia.gov is blocked here. B1345824 round 1 declined this state on 'the only reachable copy is a third-party rehost' — WRONG: that reading traced to this sandbox never being able to reach VGIN's own host at all, not to the official host being unreachable from a real browser. This IS VGIN's own official host. 'Virginia Parcels', polygon, 9 fields: PARCELID, VGIN_QPID, FIPS, LOCALITY, LASTUPDATE, PTM_ID, OBJECTID, Shape__Area, Shape__Length. Attribute-light by design — no owner, no value, no acreage field (only Shape__Area) — the same standing this repo already gives Hawaii's and New Hampshire's thin schemas; wired anyway on that precedent." },
   WA: { name: "Washington", assessingUnit: "county (39 counties)", sources: [],
     noSource: "A real, reachable statewide mosaic exists ('Current Parcels', geo.wa.gov) with decent fields, but its own license text states some counties restrict use of their parcels to 'State of Washington business only' — an explicit use restriction, not just a liability disclaimer, that this app's commercial real-estate use may not clear. Flagged for an owner/legal decision rather than wired silently." },
-  WV: { name: "West Virginia", assessingUnit: "county (55 counties)", sources: [],
-    unmeasuredCandidate: "WVGIS's own statewide parcel service (host: services.wvgis.wvu.edu) — named, not queried",
-    noSource: "The official host (services.wvgis.wvu.edu) is blocked in this sandbox; the only reachable copy is a third-party rehost under a named individual's personal ArcGIS account, with no license metadata at all. Not wired: the same third-party-provenance concern as Virginia, here with even weaker attribution." },
+  WV: { name: "West Virginia", wired: true, verify: "live", blocker: "services.wvgis.wvu.edu", assessingUnit: "county (55 counties)",
+    sources: [{ name: "WVParcels (WV GIS Technical Center)", url: "https://services.wvgis.wvu.edu/arcgis/rest/services/Planning_Cadastre/WV_Parcels/MapServer/0", cite: "measured live in the owner's own browser, 2026-09-08 — not this sandbox" }],
+    note: "MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-08), not this sandbox — services.wvgis.wvu.edu is blocked here. B1345824 round 1 declined this state on 'the only reachable copy is a third-party rehost under a named individual's personal account' — WRONG, same mistake as Virginia: this sandbox never reached the WV GIS Technical Center's own host at all. 'WVParcels', polygon, 21 fields: CleanParcelID, FullOwnerName, OWNER1, OWNER2, FullPhysicalAddress, CALC_ACRE, COUNTY, Map, Parcel, Dist, CountyID. No appraised-value field — left absent, never zero or blank. ⛔ Layer 0 is the parcels; sibling layers on the same service are 1 (Districts) and 5 (Site Address Points)." },
   WI: { name: "Wisconsin", wired: true, assessingUnit: "municipal (town/village/city; a minority of counties use a county-assessor system)",
     sources: [{ name: "Wisconsin Statewide Parcels DB V12 (State Cartographer's Office / DOA Land Information Program)", url: "https://services3.arcgis.com/n6uYoouQZW75n5WI/arcgis/rest/services/Wisconsin_Statewide_Parcels_DB/FeatureServer/0", cite: "arcgis.com item 2386813b23ea4e51a009f7d1d6b76e02" }],
     note: "Fullest field set of the whole probe (id/owner/situs/three acreage measures/five value fields), 3,574,646 parcels, hosted by the official WI DOA account, explicitly 'free for public consumption.'" },
@@ -365,10 +365,12 @@ function buildMarkdown(results, probedAt) {
   lines.push("> covering different halves of the state. That is an INTEGRATION gap, never a DATA gap; its Candidate cell always names the");
   lines.push("> real service(s), with a real clickable URL when one is on record.");
   lines.push(">");
-  lines.push("> **Hawaii, Maryland, Nebraska, New Hampshire, Mississippi, Pennsylvania and Kansas were additionally measured LIVE FROM");
-  lines.push("> THE OWNER'S OWN BROWSER on 2026-09-08 — a real, unrestricted network, never this sandbox.** Their per-state notes below");
-  lines.push("> say so explicitly; do not read their `blocked-in-sandbox`/`host-error` reachability columns (a property of THIS sandbox's");
-  lines.push("> own probe run) as evidence the sandbox itself ever reached them — it did not, and cannot.");
+  lines.push("> **Hawaii, Maryland, Nebraska, New Hampshire, Virginia, West Virginia, Mississippi, Pennsylvania and Kansas were");
+  lines.push("> additionally measured LIVE FROM THE OWNER'S OWN BROWSER on 2026-09-08 — a real, unrestricted network, never this");
+  lines.push("> sandbox.** Their per-state notes below say so explicitly; do not read their `blocked-in-sandbox`/`host-error`");
+  lines.push("> reachability columns (a property of THIS sandbox's own probe run) as evidence the sandbox itself ever reached them —");
+  lines.push("> it did not, and cannot. Virginia and West Virginia were previously declined (B1345824 round 1) on a mistaken reading");
+  lines.push("> of this exact blind spot — their official hosts were never actually unreachable, only unreachable FROM HERE.");
   lines.push("");
   lines.push("| State | Assessing unit | Verdict | Candidate | Reachable here | Feature count | Geometry | Fields | Wired? |");
   lines.push("|---|---|---|---|---|---|---|---|---|");

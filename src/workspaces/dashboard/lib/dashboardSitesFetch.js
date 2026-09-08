@@ -12,6 +12,11 @@
  * bump the site header, so this can read 20-65 hours behind). That's an accepted, documented
  * simplification for a dashboard summary card — never treated as authoritative elsewhere in
  * the app, and this module doesn't claim more precision than it has.
+ *
+ * NEW-1 (Locations map card) — `origin:data->origin` pulls the plan's geo anchor (`{lat,lon}` or
+ * null, storage.js's own `origin` field — see SetLocationDialog.jsx) straight out of the `data`
+ * jsonb, the same `data->X` (single-arrow, object-valued) pattern doc-review's `reviewStore.js`
+ * already uses for `placed`/`orgScope`. A plan with no location reads `origin: null`.
  */
 import { supabase } from "../../site-planner/lib/supabase.js";
 
@@ -22,7 +27,7 @@ export async function fetchSiteSummaries() {
   try {
     const { data, error } = await supabase
       .from("sites")
-      .select("id, group_id, site, name, county, updated_at, thumbnail_svg, status:data->>status, role:data->>role, feasibilityExpiry:data->>feasibilityExpiry, loiDate:data->>loiDate, closingDate:data->>closingDate")
+      .select("id, group_id, site, name, county, updated_at, thumbnail_svg, status:data->>status, role:data->>role, feasibilityExpiry:data->>feasibilityExpiry, loiDate:data->>loiDate, closingDate:data->>closingDate, origin:data->origin")
       .is("deleted_at", null)
       .order("updated_at", { ascending: false });
     if (error || !Array.isArray(data)) return [];

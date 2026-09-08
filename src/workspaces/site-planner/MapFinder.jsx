@@ -3853,7 +3853,8 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
           // "surface that CONTAINS other things") is right for the OPEN content card; collapsed,
           // this reads as a standalone control, so it borrows RADIUS.md + the same solid
           // surface-raised fill from MAP_CORNER_CHIP_STYLE instead of the panel's own
-          // slightly-translucent surface-overlay.
+          // surface-overlay (both opaque since NEW-1, 2026-09-08 — this is a shape choice, not
+          // an opacity one).
           background: layersPanelOpen ? "var(--surface-overlay)" : MAP_CORNER_CHIP_STYLE.background,
           border: `1px solid ${PAL.panelLine}`, borderRadius: layersPanelOpen ? RADIUS.lg : RADIUS.md,
           padding: layersPanelOpen ? "6px 9px 8px" : 0, fontSize: 12, color: PAL.ink, boxShadow: "0 2px 8px rgba(0,0,0,0.12)",

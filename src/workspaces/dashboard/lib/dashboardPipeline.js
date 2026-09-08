@@ -9,6 +9,10 @@
  * project, the way SitePlannerApp.jsx's own `siteGroups` memo does, picking the most-recently-
  * updated plan as the group's representative (its status/name/county are what the owner would
  * see if they opened the project right now) and counting every plan in the group.
+ *
+ * NEW-1 (Locations map card) — the representative plan's `origin` ({lat,lon} or null) rides
+ * along too, so the same grouped-project list this file already builds can also answer "where is
+ * it" without a second read of `sites`.
  */
 
 const DEFAULT_STATUS = "pursuit"; // siteStatus.js's own new-site default
@@ -42,6 +46,8 @@ export function groupProjectsByGroupId(siteRows) {
       role: newest.role || DEFAULT_ROLE,
       updatedAt: newest.updated_at || null,
       planCount: rows.length,
+      // NEW-1 — the geo anchor, straight through from the representative plan; null when unset.
+      origin: newest.origin || null,
       // B1161793 (NEW-2) — the pursuit's contractual dates (feasibility expiry / LOI response /
       // closing), read straight through from the representative plan. Absent on every pursuit
       // until entered via the "Deal dates…" editor — see pursuitsList.js's own header.
