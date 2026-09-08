@@ -1477,3 +1477,4 @@ server/
 ```
 
 <!-- zz-claude-test: touch-guard verification, will be deleted -->
+<!-- zz-claude-test: nudge to trigger pull_request synchronize after base retarget -->
