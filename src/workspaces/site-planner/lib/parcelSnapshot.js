@@ -9,8 +9,19 @@
  *
  * The geometry helpers (featuresForView / featureAtPoint / featureBbox) are pure and unit-tested in
  * plain Node (test/parcelSnapshot.test.js). The IO (ensureSnapshot / IndexedDB / fetch) degrades to
- * a no-op when IndexedDB/fetch/DecompressionStream aren't available, so behaviour is never worse
- * than today. Kill switch: VITE_PARCEL_SNAPSHOT=0.
+ * a no-op when IndexedDB/fetch aren't available, so behaviour is never worse than today. Kill
+ * switch: VITE_PARCEL_SNAPSHOT=0.
+ *
+ * ⛔ B1164656 (NEW-1) — the full-snapshot fetch below is a plain `r.json()`, on purpose: the
+ * `/api/parcel-cache` endpoint decompresses its stored gzip Drive copy SERVER-SIDE before
+ * responding (functions/api/parcel-cache/_handler.js), so this module never touches
+ * `DecompressionStream` itself. A prior version had the server ship raw gzip bytes with a manually
+ * set `content-encoding: gzip` header and expected the browser to gunzip it transparently — measured
+ * live in a real signed-in browser against production, it does NOT, `r.json()` threw, and the
+ * `catch (_) { return; }` below swallowed it silently, so the snapshot never loaded in ANY real
+ * browser even though the endpoint reported healthy. Don't reintroduce client-side decompression as
+ * "a fix" — the bug was the server declaring an encoding it didn't reliably apply, not a missing
+ * client capability.
  */
 import { geoJsonToEsriFeature, outerRingsLngLat } from "./arcgis.js";
 import { SNAPSHOT_COUNTIES, STATEWIDE_PARCEL_LAYER } from "./counties.js";
