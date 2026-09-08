@@ -19,7 +19,7 @@
  */
 import { useEffect, useState } from "react";
 import { RADIUS } from "../../../shared/ui/radius.js";
-import RowInfo from "./RowInfo.jsx";
+import RowInfo from "../../../shared/ui/RowInfo.jsx";
 import {
   rowInfoSections, combineLayerStatus,
   buildGroupSlots, mergeSlotAnyOn, mergeSlotOpacity, mergeGroupInfoSections,

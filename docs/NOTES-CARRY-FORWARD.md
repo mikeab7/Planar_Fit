@@ -69,8 +69,9 @@ Two more found since, each worth its own line because each returned a confident 
    it and the harness reported *"the group drag moves only one box"* about working code.
 9. **A BOX'S TOP-LEFT CORNER IS THE DRAG GRIP, NOT ITS CONTENT (2026-08-28).** A harness that
    clicks `boxEl.x + 10, boxEl.y + 10` to "enter" an anchored box is aiming at
-   `.planyr-anchor-grip` (`left: 3px; top: 5px; width: 9px; height: 14px` in `NoteEditor.jsx`'s
-   `EditorStyles`), which has its OWN mousedown handling for dragging the box and never reaches
+   `.planyr-anchor-grip` (`left: 3px; top: 4px; width: 12px; height: 20px` in `NoteEditor.jsx`'s
+   `EditorStyles` — it was 9×14 when this trap was written), which has its OWN mousedown handling
+   for dragging the box and never reaches
    `focusFromMat` at all. This produced a completely convincing false positive: a caret that
    looked permanently stuck on "click a different row inside an already-entered box", an
    every-other-click toggle in the trace, and a plausible-sounding root cause in the app's own
@@ -79,6 +80,30 @@ Two more found since, each worth its own line because each returned a confident 
    the box's content) not matching what a mousedown-capture trace on `window` actually saw
    (nothing, for the corner clicks). **Click the box's actual visible content** (the center of a
    real cell/word), never a fixed offset from the box's own bounding rect corner.
+   > **⛔ AMENDED 2026-09-08 (NOTES-FREE-PLACEMENT) — the trap is NARROWER now but is NOT gone.**
+   > The whole box body is a drag surface, so the grip is no longer the only way to move a box and
+   > the two behave the same on a press that travels. What is unchanged, and is why this stays:
+   > the grip still owns its own press, still sits at the box's top-left, and still is not content
+   > — so a fixed offset from the corner is still not a way to reach a word.
+
+10. **A DRAG THAT LEAVES ITS OWN ELEMENT STOPS BEING DELIVERED TO IT (2026-09-08).** A body drag
+   wired with `pointerdown` + `pointermove` on the box, capturing the pointer only once a movement
+   THRESHOLD was crossed, moved nothing at all — because a 150px drag leaves a 180px box within a
+   few pixels, and `pointermove` stops targeting an element the pointer is no longer over. The
+   gesture never reached its own threshold. It reads exactly like the defect being fixed (the box
+   does not move, silently), and it reported as one. **Capture the pointer at the PRESS**, and use
+   the threshold only to decide whether the gesture COUNTS as a drag; capturing does not swallow
+   the press, so a deferred drag can still coexist with a `mousedown` handler that selects.
+11. **A HARNESS THAT KEEPS PRESSING THE SAME BOX ENDS UP INSIDE IT (2026-09-08).** The two-stage
+   model means press 1 selects and press 2 puts the caret IN the box — so a harness that clicks a
+   box to select it, then runs several gestures in sequence, is measuring a box in EDITING state by
+   the second gesture, where a body drag correctly stands down in favour of text selection. Four
+   consecutive "the drag does nothing" rows came from that and from nothing else. Open a fresh page
+   per case, or drive the grip, which drags unconditionally.
+12. **A CLICK IN THE MAT NOW CREATES A NOTE, so "click away" is not a neutral act (2026-09-08).**
+   A harness that dismisses something by clicking elsewhere on the grey mat has placed another
+   note, and a count that was 1 before and 1 after may be a different box entirely. Click away onto
+   the page, or count identities rather than nodes.
 
 See also `ui-audit/TRAPS.md`, and the named rules **FOREGROUND-OR-VOID** (a background tab cannot
 be measured — not its clock, not its pixels) and **COUNT-EVERY-KIND**.
@@ -153,6 +178,17 @@ position**.
 ---
 
 ## 5 · The recurring bug families — suspect these first
+
+0. **⛔ A RULE SHIPPED ON SOME OF ITS EDGES AND CLAMPED ON THE REST (added 2026-09-08,
+   NOTES-FREE-PLACEMENT).** The page-grows-to-fit feature grew RIGHT and DOWN and floored LEFT and
+   UP, and shipped, and read as working — because everything anybody tried first happened to go
+   right or down. The owner found it in one gesture. **The tell is an asymmetric pair of helpers:**
+   `anchorExtentX`/`anchorExtent` existed and `anchorExtentLeft`/`anchorExtentTop` did not, so the
+   only available answer on two of four edges was a clamp. Whenever you add a rule with a
+   direction in it, write down all of its directions and check each one; a single-direction check
+   is exactly what shipped last time. Same species as **B539648** (the page grew down but crushed
+   content sideways) and **B421490** (the vertical half existed, the horizontal half did not) —
+   three instances now, all in this one feature.
 
 1. **A GLOBAL KEY BINDING LEAKING INTO TEXT.** Escape handled twice (B434418); the arrow-nudge
    swallowed arrows while typing (B519681). The guard is a **PROPERTY** — every globally-bound key
@@ -435,6 +471,57 @@ position**.
     being green. **When a fix touches more than one call site, find EVERY real caller by driving the
     actual UI control, not by grepping for the function name** — a grep would have found both, but
     only the real button surfaced that one of them was wired wrong.
+11. **A SIMILARITY SCORE IS NOT PROOF OF IDENTITY, AND "NO NODE ANYWHERE" IS NOT ALWAYS "LOST"
+    (NEW-1, the notes-reconciler-stale-index fix, owner report 2026-09-08 — "i dont trust
+    them").** He was shown a duplicate banner naming two DIFFERENTLY-TITLED notes as copies of
+    one, with a one-click "Keep only…" button that bins whichever one is not kept. He was right
+    not to trust it: the detector compares TEXT similarity (word-pair Dice, ≥0.9), which is
+    strong evidence two notes are related, never proof they are the same note — and the button
+    fired on that evidence regardless.
+    - **THE ACTUAL PAIR, confirmed against production:** a still-live, heavily-edited
+      "Coordination" page (rev 1860) and a page auto-titled `"Recovered — Civil Plat…"` by
+      `unreachableNotes`'s own naming convention. Their bodies differ by ONE WORD in ~40 (this
+      IS the repo's own canonical near-duplicate test fixture — `COORDINATION`/
+      `COORDINATION_COPY` in `test/notesProjectIntegrity.test.js` — reproduced almost verbatim
+      on his real account). `identical` was correctly `false`.
+    - **WHY THE "RECOVERED" ONE EXISTED AT ALL — the real drift, and it is NOT last-writer-wins.**
+      The owner's hypothesis (a single-row whole-account index is LWW) is REFUTED: `mergeTrees`
+      is a real union with tombstones, not a blind overwrite, and a live production sweep of his
+      account tree found the LIVE tree fully deduplicated (23 refs, 23 distinct) and only ONE
+      genuinely dangling reference (an empty leftover section-turned-page from the old
+      notebook/section migration — harmless, not this bug). His crude "75 refs, 55 missing"
+      count was almost entirely the `tombs` ARRAY doing its job — a deletion ledger is SUPPOSED
+      to reference gone pages; counting it as drift was the instrument error, not the app's.
+    - **THE ONE REAL MECHANISM: `purgePages`'s cloud call is fire-and-forget, with no retry.**
+      The 30-day trash sweep (`Notes.jsx`, on mount) removes the tree's bin entry FIRST
+      (synchronous, durable) and only THEN calls `purgePages()` to stamp the server row's
+      `purged_at` — unawaited from the sweep's own perspective, no retry path anywhere if that
+      call is interrupted (tab closed, a network blip). The result, measured on his account:
+      `deleted_at` set, `purged_at` still NULL, no bin entry anywhere — a page correctly
+      considered deleted with nothing left to say so. `unreachableNotes` then treated the
+      orphaned body as "lost, put it back" and resurrected it to LIVE, which is what produced a
+      real "these are copies" finding against a page that was never meant to still exist.
+      **The fix belongs in the reconciler AFTER ALL, but not the merge**: `unreachableNotes` now
+      takes `binned` (a `pageId → deletedAt` snapshot from `notesStore.knownBinnedPages()`,
+      populated every seed from the real page index) and routes a known-binned orphan through
+      `adoptDeletedOrphans` instead — back into a normal BIN entry (own `deletedAt`, not a fresh
+      clock) if still inside its 30 days, or reported for an outright purge if the window has
+      already passed, completing the cascade the interruption left hanging.
+    - **AND THE BANNER ITSELF IS NOW PROOF-GATED.** `IntegrityBanner.jsx`'s one-click
+      "Keep only…" buttons — the ones that BIN a real note on an unproven claim — render only
+      when `group.identical` (byte-identical normalized text). A near-duplicate still gets the
+      "Show me" link and a way to say "not the same, stop telling me", never a button that could
+      bin the wrong side of a guess. `duplicateNotice`'s wording follows the same split — "appears
+      in N different projects" is reserved for a proven match; a near-duplicate reads "read
+      almost the same — not confirmed as the same note."
+    - **A KNOWN, ACCEPTED RESIDUAL GAP, stated rather than hidden:** the binned-ids snapshot is
+      populated fresh every seed and is not persisted, so a scan that runs BEFORE this device's
+      very first successful seed still falls back to the old "recoverable" behaviour for that one
+      pass — the same window that existed unconditionally before this fix, now narrowed to a
+      cold-start race instead of every qualifying scan. Once a page is live, it is `known` and
+      is never re-examined for binned-ness. Worth closing if it is ever observed live; not closed
+      here because doing so safely needs gating the whole integrity scan on "at least one seed
+      has completed," which is a bigger change than this fix warranted.
 
 ---
 

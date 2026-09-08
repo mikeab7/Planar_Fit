@@ -186,6 +186,99 @@ was never clicked" quietly ships broken.
 6. Read the footer with one row anchored and the other not. **Expect:** "1 missing a Location" — and if a row is missing only its Type, the footer must say **"missing a Type"**, never call that a missing Location.
 7. Press **Save comps**. **Expect:** the button is enabled and names the ready count; the comp saves and appears in the Comps list with the parcel's own location. Delete the throwaway comp afterwards and say so in the verification note.
 
+### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back `Blocker: real-data`
+
+**Why this needs its own real pass.** Everything below is measured here on a seeded page in a headless browser, and it all passes — but the report was made on his own Goose Creek → Platting note, whose real content (a long title, a metadata line, real body text, several boxes at once, a window he sized himself) is what the growth budget is computed against. Zoom-/data-density-dependent rendering is a mandatory LIVE-VERIFY class, and a seeded fixture is exactly the thing that can make a real defect unreachable.
+
+**What was verified here (this session, real headless Chromium, real mouse, logged out).**
+1. `ui-audit/verify-notes-free-placement.mjs` §1–§5 — all eight directions (left · right · above · below · four diagonals) drive a box 420px, store the exact asked-for coordinate, grow the page to hold it, and return the same coordinate after a reload. Grow-then-return shrinks the page back to its natural 580 on left, right and above. Two boxes on opposite sides render on one grown page and both survive a reload. Far-left to far-right in one gesture: -300 → 600, on the page, persisted. Phone-width window with a box at x -500: kept and reached.
+2. Unit tests: `anchorExtentLeft`/`anchorExtentTop` (`test/notesAnchorZoom.test.js`), the retired floors in `moveAnchorPoint`/`placeAnchor`/`resizeBox` (`test/notesBoxResize.test.js`, `test/notesAnchorZoom.test.js`), the unclamped group drag (`test/notesMarquee.test.js`). Full repo suite green; `npm run ci-parity` PASS.
+3. `ui-audit/verify-notes-page-growth.mjs` — every check green after its §1 was re-pointed at the new rule (a negative coordinate is KEPT, and opening the note no longer rewrites the stored document).
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, on a THROWAWAY DUPLICATE of a real note (never one of his own plans — owner constraint 7):**
+1. Read the loaded chunk hash in the same observation as everything below (`document.querySelectorAll('script[src]')`), and confirm it names a build after this PR merged. A stale tab will reproduce the OLD behaviour perfectly.
+2. Place a note in the right margin and drag it well past the page's LEFT edge. **Expect:** it follows the pointer the whole way; the page extends leftward to contain it; the title and the body text do NOT jump sideways as it grows.
+3. Drag the same note above the title. **Expect:** it follows; the page extends upward; nothing is cut off at the top.
+4. Drag it back inside the column. **Expect:** the page shrinks back to its ordinary width and height.
+5. Repeat 2–4 diagonally (up-left and down-left). **Expect:** the same on both axes at once.
+6. Put one note far left and a second far right at the same time. **Expect:** one page holds both.
+7. Reload the note. **Expect:** every box is exactly where it was left, and the page is the same size.
+8. Confirm on his ACTUAL Platting note that the old scratch anchor at `y: -21` renders where it says it is and is no longer dragged back onto the page on load.
+
+**Result:** ⏳ pending — needs his own signed-in browser and his own note. Sandbox measurements above are complete and green.
+
+### V993809 — B1370545: something can actually be placed and kept level with the page title `Blocker: real-data`
+
+**Why this needs its own real pass.** The room a box has above the body's origin is the sheet's top padding plus the TITLE BAND's own height — and that band's height depends on the title's length, whether the note carries a project badge, and the phone breakpoint. A seeded page has a short title and one metadata line; his real notes do not.
+
+**What was verified here (this session, real headless Chromium, logged out).** `ui-audit/verify-notes-free-placement.mjs` §6: a box stored at `y: -60` renders overlapping the title's own bounding rect (title top 151, box top 177) and is fully inside the sheet, which grew upward to hold it. `ui-audit/verify-notes-print-free-placement.mjs` §1 confirms the same negative `y` reaches the printed document verbatim.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, on a throwaway duplicate note:**
+1. Read the served chunk hash in the same observation as the steps below.
+2. Press in the grey margin to the LEFT of the page, level with the page's title. **Expect:** a note is created there, beside the title, not below the metadata line.
+3. Type into it, click away, reload. **Expect:** it is still beside the title.
+4. Drag an existing note from the body up until it is level with the title. **Expect:** it goes there and stays; the page grows upward rather than stopping it.
+5. Do 2–4 again on a note with a LONG title that wraps, and on a note filed in a project (so the badge row is present). **Expect:** the same, with the page reaching further up as the band is taller.
+6. Repeat step 2 on a phone-width window. **Expect:** the same behaviour at the phone's own title size.
+
+**Result:** ⏳ pending — needs his own signed-in browser and a note with a real title and metadata line.
+
+### V993810 — B1370548: printing a note that carries placed content, from a real browser's own print dialogue `Blocker: real-data`
+
+**Why this needs its own real pass.** PDF/export parity is a mandatory LIVE-VERIFY class, and headless Chromium's `window.print()` is a documented no-op — this sandbox can build and render the printed document but cannot drive the dialogue that produces his actual paper or PDF. It is also the specific thing he refused to have closed on a code reading.
+
+**What was verified here (this session, real headless Chromium).**
+1. `ui-audit/verify-notes-print-free-placement.mjs` §1 drives the REAL toolbar Print button (`nt-print`) and reads the sheet it wrote: `max-width: max(190mm, 1152px); padding-left: calc(8mm + 276px); padding-top: calc(10mm + 156px)`, all four boxes present, their negative coordinates serialised verbatim.
+2. §2 lays the same document out at full size and confirms all four boxes are inside the printed sheet (left 46px in, right 46px in, above 139px down, below 919px down), then renders a real PDF — `artifacts/notes-free-placement-print.pdf`, attached to the PR with a PNG of the same sheet.
+3. The scaled-vs-clipped question was settled by decompressing a control PDF's own content stream: a 1152px sheet's far-right marker lands at exactly 612.0pt, the Letter MediaBox's full width, on one page. **The whole layout is SCALED to the paper (71% here), not clipped.** Height paginates.
+4. Unit tests for the left/top print growth in `test/notesRoundTwo.test.js`, including all four edges at once and the quiet no-growth case.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, on a throwaway duplicate note carrying notes placed left, right, above and below:**
+1. Read the served chunk hash in the same observation as the steps below.
+2. Press Print in the note toolbar. **Expect:** the browser's own print preview opens showing the whole page, with all four placed notes visible on it.
+3. In the preview, confirm nothing is cut off at the left edge, the right edge or the top. **Expect:** the sheet is scaled down to fit the paper's width; no box is sliced.
+4. Save as PDF and open it. **Expect:** the same — four boxes, all whole, in the same relative positions they occupy on screen.
+5. Confirm a note with NOTHING placed outside its column prints exactly as it always did — normal margins, no extra white space at the left or top.
+6. Print a note whose content runs past one sheet. **Expect:** it paginates onto the next sheet as ordinary text always has; nothing is lost at the page break.
+
+**Result:** ⏳ pending — needs a real browser print dialogue. The document that dialogue will be handed is fully built, measured and rendered here.
+### V989200 — B1365936: the Dashboard Comps card's reverse-geocoded address and its click-through both work on a real signed-in account `Blocker: live-GIS` `Blocker: auth` `Blocker: real-data`
+
+**Why this needs its own real pass.** Two genuinely network/auth-dependent legs of an otherwise fully sandbox-proven card: (1) the address headline's reverse geocode (`site-planner/lib/geocode.js`'s `reverseGeocodeLatLon`, dynamically imported) calls `geocode.arcgis.com` and `nominatim.openstreetmap.org` — both unreachable from this sandbox's egress allowlist, confirmed by the same class of block every other external-GIS item in this file already documents; (2) the card's whole-card click-through (`onOpenCompInSitePlanner` → `Shell.jsx`'s `compIntent` → `SitePlannerApp.jsx` → the existing `focusCompId` MapFinder already reads) was driven headless against a local demo plan (confirmed it navigates to the Site route and opens the map — see the session's own screenshots), but not against a real signed-in account's real comps, which this sandbox's proxy CORS-blocks the Supabase auth handshake for.
+
+**What was verified here (this session, sandbox — layout/math/theming/states fully proven, never assumed).**
+1. `test/compsCardModel.test.js` — 38 unit tests: the peer-set rule (same county + type + size band, missing-county/size exclusion counted not dropped), the type-honest headline rate per comp type, the comparison sentence (rank phrasing, median delta, band/county wording), the scale's fraction geometry (incl. the zero-span/all-identical-rates edge case), the county-label formatter (`co_` prefix → Colorado, else Texas), and the empty/fewer-than-3-peers integration shape.
+2. Headless Playwright screenshots of the real dev server: the logged-out dashboard's empty Comps card in light AND dark theme (title left, "No comps recorded yet." in the standard italic empty-state style, "+ Add a comp" in the brand accent) — clicking "+ Add a comp" correctly routes to the Site route (`#/site`).
+3. A scratch preview harness (rendered `CompsCard` directly with fixture data through the real component + real `index.css` tokens, never committed, deleted at the end of the session) across four scenarios in both themes, screenshotted and read back: a full lease comp with 8 qualifying peers (headline, county+age line, `$5.25` in the accent color with `/SF/yr` beside it, `NNN`+`Lease` chips, the tabular `612,000 SF · 36 ft clear · built 2021` spec line, the tinted footer panel with its scale — low/high ticks, 7 muted peer dots, the larger accent dot with its halo and "this one" label above it — and the comparison sentence with an excluded-count note); a too-small-peer-set comp (correctly draws NO scale, just the "stands alone" sentence); a comp with no recorded rate (correctly shows "Rate not recorded" and drops the NNN/gross chip, keeps the deal-type chip); and a building-sale comp (correctly shows `$88`/`SF` with no lease-structure chip, a different county, and its own scale/sentence). No console errors in any run.
+4. `npx vitest run` — 781 files / 15,827 tests green. `npm run lint` 0 errors. `npm run build` clean. `node ui-audit/design-drift-audit.mjs --check` / `node ui-audit/perf-bundle-audit.mjs` / `node ui-audit/doc-pointer-audit.mjs` all clean.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner, a real account with at least one comp on record:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Open the Dashboard. **Expect:** the Comps card shows the header's right-aligned "latest of N" (N = the account's real comp count), the most-recently-ADDED comp's real street address as the headline (not a county name — the live reverse-geocode should resolve to something like "1234 Main St, Houston, TX" for a pin/parcel-anchored comp), the county + a real "N days/months ago" age line, its rate in the accent color, its chips, and its spec line for whichever of building size / clear height / year the comp actually has recorded (a comp entered before this PR will show blank clear-height/year — expected, not a bug, since the entry-grid columns are new).
+3. If the account has ≥3 comps of the same type in the same county and a comparable size band as the featured one: confirm the footer scale draws and the peer dots + featured dot land at plausible positions relative to the printed low/high labels. If fewer than 3 qualify: confirm the "stands alone" sentence instead, with no scale drawn.
+4. Click anywhere on the card body (not just a chip). **Expect:** navigates to the Site route, the map/finder view opens with the left rail's Comps tab active and the featured comp visibly focused/highlighted (matching how clicking a comp pin or a Comps-panel row already behaves).
+5. In the Site Planner's comp entry sheet (Comps tab → paste-box or a new row), enter a value into the new "Clear Ht (ft)" and "Yr Built" columns on a building-sale or lease row, save, and reload. **Expect:** both values persist and round-trip; a land row shows them greyed (not applicable), matching every other building_sale/lease-only column on that sheet.
+
+**Result:** ⏳ pending — needs a real signed-in browser session on production with real network access; not reachable from this sandbox. `Cadence: once`.
+### V983520 — B1360256: the notes reconciler stops resurrecting his real deleted "Coordination" duplicate, and the false "these are copies" banner is gone `Blocker: auth`
+
+**Why this needs its own real pass.** The bug is entirely about signed-in cloud sync state (the server's `deleted_at`/`purged_at` on a real `notes_pages` row, and the account's real `notes_trees` blob) — this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can drive a real sign-in or a real seed against production. Everything short of that IS verified here: a live, read-only SQL sweep of the actual account confirmed the mechanism (see `BACKLOG.md` → **B1360256** for the full trace), and the fix itself is proven against a fake Supabase client shaped like the deployed schema (`test/notesTwoClientConflict.test.js`, three new cases: stays off the live list, gets a normal bin entry back inside its 30 days, completes the interrupted purge outright once the window has passed) plus pure-function coverage of every decision (`test/notesReachability.test.js`).
+
+**What was verified here (this session, read-only SQL + sandbox tests, never the live app).**
+1. Confirmed the exact reported page (`pg_ms8z7vik4vejfpp`, "Recovered — Civil Plat Resubmitted to Baytown 7/13 CP Grant …") is `deleted_at`-set, `purged_at`-null, and referenced by no live node and no bin entry anywhere in the account's real `notes_trees` row.
+2. Confirmed its near-duplicate sibling (`pg_ms9gfprm2viq50r`, "Coordination", Grand Port) is still live, at server revision 1860 — an actively-edited page, not an abandoned one.
+3. Confirmed `findCrossProjectDuplicates` reports `identical: false` for this real pair (one word differs, ~0.97 similarity) — the exact shape `test/notesProjectIntegrity.test.js` already encodes as its canonical fixture.
+4. Full repo suite green (780 files / 15,790 tests), lint 0 errors, build clean.
+
+**DO NOT REPAIR HIS DATA — nothing was hand-edited; every fact above came from a read-only query.** The live check below will very likely finish deleting `pg_ms8z7vik4vejfpp` outright (its 30-day window has already passed) — that completes a deletion already requested a month ago, not a new one; say so if it surprises him.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner:**
+1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
+2. Open Notes, let the tree settle for a few seconds (the integrity scan runs on a delay after load). **Expect:** the "One note appears in 2 different projects" banner naming "Coordination"/"Recovered — Civil Plat…" is GONE.
+3. Check the Grand Port "Coordination" page is unchanged and still live. **Expect:** present, same content, editable.
+4. Check "Not in a project" for a page titled "Recovered — Civil Plat…". **Expect:** absent — it should have been purged outright (see the note above) or, if for some reason it is still within a 30-day window by the time this runs, moved into the Bin instead of sitting on the live page list.
+5. If it moved to the Bin: open the Bin view and confirm it is listed there, readable, and restorable — normal bin behaviour, nothing special about it.
+6. Reload once more. **Expect:** the duplicate banner does not reappear, and no other page is claimed as a duplicate of anything it was not before.
 ### V991328 — B1368064: the Dashboard's "Recent plans" card shows real, recognizable renders of the owner's own plans and refreshes on save `Blocker: auth` `Blocker: real-data`
 
 **Why this needs its own live pass.** The whole point of this card is that the owner recognizes his own site plans by their SHAPE — that can only be judged against his real, signed-in plans, never a sandbox fixture. Everything else (the SVG renderer itself, the storage/sentinel model, the deletion-respecting selection, the 4-vs-2 adaptive layout, and the card's presence/wiring in the arrangeable grid) is proven headless/Node below.
@@ -232,6 +325,30 @@ was never clicked" quietly ships broken.
 8. If reachable, confirm a genuinely empty account (or a throwaway test account with nothing placed) shows the short "Nothing placed yet…" line with no map — already proven headless/logged-out above; this step just confirms the same behavior signed in.
 
 **Result:** ⏳ pending — needs a real signed-in browser session with real located/unlocated data, and a network that can reach `server.arcgisonline.com`; neither is reachable from this sandbox. `Cadence: once`.
+### V995616 — B1372352: California's and Rhode Island's official statewide parcel layers answer, and the app renders/selects a parcel from each `Blocker: live-GIS`
+
+**Why this needs its own live pass, and why the two halves are NOT symmetric.** GIS endpoint behaviour is a mandatory LIVE-VERIFY class, so the app-level render/select check is live for both states. But their reachability standing here is different and must not be blurred:
+
+- **California is NOT sandbox-blocked.** Its endpoint sits on `*.arcgis.com`, which this environment's egress allowlist permits, and it was **queried live and directly from this sandbox** — HTTP 200, 13,138,000 features, polygon geometry, the full 21-field list. The DATA is sandbox-verified; only the app-level render/select is outstanding.
+- **Rhode Island IS sandbox-blocked.** `risegis.ri.gov` is a state `.gov` host this environment 403s at the CONNECT tunnel — the same signature as AR/DE/IN/NJ/NC/HI/MD/NE/NH/VA/WV before it (V965344, V984688). Its measurement comes from **the owner's own browser, 2026-09-08**, relayed as measured fact and never re-derived here.
+
+**⛔ What this item is correcting, because it bears directly on how the live check should be read.** Both states were on record as `no-free-source` with `Candidate: none found`, and both findings were false — California's "only a static 2014 file-geodatabase, 51 of 58 counties, not a live REST service" was wrong in every operative clause, and California's real endpoint was reachable **from this very sandbox** the whole time. The cause was a resolution method that only ever searched state `.gov` hosts and never states' own official ArcGIS Online organizations (fixed under B1372353). So the useful question for a live pass here is not only "does the endpoint answer" but "does the app actually put a parcel on screen in these two states."
+
+**What was verified here (this session, sandbox).**
+1. `node ui-audit/probe-statewide-parcels.mjs` — live, today: California returns **HTTP 200, 13,138,000 features, `esriGeometryPolygon`**, `parcelId=PARCEL_APN`, `situsAddress=SITE_ADDR`, owner and appraised value correctly reported ABSENT. Rhode Island returns this sandbox's own CONNECT-tunnel policy block (`blocked-in-sandbox`), not a host error.
+2. Rhode Island's endpoint, layer id, feature count (394,167) and field list come from the owner's own direct-browser measurement — see `docs/STATEWIDE-PARCELS.md`'s Rhode Island note for the exact values.
+3. `npx vitest run` green, including a **mutation-proven** case (`test/sourceHealth.test.js`) that Rhode Island's entry survives its own circuit breaker exactly like every other statewide composite, via the real production `STATEWIDE_KEYS` list — reverting that list to the literal two-state array was checked live to turn this case and three siblings red, then reverted. Plus new routing cases (`test/counties.test.js`): a Fresno point reaches `ca_statewide`, a Providence point reaches `ri_statewide`, and a Houston point carries neither.
+4. `npm run lint` / `npm run build` / `npm run ci-parity` clean.
+
+**Steps, each with a named expected result. Steps 1-2 need only an ordinary internet connection (not this sandbox); steps 3-5 need a real browser on planyr.io. Nothing here depends on knowing anything that is only in the owner's head.**
+1. `curl "https://bz1uwWPKUInZBK94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/rest/services/CA_Statewide_Parcels_Public_view/FeatureServer/0?f=json"`. **Expect:** HTTP 200, a JSON service definition named `CA_Statewide_Parcels_Public`, `esriGeometryPolygon`, fields including `PARCEL_APN`, `COUNTYNAME`, `SITE_ADDR`. (Already confirmed from this sandbox — listed as a drift re-check, not an open question.)
+2. `curl "https://risegis.ri.gov/hosting/rest/services/RIDEM/Tax_Parcels/MapServer/0?f=json"`. **Expect:** HTTP 200, a JSON layer definition named `Tax Parcels`, polygon geometry, fields including `PlatLot`, `Acres`, `E911`, `TownCode`. **This is the one step this sandbox cannot perform at all.**
+3. On planyr.io, open (or start blank at) a site at a real **California** address — e.g. an industrial address in Fresno or Riverside County — and use "Select parcels". **Expect:** a parcel outline renders and is selectable, exactly as in any Texas/Colorado county today. **Owner and appraised value must read ABSENT — never `0`, never a blank string** (this layer carries neither field).
+4. Same at a real **Rhode Island** address — e.g. an industrial address in Providence or Warwick. **Expect:** a parcel outline renders and is selectable; owner and appraised value read ABSENT; the parcel identifier is a `PlatLot` value (a plat-and-lot string, not a county-style APN — Rhode Island has had no county government since 1842).
+5. **The size check, specific to California and the reason it is a named step.** At 13,138,000 parcels this is the largest source in `counties.js` (~21% above Florida's 10.8M). Zoom OUT over a dense California metro until the parcel layer is at its most demanding, then zoom back in. **Expect:** no hang and no blank map; if the server truncates the response, the existing truncation notice appears and SAYS SO — a silently short parcel draw with no notice is a FAILURE of this step, not a pass.
+
+**Result:** ⏳ pending — step 1 confirmed from this sandbox; steps 2-5 need a network/browser outside this build environment. `Cadence: once` (re-probe on suspicion of drift via `npm run probe:parcels`).
+
 ### V984688 — B1361424: Virginia and West Virginia's real official parcel hosts answer, and the app renders/selects a parcel from each `Blocker: live-GIS`
 
 **Why this needs its own live pass.** `ui-audit/probe-statewide-parcels.mjs` hits every candidate live from THIS sandbox, whose outbound network is an org egress allowlist (confirmed: `*.arcgis.com` reachable, most state `.gov`/`.us` domains 403-blocked at the CONNECT tunnel). `vginmaps.vdem.virginia.gov` and `services.wvgis.wvu.edu` both sit on exactly that kind of blocked domain, so neither can be probed from here — which is precisely the blind spot that produced the original wrong "third-party rehost" decline (B1332016/B1345824). What's proven without an unrestricted network reachable from this sandbox: both hosts answered directly from the owner's own real browser on 2026-09-08 (raw JSON service definitions with the field lists recorded in `docs/STATEWIDE-PARCELS.md`'s per-state notes), and the wiring (`va_statewide`/`wv_statewide` in `counties.js`) follows the exact same shape as every other `Verify: live` statewide composite already shipped and later confirmed (AR/DE/IN/NJ/NC/HI/MD/NE/NH — see V965344). What still can only be confirmed from a session with real network access: the app itself (not just the raw REST endpoint) renders and selects a parcel from each of these two states.
@@ -268,27 +385,25 @@ was never clicked" quietly ships broken.
 
 **Result:** ⏳ pending — step 1 is confirmed here (source live-queried from this sandbox, unblocked); the app-level render checks (2-4) need a real browser session against the deployed app and have not been separately confirmed. `Cadence: once` (re-probe on suspicion of drift via `node scripts/build-county-polygons.mjs --fetch`).
 
-### V981392 — B1358128: the Schedule module's own project switcher actually deletes a project, on the owner's own two named throwaway projects `Blocker: auth` `Blocker: real-data`
+### V984944 — B1358128 (×2) / B1361680 / B1361681: deleting a project from the switcher really writes `sites.deleted_at`, on the owner's own two named throwaway projects `Blocker: auth` `Blocker: real-data`
 
-**Why this needs its own real pass.** The bug only manifests inside the Schedule module's "controlled" project switcher, bridged over `postMessage` to the embedded Gantt app's own signed-in, RLS-scoped `hs-v1` cloud document — this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can drive the real embedded app signed in or confirm the actual cloud write landing. The FIX ITSELF — `shared/projects/projectModel.js`'s `resolveControlledId`, and `ProjectBreadcrumb.jsx`'s `doDelete`/`commitRename`/Duplicate routing through it before calling a controlled caller's bridge — is proven end to end in unit tests (`test/projects.test.js`'s new `resolveControlledId` describe block: direct match, single-link resolution, zero-link → null, multi-link prefer-active, null-safety) and against a red-proof (the pre-fix shape — a bare `.find(p => p.linkedSiteId === id)` with no fallback — is explicitly banned by `test/schedulerNavState.test.js`).
+**Why this still needs a real pass, and what no longer does.** Most of what was previously deferred to "a live check" is now driven HERE: `ui-audit/verify-signed-in-project-delete.mjs` runs the real app **signed in** against a stubbed Supabase (`ui-audit/lib/stubSupabase.mjs`) and asserts the actual `PATCH /rest/v1/sites … {"deleted_at":…}` goes out — 11/11 green after the fix, 3/10 with zero soft-delete writes before it. `e2e/menu-layer-nesting.spec.js` pins the mechanism in a real browser (4 of its 5 cases go red when the one-line fix is reverted; the "outside click still dismisses" control stays green). What those cannot cover is the real account's own RLS, the real embedded Gantt app over `postMessage`, and the owner's two specific rows.
 
-**What was verified here (this session, sandbox + code reading + a read-only production query, never the live UI).**
-1. Read the real call graph: confirmed `Scheduler.jsx` is the ONLY `<AppHeader>` caller in the app that passes `projects=`/`onDeleteProject=` ("controlled" mode) — every other workspace (Dashboard, Review, Library, Notes, Spreadsheet/Model, Design Gallery, both Site-route switchers) is uncontrolled and already rides B1303824's fix.
-2. Reproduced the pre-fix no-op shape by tracing the embedded app's own guards in `public/sequence/index.html`: `deleteProject`'s `Object.keys(d.projects||{}).length<=1` guard plus its `delete newProjects[id]` on a non-existent key (a silent, contentless copy), and `renameProject`/`duplicateProject`'s explicit `d.projects[id]` existence checks — all three silently no-op on a raw registry (site) id.
-3. **Read-only query against real production data (`lyeqzkuiwngunutlkkmi`)**, not assumed: confirmed both of the brief's own named throwaway projects (`smtqp3fp3e06` "Untitled site", `smtqml10v4l1` "Untitled project") are still live/undeleted, and confirmed neither appears as a `linkedSiteId` anywhere in the account's real `hs-v1` schedule document (11 real schedules checked) — so both hit the **zero-linked-schedule** branch of this defect, which the fix's site-store fallback (not just the id-remap) is what actually closes for his named repro. Also confirmed the account's real "Goose Creek" site carries 4 distinct linked schedules, live evidence the multi-link branch (unaffected by this defect) is a real, not just synthetic, shape.
-4. `npx vitest run` — full suite green (780 files / 15,784 tests). `npm run lint` / `npm run build` clean.
+**DO NOT repair `smtqml10v4l1` / `smtqp3fp3e06` by hand — deleting them through the fixed UI is this verification's whole proof** (both are throwaway projects, per the owner's own explicit instruction).
 
-**DO NOT repair `smtqp3fp3e06`/`smtqml10v4l1`'s data — deleting them through the fixed Schedule-module UI is this verification's whole proof, per the brief's own explicit instruction** (both are throwaway projects with nothing of the owner's in them).
+**Steps, each with a named expected result — `planyr.io`, signed in as the owner, DevTools Network tab filtered to `sites`:**
+1. Read the served chunk hash in the SAME observation as everything below (`document.querySelectorAll('script[src]')`, or the Network tab) and confirm it is a build after this PR merged. ⛔ The entry bundle's hash does NOT change when only a split chunk changes — read the `AppHeader-*.js` chunk, not `index-*.js`. **Expect:** a hash different from `AppHeader-Bpu_1f_U.js`.
+2. **Site route** → project crumb → the row for "Untitled project" (`smtqml10v4l1`, NOT the current project) → kebab → Delete. **Expect, before confirming:** the dropdown is still open behind the menu, and the dialog reads **"Delete Untitled project?"** — the project's real name, not "this project". (That sentence alone distinguishes the fixed build from the broken one.)
+3. Confirm. **Expect:** a `PATCH .../rest/v1/sites?id=eq.smtqml10v4l1` carrying `deleted_at` appears in the Network tab, and the project leaves the list.
+4. **Schedule module** → project crumb → the row for "Untitled site" (`smtqp3fp3e06`) → kebab → Delete → confirm. **Expect:** the same real `PATCH` — this is the surface that previously deleted only a schedule and never touched `sites` at all.
+5. Hard reload, then open the picker on BOTH routes. **Expect:** neither project is listed on either, and both appear under **Recently deleted** (restorable for 30 days).
+6. **Schedule module** → any real schedule with one linked site (e.g. "Grand Port") → kebab → **Rename** → type a new name → Enter. **Expect:** the inline editor OPENS (it previously opened nothing at all), the row shows the new name immediately, and the name survives a reload.
+7. **The negative control, so a wedged-open menu is caught too:** open the project crumb and click anywhere on the page outside every menu. **Expect:** the dropdown closes normally.
 
-**Steps, each with a named expected result — on `planyr.io`, signed in as the owner, Schedule module, network tab open:**
-1. Read the loaded chunk hash in the same breath as everything below — confirm it names a chunk from a build after this PR merged.
-2. Open the Schedule module's project switcher (breadcrumb dropdown) → find "Untitled site" / "Untitled project" in the list (they will appear via the registry, since neither has a linked schedule) → the kebab → Delete → confirm. **Expect:** the project leaves the switcher list, and (since neither has a linked schedule) the ordinary site-store delete fires — same real `PATCH` write B1303824's own verification already proved for the uncontrolled path.
-3. Repeat for the second project.
-4. Hard reload. **Expect:** both stay gone from the Schedule module's switcher (they now appear under Recently deleted via the Site route, restorable for 30 days).
-5. Separately, pick any real schedule with exactly one linked site (e.g. "Grand Port") from the Schedule module's switcher kebab → Rename → confirm a new name commits and survives a reload. **Expect:** this exercises the single-link resolution branch specifically (a different branch than steps 2-3), confirming the fix's other half.
-6. Confirm both throwaway projects are gone — this closes the owner's original blocking request ("this is prob happening in other places") as well as the verification.
+**Result:** ⏳ pending — needs a real signed-in browser on production. `Cadence: once`.
 
-**Result:** ⏳ pending — needs a real signed-in browser session on production; not reachable from this sandbox. `Cadence: once`.
+### V981392 — SUPERSEDED by V984944 — B1358128's first fix (PR #1557) did NOT close the symptom
+**Result:** ❌ **not verified, and its premise is refuted.** Recorded rather than deleted, because the way it was wrong is the useful part. This check's own reasoning was sound and its production queries were real — and it still blessed a fix that did nothing, because every step it could actually run was a step that could not fail. The owner then measured the shipped build on production and found the delete still writing nothing to `sites` while the notes index moved, which proves the handler ran and the id was never the problem. Root cause, fix and a working signed-in instrument are on **B1358128 (×2)**; the live pass that replaces this one is **V984944**. `Cadence: once` — closed 2026-09-08.
 
 ### V965344 — B1332016: 9 newly-wired states' parcel sources actually answer from a real (non-sandboxed) network `Blocker: live-GIS`
 

@@ -22,7 +22,7 @@
 import { absoluteStamp } from "./notesTime.js";
 import { DEFAULT_DENSITY, SINGLE, densityFor } from "./notesSpacing.js";
 import { indentCssRules } from "./notesIndentLevel.js";
-import { anchorExtentX } from "./notesBoxResize.js";
+import { anchorExtentLeft, anchorExtentTop, anchorExtentX } from "./notesBoxResize.js";
 
 const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -40,7 +40,12 @@ const esc = (s) => String(s == null ? "" : s)
  * file's own header says it is PURE, and importing the schema module here would make that false. */
 function anchorBoxesInDoc(doc, out = []) {
   if (!doc || typeof doc !== "object") return out;
-  if (doc.type === "noteAnchor" && doc.attrs) out.push({ x: doc.attrs.x, w: doc.attrs.w });
+  /* `y` rides along now (NOTES-FREE-PLACEMENT): the UPWARD half of the growth rule needs only a
+   * box's own top, which the document already carries, so paper can answer it exactly as the
+   * screen does. The DOWNWARD half still cannot be answered here — a box's height is its words —
+   * and still does not need to be: a box running past the bottom of one physical sheet flows onto
+   * the next, the same way any tall content does. */
+  if (doc.type === "noteAnchor" && doc.attrs) out.push({ x: doc.attrs.x, y: doc.attrs.y, w: doc.attrs.w });
   for (const child of doc.content || []) anchorBoxesInDoc(child, out);
   return out;
 }
@@ -51,6 +56,24 @@ function anchorBoxesInDoc(doc, out = []) {
  *  `docToHtml` caller already follows that rule; this keeps it). */
 export function pageAnchorExtentPx(doc) {
   try { return anchorExtentX(anchorBoxesInDoc(doc)); } catch (_) { return 0; }
+}
+
+/** ⛔ THE OTHER TWO EDGES ON PAPER (NOTES-FREE-PLACEMENT / NEW-7, PDF-PARITY). A box at a
+ *  negative x or y now prints LEFT of or ABOVE the body's own origin, and nothing on a sheet
+ *  clips it — it simply falls off the paper. These two answer how much extra margin the sheet
+ *  needs on each of those sides, in the same positive-pixel units `pageAnchorExtentPx` uses, and
+ *  the same "one bad page must not take the print run down" try/catch guards both.
+ *
+ *  ⛔ THEY ARE DELIBERATELY CONSERVATIVE — they do not subtract the title band or the sheet's own
+ *  padding the way the screen's measurement does, because neither height is knowable before the
+ *  browser has laid the sheet out. Over-reserving costs a little white space at the edge of a
+ *  page that has a box out there; under-reserving costs the box. */
+export function pageAnchorExtentLeftPx(doc) {
+  try { return anchorExtentLeft(anchorBoxesInDoc(doc)); } catch (_) { return 0; }
+}
+
+export function pageAnchorExtentTopPx(doc) {
+  try { return anchorExtentTop(anchorBoxesInDoc(doc)); } catch (_) { return 0; }
 }
 
 /* Mirrors src/workspaces/notes/components/NoteEditor.jsx → EDITOR_CSS, construct for
@@ -264,7 +287,20 @@ export function buildPrintDocument({ title, meta = "", pages = [], density = DEF
    * writes them as literal "Npx", the same string on paper as on screen), so no other unit
    * conversion belongs here. */
   const growPx = pages.reduce((m, p) => Math.max(m, pageAnchorExtentPx(p.doc)), 0);
-  const sheetStyle = growPx ? ` style="max-width: max(190mm, ${growPx + 60}px)"` : "";
+  /* ⛔ AND THE SAME ARITHMETIC FOR THE OTHER TWO EDGES (NOTES-FREE-PLACEMENT / NEW-7). The screen
+   * grows the page left and up by taking on extra padding rather than by moving anybody's box;
+   * paper does exactly the same thing to the same element, so the two sheets cannot disagree
+   * about where a box sits relative to the paper's own margin. The sheet's ordinary 10mm/8mm
+   * padding is kept and the growth is ADDED to it, and the extra left padding is added to the
+   * width too — otherwise growing left would simply squeeze the text column. */
+  const growLeftPx = pages.reduce((m, p) => Math.max(m, pageAnchorExtentLeftPx(p.doc)), 0);
+  const growTopPx = pages.reduce((m, p) => Math.max(m, pageAnchorExtentTopPx(p.doc)), 0);
+  const sheetCss = [
+    growPx || growLeftPx ? `max-width: max(190mm, ${growPx + growLeftPx + 60}px)` : "",
+    growLeftPx ? `padding-left: calc(8mm + ${growLeftPx}px)` : "",
+    growTopPx ? `padding-top: calc(10mm + ${growTopPx}px)` : "",
+  ].filter(Boolean).join("; ");
+  const sheetStyle = sheetCss ? ` style="${sheetCss}"` : "";
 
   return [
     "<!doctype html>",

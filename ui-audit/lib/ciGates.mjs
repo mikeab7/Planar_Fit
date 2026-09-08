@@ -73,7 +73,7 @@ export function isUnsupportedExpression(value) {
  * mostly full builds answering a docs-only push that has no code to lint, test, or build).
  *
  * Deliberately narrow, and each entry earns its place by reading content a docs-only change can
- * actually touch: whether the PR touches a GENERATED doc it never should (NEW-1, B<PENDING>,
+ * actually touch: whether the PR touches a GENERATED doc it never should (NEW-1, B1358128,
  * 2026-09-08 — a touch to any of MAP.md/BACKLOG_OPEN.md/docs/UI-INVENTORY.md is exactly the kind
  * of change this fast path would otherwise wave through, since they're all Markdown-extension
  * files), the BACKLOG.md tag-legend rule, the per-folder CLAUDE.md pointers, the backlog/

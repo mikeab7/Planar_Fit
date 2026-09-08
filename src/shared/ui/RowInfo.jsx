@@ -1,10 +1,13 @@
 import { useEffect, useId, useRef, useState } from "react";
-import AnchoredMenu from "../../../shared/ui/AnchoredMenu.jsx";
-import { menuPanelStyle } from "../../../shared/ui/controls.jsx";
-import { FONT_SIZE } from "../../../shared/ui/designTokens.js";
+import AnchoredMenu from "./AnchoredMenu.jsx";
+import { menuPanelStyle } from "./controls.jsx";
+import { FONT_SIZE } from "./designTokens.js";
 
-/* RowInfo (B760) — the per-row ⓘ info affordance for the Layers panel. A real
- * <button> that opens a small popover (source · data vintage / refreshed-age ·
+/* RowInfo (B760; promoted to shared/ui, NEW-COMPS-CARD, from site-planner/components/RowInfo.jsx —
+ * every consumer already lived across site-planner AND the new dashboard Comps card needed the
+ * same popover, so this belongs beside the other shared primitives it was already built on) — the
+ * per-row ⓘ info affordance for the Layers panel. A real
+ * <button> that opens a small popover (source · data vintage / refreshed-age /
  * notes & caveats) on hover (pointer) or click/tap, so each panel row stays ONE
  * line with no persistent explanatory text. Built on AnchoredMenu (portal → never
  * clipped by the Layers card's overflow:hidden; Escape + click-away already handled).

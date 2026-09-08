@@ -94,6 +94,11 @@ export default function App({
   // Keep-alive: false while this workspace is mounted but hidden behind another tab.
   // Hidden = follow the route, but never WRITE to it and never own global keyboard input.
   isActive = true,
+  // COMPS-DASHBOARD-CARD — a one-shot "focus this comp" request from the Dashboard's Comps card.
+  // Same shape as `scheduleTaskIntent` (Scheduler.jsx): Shell.jsx stashes it (token-stamped so a
+  // repeat click on the same comp re-fires) because the Dashboard unmounts before this component
+  // does; consumed below into the existing `focusCompId` state MapFinder already reads.
+  compIntent = null,
 } = {}) {
   // (County is no longer a top-level pick — the map auto-resolves a clicked
   // parcel's county (B11), and the planner reads its county from the saved site.)
@@ -638,6 +643,17 @@ export default function App({
   const [comps, setComps] = useState([]);
   const [pendingCompAnchor, setPendingCompAnchor] = useState(null);
   const [focusCompId, setFocusCompId] = useState(null);
+  // COMPS-DASHBOARD-CARD — apply a pending "focus this comp" request from the Dashboard once this
+  // workspace mounts. `compIntent.token` makes a repeat click on the SAME comp re-fire (Shell
+  // stamps a fresh token every call, same convention as `scheduleTaskIntent`); the ref is what
+  // stops this effect re-firing on every unrelated re-render. Comps aren't project-scoped, so
+  // (unlike scheduleTaskIntent) there's no siteId to gate against — it applies as soon as it arrives.
+  const appliedCompIntentRef = useRef(null);
+  useEffect(() => {
+    if (!compIntent || compIntent.token === appliedCompIntentRef.current) return;
+    appliedCompIntentRef.current = compIntent.token;
+    setFocusCompId(compIntent.compId);
+  }, [compIntent]);
   const onPlaceComp = (anchor) => setPendingCompAnchor(anchor);
   const onCompClick = (id) => setFocusCompId(id);
 

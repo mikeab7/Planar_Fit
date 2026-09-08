@@ -9,7 +9,7 @@ import { collapseStorageKey, readOpen } from "../src/workspaces/site-planner/com
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const collapseSrc = read("../src/workspaces/site-planner/components/Collapse.jsx");
-const chipSrc = read("../src/workspaces/site-planner/components/Chip.jsx");
+const chipSrc = read("../src/shared/ui/Chip.jsx");
 
 describe("Collapse — per-section persistence + keyboard accessibility", () => {
   it("collapseStorageKey namespaces by section id", () => {

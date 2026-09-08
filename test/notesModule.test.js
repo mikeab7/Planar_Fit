@@ -887,6 +887,23 @@ describe("cloud sync rides the SAME one seam", () => {
     expect(code("Notes.jsx")).toMatch(/await import\("\.\/lib\/notesScan\.js"\)/);
   });
 
+  /* ⛔ RED-PROOF (NEW-1, the notes-reconciler-stale-index fix): THE DESTRUCTIVE "Keep only…"
+   * BUTTONS MAY ONLY RENDER FOR A PROVEN (byte-identical) MATCH. A near-duplicate — the exact
+   * shape a similarity score alone produces — must get an informational notice with no
+   * one-click bin action, never the same buttons a proven match gets. This source-guard fails
+   * on the pre-fix banner, which rendered the "Keep only…" row for `first` unconditionally. */
+  it("THE DUPLICATE BAR'S DESTRUCTIVE BUTTONS ARE GATED ON A PROVEN (identical) MATCH", () => {
+    const banner = code("components/IntegrityBanner.jsx");
+    expect(banner, "the one-click bin buttons render only for a byte-identical pair")
+      .toMatch(/first\s*&&\s*first\.identical\s*\?/);
+    const provenBlock = banner.slice(banner.indexOf("first && first.identical"), banner.indexOf('data-testid="notes-dupe-actions-unconfirmed"'));
+    expect(provenBlock, "…and that block is the one holding the destructive per-page buttons")
+      .toMatch(/onKeepOne/);
+    const unconfirmedBlock = banner.slice(banner.indexOf('data-testid="notes-dupe-actions-unconfirmed"'));
+    expect(unconfirmedBlock, "the unconfirmed branch never offers a per-page bin button")
+      .not.toMatch(/onKeepOne/);
+  });
+
   it("THE ORPHAN SWEEP WILL NOT DESTROY A BODY THAT STILL HAS WORDS IN IT", () => {
     const store = code("lib/notesStore.js");
     const fn = store.slice(store.indexOf("export function sweepOrphans"));
@@ -1199,7 +1216,17 @@ describe("the project a notebook belongs to", () => {
      * every move. The old form measured a delta between two CLIENT coordinates, which mean
      * different things once the scroller moves underneath the gesture. */
     expect(node).toMatch(/grabX: e\.clientX - boxRect\.left/);
-    expect(node.slice(node.indexOf('grip.addEventListener("pointermove"'))).toMatch(/host\.getBoundingClientRect\(\);\s+\/\/ read FRESH/);
+    expect(node.slice(node.indexOf('dom.addEventListener("pointermove"'))).toMatch(/host\.getBoundingClientRect\(\);\s+\/\/ read FRESH/);
+    /* ⛔ AND THE DRAG IS ON THE WHOLE BOX, NOT ON THE GRIP (NOTES-FREE-PLACEMENT / NEW-2). Its
+     * being grip-only was the owner's "dragging the note by its BODY does nothing at all,
+     * silently" — with a 9x14px grip at zero opacity as the only alternative. The grip is now
+     * decoration and takes no presses at all, which also retires instrument trap #9. */
+    expect(node, "the box body carries the drag").toMatch(/dom\.addEventListener\("pointerdown", \(e\) => beginDrag\(e, \{ immediate: false \}\)\)/);
+    /* ⛔ …AND THE GRIP STILL DOES TOO, unconditionally. The body stands down while the caret is
+     * inside the box (a press-and-travel there is somebody selecting a phrase), so without this
+     * the one box you are typing in would be the one box you cannot move. */
+    expect(node, "the grip drags too, and owns its press outright")
+      .toMatch(/grip\.addEventListener\("pointerdown", \(e\) => beginDrag\(e, \{ immediate: true \}\)\)/);
     const print = read(NOTES, "lib", "notesPrint.js");
     /* ⛔ MATCHED ON THE SHARED HANDLE CLASS (NEW-PICTURE-CANVAS). There are eight resize handles
      * now, and pinning the exact selector LIST would mean this guard has to be edited every time
@@ -1245,7 +1272,7 @@ describe("the project a notebook belongs to", () => {
      * available — B539648's right-edge crush surviving in the one path that item did not touch.
      * The guard is on the SHAPE rather than on a number: the move path may not reach the width. */
     const node = read(NOTES, "lib", "notesAnchorNode.js");
-    const move = node.slice(node.indexOf('grip.addEventListener("pointermove"'), node.indexOf("const end = (e) =>"));
+    const move = node.slice(node.indexOf('dom.addEventListener("pointermove"'), node.indexOf("const end = (e) =>"));
     expect(move, "the move drag uses the point-only rule").toMatch(/moveAnchorPoint\(/);
     expect(move, "⛔ …and never calls the placement rule, which spends the width").not.toMatch(/placeAnchor\(/);
     expect(move, "⛔ …and never writes a width at all").not.toMatch(/style\.width/);

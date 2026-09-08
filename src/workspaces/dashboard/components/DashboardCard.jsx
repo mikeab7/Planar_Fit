@@ -10,11 +10,16 @@
  * renders a plain stack there, no react-grid-layout at all — "don't let a phone drag-resize a
  * grid it cannot see") Customize mode still needs to work for remove/add/reset, but there is no
  * drag gesture to offer, so the grip glyph and grab cursor are left off.
+ *
+ * `headerMeta` (NEW-COMPS-CARD) — an optional quiet right-aligned line in the header row, beside
+ * the title (the Comps card's "latest of N"). Every other card leaves it unset, so their header
+ * row is byte-identical to before this was added — this is an extension point, not a per-card
+ * special case.
  */
 import { RADIUS } from "../../../shared/ui/radius.js";
 import { IconButton } from "../../../shared/ui/controls.jsx";
 
-export default function DashboardCard({ title, customizing, showDragHandle = true, onRemove, children }) {
+export default function DashboardCard({ title, headerMeta, customizing, showDragHandle = true, onRemove, children }) {
   return (
     <div
       style={{
@@ -41,6 +46,11 @@ export default function DashboardCard({ title, customizing, showDragHandle = tru
             {title}
           </span>
         </span>
+        {headerMeta && (
+          <span style={{ fontSize: 10.5, color: "var(--text-secondary)", flex: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {headerMeta}
+          </span>
+        )}
         {customizing && (
           <IconButton size={22} onClick={onRemove} title="Remove this card">
             <span style={{ fontSize: 14, lineHeight: 1 }}>×</span>

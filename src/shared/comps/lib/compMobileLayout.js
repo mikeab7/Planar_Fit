@@ -37,7 +37,7 @@ export const MOBILE_BREAKPOINT_PX = 820;
 const MOBILE_LABEL_OVERRIDES = { title: "Deal name" };
 
 const SECTION_ORDER = [
-  { title: "Property", keys: ["compType", "title", "size", "landSizeUnit"] },
+  { title: "Property", keys: ["compType", "title", "size", "landSizeUnit", "clearHeightFt", "yearBuilt"] },
   { title: "Rent", keys: ["leaseRate", "leaseRatePeriod", "leaseRateExpense", "leaseOpex", "leaseEscalationPct", "leaseAnnualRate"] },
   { title: "Term", keys: ["leaseCommencementDate", "leaseTerm"] },
   { title: "Concessions", keys: ["leaseFreeRentMonths", "leaseTi"] },

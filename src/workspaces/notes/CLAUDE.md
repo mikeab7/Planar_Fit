@@ -620,6 +620,37 @@ written out in the header of `lib/notesStore.js`; read it there rather than re-d
     (**verify-notes-anchor-zoom** §9's 20px sweep, **verify-notes-anchor-soak**'s multi-press
     soak) — confirmed via `git stash` to fail identically with none of this round's changes
     applied. Out of scope for this round; do not re-diagnose them as caused by it.
+  - **⛔ THE EIGHTH ROUND (B1273296 ×2 + B1370544–B1370549, NOTES-FREE-PLACEMENT, owner report
+    2026-09-08) — THE PAGE GREW ON TWO EDGES AND WAS CLAMPED ON THE OTHER TWO, AND THE SEVENTH
+    ROUND'S OWN STATED RULE IS WHAT DID IT.** His words: *"super buggy just to begin with, only
+    works on the right, not the left, and also the text size of the notebook page header is
+    massive."* Round 7 above chose *"the page's own top-left corner is a FIXED ORIGIN"* and
+    implemented left and up as FLOORS; he measured the consequence in one gesture (a box dragged
+    434px past the left edge landed at `left: 4px` with the page still 580 wide, while the same
+    drag rightward grew it 580 → 1212 and shrank it back). **That rule is retired.** The floors are
+    gone from `moveAnchorPoint`, `placeAnchor`, `resizeBox` and `moveSelection`; two new pure
+    functions **`anchorExtentLeft`/`anchorExtentTop`** are the twins of `anchorExtentX`/
+    `anchorExtent`, and their ABSENCE was the bug — nothing ever asked how far past the left/top
+    origin anything reached, so clamping was the only answer available. **Growth is extra PADDING
+    on the sheet, never a rewrite of anybody's coordinates**, which is what makes it migration-free
+    and what makes placing something level with the TITLE fall out of it (B1370545) instead of
+    needing a new frame of reference. `repairOffPageAnchors` is **deleted** — with negative
+    coordinates legal it would drag his boxes off their spot on every load. Growing left is
+    compensated against the measured `offsetLeft`/`offsetTop` delta in a layout effect so the words
+    do not slide under the reader (VIEWPORT-STABLE (a) — round 7 paid for that once already).
+    Also in this round: **the whole box body drags** and the grip is a 12×20 affordance visible on
+    hover (B1370544 — the grip drags unconditionally too, so a box you are typing in stays
+    movable); **an empty note's discard is announced with a working Undo** rather than being
+    silent (B1370546); **the mat accepts the create gesture everywhere off the page** — the
+    reported "invisible reach limit" was measured and is not a distance at all, it is the press's
+    HEIGHT against a line of text (B1370547); the **title is a RATIO of the body size** (2.05×
+    desktop / 1.75× phone, ≈31/26px) rather than a fixed 42/34 (B1370549); and the print sheet
+    grows left and up too, with a real PDF measured rather than reasoned about (B1370548 — a grown
+    page is SCALED to the paper's width, proven off a PDF content stream, not clipped).
+    Guards: **verify-notes-free-placement** (the eight-direction table, shrink-back, two boxes at
+    once, one gesture across the whole page, phone width, the title band, the body drag, the
+    discard notice, the mat sweep with a KNOWN-GOOD ARM, and the title's own ratio) and
+    **verify-notes-print-free-placement** (the real Print button plus a rendered PDF).
 - **HOW BIG THE WRITING IS (B342994, `lib/notesZoom.js`).** Ctrl+wheel and Ctrl+=/−/0 scale the
   **document**, never the app; the browser's own zoom is suppressed for those gestures so the two
   cannot fight; the level is per-scope, persisted, and does not sync (a comfortable size belongs to
@@ -666,6 +697,19 @@ written out in the header of `lib/notesStore.js`; read it there rather than re-d
       (`duplicateKey`, remembered per account). ⛔ An unknown project list passes `null`, never
       `[]`: "the lookup failed" and "there are no projects" are opposite facts, and letting the
       first wear the second's clothes would silently suppress a real finding.
+    - **⛔ A SIMILARITY SCORE IS NOT PROOF, AND "NO NODE" IS NOT ALWAYS "LOST" (NEW-1, the
+      notes-reconciler-stale-index fix, 2026-09-08 — read `docs/NOTES-CARRY-FORWARD.md` §5.11
+      before touching either half of this).** `unreachableNotes` now takes `{ binned }`
+      (`pageId → deletedAt`, from `notesStore.knownBinnedPages()`) so a body the SERVER already
+      marks deleted is never resurrected to the live page list — an interrupted 30-day purge
+      (`purgePages`'s cloud call is fire-and-forget) can leave exactly that shape, and the old
+      unconditional "recover to live" is what produced a real "these are the same note" finding
+      against a page that was correctly deleted. A known-binned orphan now goes through
+      `adoptDeletedOrphans` (`notesModel.js`) instead: a normal bin entry if still inside its
+      30 days, or an outright purge if the window already passed. And `IntegrityBanner.jsx`'s
+      one-click "Keep only…" buttons — which BIN a real note — now render only for a
+      byte-identical (`identical: true`) match; a near-duplicate gets the informational "not
+      confirmed" wording and no destructive button.
   - **THE BIN YOU CAN JUDGE (B350002, `collectBinFacts` in `lib/notesStore.js`).** Twenty-one
     entries, sixteen of them called "Untitled page", showing a name and a countdown and nothing
     else — so the only way to find out what one WAS, was to restore it into the live tree and
