@@ -229,6 +229,32 @@ describe("findCrossProjectDuplicates", () => {
     expect(found[0].pages.find((p) => p.pageId === "co_page1").where).toBe("bin");
   });
 
+  /* ⛔ RED-PROOF (NEW-1, the notes-reconciler-stale-index fix): A NEAR-DUPLICATE MAY NEVER BE
+   * WORDED AS "the same note" — only a byte-identical match may claim that. This is the exact
+   * pair the owner distrusted: two different pages, one word apart, which score ~0.97 and are
+   * NOT `identical`. Before this fix `duplicateNotice` used the "One note appears in…" wording
+   * (and `IntegrityBanner` offered a one-click "Keep only…" bin button) regardless of
+   * `identical` — this assertion is what fails on that code and passes on the fix. */
+  it("⛔ a near-duplicate is never worded as proven — the owner's real pair stays unconfirmed", () => {
+    const found = findCrossProjectDuplicates([
+      row("gp_coordination", GRAND_PORT, COORDINATION),
+      row("co_page1", COLORADO, COORDINATION_COPY),
+    ]);
+    expect(found[0].identical).toBe(false);
+    const notice = duplicateNotice(found);
+    expect(notice).not.toMatch(/appears in \d+ different projects/);
+    expect(notice).toMatch(/not confirmed/i);
+  });
+
+  it("…while a BYTE-IDENTICAL pair keeps the stronger, provable wording", () => {
+    const found = findCrossProjectDuplicates([
+      row("a", GRAND_PORT, COORDINATION),
+      row("b", COLORADO, COORDINATION),
+    ]);
+    expect(found[0].identical).toBe(true);
+    expect(duplicateNotice(found)).toMatch(/appears in \d+ different projects/);
+  });
+
   /* ⛔ THE PURE DETECTOR IS INDIFFERENT TO WHERE A ROW CAME FROM, AND STAYS THAT WAY. It
    * compares whatever it is handed, which is what makes a FORENSIC pass over everything —
    * including the bin, where both copies of the original incident were by the time anyone

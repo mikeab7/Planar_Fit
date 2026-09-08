@@ -149,12 +149,27 @@ export function findCrossProjectDuplicates(pages, {
 }
 
 /** ONE short line for the banner — the whole finding, in the fewest words that stay true
- *  (PANEL-BREVITY). Detail belongs behind the "Show me", never in the default view. */
+ *  (PANEL-BREVITY). Detail belongs behind the "Show me", never in the default view.
+ *
+ *  ⛔ THE WORDING IS HONEST ABOUT WHAT WAS ACTUALLY PROVEN (NEW-1, the notes-reconciler
+ *  stale-index fix). "One note appears in 2 different projects" asserts that two entries ARE
+ *  one note — which similarity alone never proves, only byte-identical text does (`identical`).
+ *  A near-duplicate (same topic, one word different, a shared boilerplate paragraph — anything
+ *  short of exact text) is worded as what it is: two notes that read alike, not confirmed as
+ *  copies. The severity is judged off `groups[0]` (the worst finding, sorted first), which is
+ *  also the one the banner shows the pages and buttons for — see `IntegrityBanner.jsx`, which
+ *  gates the destructive "Keep only…" actions on that same `identical` flag. */
 export function duplicateNotice(groups) {
   const n = (groups || []).length;
   if (!n) return null;
   const pages = groups.reduce((t, g) => t + g.pages.length, 0);
+  const top = groups[0];
+  if (!top.identical) {
+    return n === 1
+      ? "Two notes in different projects read almost the same — not confirmed as the same note."
+      : `${n} pairs of notes in different projects read almost the same — not confirmed as copies.`;
+  }
   return n === 1
-    ? `One note appears in ${groups[0].projectIds.length} different projects (${pages} copies).`
+    ? `One note appears in ${top.projectIds.length} different projects (${pages} copies).`
     : `${n} notes appear in more than one project (${pages} copies).`;
 }
