@@ -164,6 +164,62 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back `Blocker: real-data`
+
+**Why this needs its own real pass.** Everything below is measured here on a seeded page in a headless browser, and it all passes — but the report was made on his own Goose Creek → Platting note, whose real content (a long title, a metadata line, real body text, several boxes at once, a window he sized himself) is what the growth budget is computed against. Zoom-/data-density-dependent rendering is a mandatory LIVE-VERIFY class, and a seeded fixture is exactly the thing that can make a real defect unreachable.
+
+**What was verified here (this session, real headless Chromium, real mouse, logged out).**
+1. `ui-audit/verify-notes-free-placement.mjs` §1–§5 — all eight directions (left · right · above · below · four diagonals) drive a box 420px, store the exact asked-for coordinate, grow the page to hold it, and return the same coordinate after a reload. Grow-then-return shrinks the page back to its natural 580 on left, right and above. Two boxes on opposite sides render on one grown page and both survive a reload. Far-left to far-right in one gesture: -300 → 600, on the page, persisted. Phone-width window with a box at x -500: kept and reached.
+2. Unit tests: `anchorExtentLeft`/`anchorExtentTop` (`test/notesAnchorZoom.test.js`), the retired floors in `moveAnchorPoint`/`placeAnchor`/`resizeBox` (`test/notesBoxResize.test.js`, `test/notesAnchorZoom.test.js`), the unclamped group drag (`test/notesMarquee.test.js`). Full repo suite green; `npm run ci-parity` PASS.
+3. `ui-audit/verify-notes-page-growth.mjs` — every check green after its §1 was re-pointed at the new rule (a negative coordinate is KEPT, and opening the note no longer rewrites the stored document).
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, on a THROWAWAY DUPLICATE of a real note (never one of his own plans — owner constraint 7):**
+1. Read the loaded chunk hash in the same observation as everything below (`document.querySelectorAll('script[src]')`), and confirm it names a build after this PR merged. A stale tab will reproduce the OLD behaviour perfectly.
+2. Place a note in the right margin and drag it well past the page's LEFT edge. **Expect:** it follows the pointer the whole way; the page extends leftward to contain it; the title and the body text do NOT jump sideways as it grows.
+3. Drag the same note above the title. **Expect:** it follows; the page extends upward; nothing is cut off at the top.
+4. Drag it back inside the column. **Expect:** the page shrinks back to its ordinary width and height.
+5. Repeat 2–4 diagonally (up-left and down-left). **Expect:** the same on both axes at once.
+6. Put one note far left and a second far right at the same time. **Expect:** one page holds both.
+7. Reload the note. **Expect:** every box is exactly where it was left, and the page is the same size.
+8. Confirm on his ACTUAL Platting note that the old scratch anchor at `y: -21` renders where it says it is and is no longer dragged back onto the page on load.
+
+**Result:** ⏳ pending — needs his own signed-in browser and his own note. Sandbox measurements above are complete and green.
+
+### V993809 — B1370545: something can actually be placed and kept level with the page title `Blocker: real-data`
+
+**Why this needs its own real pass.** The room a box has above the body's origin is the sheet's top padding plus the TITLE BAND's own height — and that band's height depends on the title's length, whether the note carries a project badge, and the phone breakpoint. A seeded page has a short title and one metadata line; his real notes do not.
+
+**What was verified here (this session, real headless Chromium, logged out).** `ui-audit/verify-notes-free-placement.mjs` §6: a box stored at `y: -60` renders overlapping the title's own bounding rect (title top 151, box top 177) and is fully inside the sheet, which grew upward to hold it. `ui-audit/verify-notes-print-free-placement.mjs` §1 confirms the same negative `y` reaches the printed document verbatim.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, on a throwaway duplicate note:**
+1. Read the served chunk hash in the same observation as the steps below.
+2. Press in the grey margin to the LEFT of the page, level with the page's title. **Expect:** a note is created there, beside the title, not below the metadata line.
+3. Type into it, click away, reload. **Expect:** it is still beside the title.
+4. Drag an existing note from the body up until it is level with the title. **Expect:** it goes there and stays; the page grows upward rather than stopping it.
+5. Do 2–4 again on a note with a LONG title that wraps, and on a note filed in a project (so the badge row is present). **Expect:** the same, with the page reaching further up as the band is taller.
+6. Repeat step 2 on a phone-width window. **Expect:** the same behaviour at the phone's own title size.
+
+**Result:** ⏳ pending — needs his own signed-in browser and a note with a real title and metadata line.
+
+### V993810 — B1370548: printing a note that carries placed content, from a real browser's own print dialogue `Blocker: real-data`
+
+**Why this needs its own real pass.** PDF/export parity is a mandatory LIVE-VERIFY class, and headless Chromium's `window.print()` is a documented no-op — this sandbox can build and render the printed document but cannot drive the dialogue that produces his actual paper or PDF. It is also the specific thing he refused to have closed on a code reading.
+
+**What was verified here (this session, real headless Chromium).**
+1. `ui-audit/verify-notes-print-free-placement.mjs` §1 drives the REAL toolbar Print button (`nt-print`) and reads the sheet it wrote: `max-width: max(190mm, 1152px); padding-left: calc(8mm + 276px); padding-top: calc(10mm + 156px)`, all four boxes present, their negative coordinates serialised verbatim.
+2. §2 lays the same document out at full size and confirms all four boxes are inside the printed sheet (left 46px in, right 46px in, above 139px down, below 919px down), then renders a real PDF — `artifacts/notes-free-placement-print.pdf`, attached to the PR with a PNG of the same sheet.
+3. The scaled-vs-clipped question was settled by decompressing a control PDF's own content stream: a 1152px sheet's far-right marker lands at exactly 612.0pt, the Letter MediaBox's full width, on one page. **The whole layout is SCALED to the paper (71% here), not clipped.** Height paginates.
+4. Unit tests for the left/top print growth in `test/notesRoundTwo.test.js`, including all four edges at once and the quiet no-growth case.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, on a throwaway duplicate note carrying notes placed left, right, above and below:**
+1. Read the served chunk hash in the same observation as the steps below.
+2. Press Print in the note toolbar. **Expect:** the browser's own print preview opens showing the whole page, with all four placed notes visible on it.
+3. In the preview, confirm nothing is cut off at the left edge, the right edge or the top. **Expect:** the sheet is scaled down to fit the paper's width; no box is sliced.
+4. Save as PDF and open it. **Expect:** the same — four boxes, all whole, in the same relative positions they occupy on screen.
+5. Confirm a note with NOTHING placed outside its column prints exactly as it always did — normal margins, no extra white space at the left or top.
+6. Print a note whose content runs past one sheet. **Expect:** it paginates onto the next sheet as ordinary text always has; nothing is lost at the page break.
+
+**Result:** ⏳ pending — needs a real browser print dialogue. The document that dialogue will be handed is fully built, measured and rendered here.
 ### V989200 — B1365936: the Dashboard Comps card's reverse-geocoded address and its click-through both work on a real signed-in account `Blocker: live-GIS` `Blocker: auth` `Blocker: real-data`
 
 **Why this needs its own real pass.** Two genuinely network/auth-dependent legs of an otherwise fully sandbox-proven card: (1) the address headline's reverse geocode (`site-planner/lib/geocode.js`'s `reverseGeocodeLatLon`, dynamically imported) calls `geocode.arcgis.com` and `nominatim.openstreetmap.org` — both unreachable from this sandbox's egress allowlist, confirmed by the same class of block every other external-GIS item in this file already documents; (2) the card's whole-card click-through (`onOpenCompInSitePlanner` → `Shell.jsx`'s `compIntent` → `SitePlannerApp.jsx` → the existing `focusCompId` MapFinder already reads) was driven headless against a local demo plan (confirmed it navigates to the Site route and opens the map — see the session's own screenshots), but not against a real signed-in account's real comps, which this sandbox's proxy CORS-blocks the Supabase auth handshake for.
