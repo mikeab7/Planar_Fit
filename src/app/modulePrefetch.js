@@ -5,8 +5,25 @@
  *   1. The lazy JS chunk for the workspace (same dynamic-import specifier the
  *      Shell's React.lazy uses, so the browser dedupes to one chunk request).
  *   2. For Schedule specifically, the heavy standalone Gantt document
- *      (public/sequence/index.html, ~692 KB) that its iframe loads — warmed with
+ *      (public/sequence/index.html) that its iframe loads — warmed with
  *      <link rel="prefetch"> so the iframe boots from cache on navigation.
+ *
+ *      ⛔ SIZE, CORRECTED (B1167201, 2026-09-07) — this comment previously said "~692 KB",
+ *      which was stale by ~76%: the authored source is 1,247,423 bytes (~1.2 MB) and had grown
+ *      to that size with nobody updating the number here. What THIS prefetch actually warms is
+ *      the served document at `/sequence/`, which since B1167200 (the build-time Babel-compile
+ *      step that removes the in-browser JSX transpile) is the dist-built, comment-stripped
+ *      version — measured 1,063,908 bytes (~1.04 MB) in that build. `npm run dev` still serves
+ *      the raw ~1.2 MB authored source unchanged (B1167200 deliberately only transforms the
+ *      production build output, not dev — see that script's own header), so the two sizes
+ *      genuinely differ; ~1.04 MB is the number that matters here since this warming path only
+ *      runs against what's actually deployed.
+ *
+ *      Still the right call at this size: a single `as="document"` prefetch, gated on real
+ *      navigation intent (hover/pointerdown below), is exactly the shape the browser's own
+ *      prefetch mechanism is for — it runs at low priority and doesn't compete with the active
+ *      route's critical path, so growing from 692 KB (never true) to ~1.04 MB doesn't change
+ *      the tradeoff. No behavior change here, only the number.
  *
  * ⛔ INTENT-DRIVEN ONLY — never warm at boot (NEW-9). B223 originally also warmed
  * scheduler + doc-review + library from a boot `requestIdleCallback`. Measurement on
