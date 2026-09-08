@@ -155,8 +155,11 @@ ok("…and the note that was filed nowhere is reported as RECOVERED, not as stil
 
 const text = (await banner.innerText()).replace(/\s+/g, " ");
 ok("it names the note by TITLE, not by id", /Coordination/.test(text) && /Page 1/.test(text), text.slice(0, 150));
-ok("…and says how many projects it is in", /2 different projects/.test(text));
-ok("…and names the second finding in plain words", /has been put back/.test(text), text.slice(-140));
+// ⛔ SUPERSEDED WORDING (NEW-1, the banner-wording fix): this fixture's two copies differ by
+// one word ("RPlat" vs "Plat"), so they are a NEAR-duplicate, not a proven match — the bar
+// says so plainly rather than claiming a project count it cannot prove.
+ok("…and says they are not proven to be the same note", /nearly identical/.test(text), text.slice(0, 150));
+ok("…and names the second finding in plain words", /lost its filing/.test(text), text.slice(-140));
 
 /* ════ 2. THE LOST NOTE IS ALREADY BACK, AND THE BAR SAYS SO ══════════════════════════
  *
@@ -173,9 +176,13 @@ ok("before: the lost note is in NO tree — that is why nothing could reach it",
 // The scan is deliberately late; wait for the recovery on its own terms.
 await tb("notes-recovered-summary").waitFor({ state: "visible", timeout: 15000 });
 const summary = (await tb("notes-recovered-summary").innerText()).replace(/\s+/g, " ");
-ok("⛔ THE BAR REPORTS WHAT ALREADY HAPPENED, not what could", /has been put back/.test(summary), summary.slice(0, 120));
-ok("…and says WHY it has no name, rather than inventing one", /name lived on the entry that went missing/.test(summary));
-ok("…and is plural-correct for one", /^One note had lost its place/.test(summary));
+ok("⛔ THE BAR REPORTS WHAT ALREADY HAPPENED, not what could", /is back below/.test(summary), summary.slice(0, 120));
+// ⛔ SUPERSEDED WORDING (NEW-1, the banner-wording fix, owner report: "not even proper
+// english"). The old three-clause sentence explained the RECOVERY MECHANISM ("its name lived
+// on the entry that went missing") — implementation detail nobody asked for. The new one
+// sentence says what happened and what to do instead.
+ok("…and says what to do about it, not how it works", /open it and file it/.test(summary), summary);
+ok("…and is plural-correct for one", /^One note lost its filing/.test(summary));
 
 const lostRow = tb(`notes-recovered-${LOST_ID}`);
 ok("⛔ IT NAMES THE NOTE — by its own first line, which is all that survived", await lostRow.count() > 0);

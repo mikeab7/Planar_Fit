@@ -232,9 +232,12 @@ describe("findCrossProjectDuplicates", () => {
   /* ⛔ RED-PROOF (NEW-1, the notes-reconciler-stale-index fix): A NEAR-DUPLICATE MAY NEVER BE
    * WORDED AS "the same note" — only a byte-identical match may claim that. This is the exact
    * pair the owner distrusted: two different pages, one word apart, which score ~0.97 and are
-   * NOT `identical`. Before this fix `duplicateNotice` used the "One note appears in…" wording
+   * NOT `identical`. Before that fix `duplicateNotice` used the "One note appears in…" wording
    * (and `IntegrityBanner` offered a one-click "Keep only…" bin button) regardless of
-   * `identical` — this assertion is what fails on that code and passes on the fix. */
+   * `identical`. ⛔ SUPERSEDED WORDING (NEW-1, the banner-wording fix, owner report: "the
+   * wording... is not even proper english") — "appears in N different projects (N copies)" and
+   * "not confirmed" are gone; the distinguishing property (identical vs. near-duplicate get
+   * different, honest wording) is what these two tests still prove. */
   it("⛔ a near-duplicate is never worded as proven — the owner's real pair stays unconfirmed", () => {
     const found = findCrossProjectDuplicates([
       row("gp_coordination", GRAND_PORT, COORDINATION),
@@ -242,8 +245,8 @@ describe("findCrossProjectDuplicates", () => {
     ]);
     expect(found[0].identical).toBe(false);
     const notice = duplicateNotice(found);
-    expect(notice).not.toMatch(/appears in \d+ different projects/);
-    expect(notice).toMatch(/not confirmed/i);
+    expect(notice).not.toMatch(/is filed in \w+ places/);
+    expect(notice).toBe("Two notes are nearly identical.");
   });
 
   it("…while a BYTE-IDENTICAL pair keeps the stronger, provable wording", () => {
@@ -252,7 +255,7 @@ describe("findCrossProjectDuplicates", () => {
       row("b", COLORADO, COORDINATION),
     ]);
     expect(found[0].identical).toBe(true);
-    expect(duplicateNotice(found)).toMatch(/appears in \d+ different projects/);
+    expect(duplicateNotice(found)).toBe("The same note is filed in two places.");
   });
 
   /* ⛔ THE PURE DETECTOR IS INDIFFERENT TO WHERE A ROW CAME FROM, AND STAYS THAT WAY. It
@@ -323,7 +326,9 @@ describe("findCrossProjectDuplicates", () => {
 
   it("the notice names the finding, not the category", () => {
     const found = findCrossProjectDuplicates([row("a", GRAND_PORT, COORDINATION), row("b", COLORADO, COORDINATION)]);
-    expect(duplicateNotice(found)).toContain("2 different projects");
+    // ⛔ SUPERSEDED (NEW-1, the banner-wording fix): numerals in prose are gone — "2" is now
+    // the word "two" (owner report, verbatim: "not even proper english").
+    expect(duplicateNotice(found)).toContain("two");
   });
 
   it("the threshold is not doing the work — the real pair survives a far stricter bar", () => {
