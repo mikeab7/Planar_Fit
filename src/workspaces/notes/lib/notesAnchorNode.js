@@ -33,7 +33,8 @@
  *     of the document does not know it exists.
  *   • IT PERSISTS AND SYNCS FOR FREE, because it is part of the document model, which is the
  *     thing that is stored and merged. Reload, another machine, the PDF: same place.
- *   • AND IT IS MOVABLE AFTERWARDS — drag its grip. A block you cannot reposition is a block
+ *   • AND IT IS MOVABLE AFTERWARDS — drag it anywhere on its body (NOTES-FREE-PLACEMENT; the
+ *     grip is now only the visible affordance for it). A block you cannot reposition is a block
  *     you placed wrong once and live with.
  *
  * ⛔ THE COORDINATES ARE UNSCALED DOCUMENT PIXELS, MEASURED FROM THE TOP-LEFT OF THE EDITOR'S
@@ -48,7 +49,7 @@ import { anchorIsEmpty } from "./notesAnchorPrune.js";
 import { moveSelection } from "./notesMarquee.js";
 import {
   ANCHOR_EDGE_PAD, ANCHOR_MIN_HEIGHT, ANCHOR_MIN_WIDTH, ANCHOR_WIDTH,
-  HANDLES, HANDLE_CURSOR, anchorExtent, anchorExtentX, handlesFor, hasFixedHeight,
+  HANDLES, HANDLE_CURSOR, anchorExtent, anchorExtentLeft, anchorExtentTop, anchorExtentX, handlesFor, hasFixedHeight,
   moveAnchorPoint, resizeBox,
 } from "./notesBoxResize.js";
 
@@ -62,7 +63,7 @@ import {
  * `notesPrint.js` is deliberately PURE (no `@tiptap/*` on its import graph) and needs the exact
  * same page-growth arithmetic the screen uses, run over a page's raw stored JSON with no schema
  * in sight. Re-exported here so nothing that already imported them from this file had to change. */
-export { ANCHOR_EDGE_PAD, ANCHOR_MIN_HEIGHT, ANCHOR_MIN_WIDTH, ANCHOR_WIDTH, anchorExtent, anchorExtentX };
+export { ANCHOR_EDGE_PAD, ANCHOR_MIN_HEIGHT, ANCHOR_MIN_WIDTH, ANCHOR_WIDTH, anchorExtent, anchorExtentLeft, anchorExtentTop, anchorExtentX };
 
 
 const num = (v, fallback = 0) => {
@@ -94,27 +95,27 @@ function boxStyle({ x, y, w, h }) {
  *  `ANCHOR_MIN_WIDTH`. Only past that floor, where a column would be unreadable anyway, does
  *  the left edge move — and then by the smallest amount that buys a usable column.
  *
- *  ⛔ THE VERTICAL FLOOR IS THE SAME ONE `moveAnchorPoint` HAS ALWAYS HELD — never above the
- *  page's own top edge — but otherwise `y` is untouched: nudging DOWN never happens (a click
- *  near the bottom used to be nudged up, measured: a click at y=470 landed at 461) and a block
- *  that GREW while being typed into was pushed around by the same reasoning one layer up. The
- *  page extends to hold it instead — see `anchorExtent` and its use in NoteEditor.
- *
- *  ⛔ AND THE FLOOR WAS MISSING HERE UNTIL NOTES-PAGE-GROWTH (owner report, 2026-09-06):
- *  `moveAnchorPoint`/`resizeBox` have clamped `y` to the page's own top edge for rounds now, but
- *  this function — the PLACEMENT gesture, the one that runs before either of those ever could —
- *  never did, on the assumption that a click's own geometry can never land above the editor's
- *  own top edge. A stray anchor on a real production note proved that assumption wrong (stored
- *  at `y: -21`, years of history behind it, likely predating this file's own clamps), so the
- *  floor is added here too, defensively, rather than trusted to the caller's math. */
+ *  ⛔ AND THERE IS NO FLOOR ON EITHER AXIS ANY MORE (NOTES-FREE-PLACEMENT, owner report
+ *  2026-09-08). `y` was clamped to the page's own top edge and `x` to `ANCHOR_EDGE_PAD`; both are
+ *  gone, because the page now grows UP and LEFT to hold what overhangs, exactly as it has always
+ *  grown down and right. Nudging still never happens on any axis — a click near the bottom used
+ *  to be nudged up (measured: y=470 landed at 461) and that stays fixed. See `moveAnchorPoint`'s
+ *  header in notesBoxResize.js for the four-direction measurement that retired the floors, and
+ *  `anchorExtentLeft`/`anchorExtentTop` for the two functions whose absence WAS the floor. */
 export function placeAnchor({ x, y, width, minWidth = ANCHOR_MIN_WIDTH, preferred = ANCHOR_WIDTH }) {
   const boxW = num(width);
-  // The left edge is what was chosen, and it is kept — always. The only thing that ever moves
-  // it is a click left of the page itself, which is not a place.
-  const left = Math.max(ANCHOR_EDGE_PAD, num(x));
-  const room = boxW - left - ANCHOR_EDGE_PAD;
+  /* ⛔ THE POINT SOMEBODY CHOSE IS KEPT — ON EVERY SIDE NOW (NOTES-FREE-PLACEMENT). This used to
+   * read `max(ANCHOR_EDGE_PAD, x)` / `max(0, y)`, on the grounds that "a click left of the page
+   * is not a place". It is one — the page simply has to grow to reach it, exactly as it already
+   * grows rightward past `boxW`. See `moveAnchorPoint`'s header for the measurement. */
+  const left = num(x);
+  /* The width is still spent rather than the position: past the right margin the box narrows to
+   * its floor and the page grows the rest of the way. LEFT of the origin there is no right-hand
+   * room to lose, so `room` is deliberately measured from the origin, not from `left` — a box at
+   * x = -300 gets its full preferred width rather than an accidental bonus of 300px. */
+  const room = boxW - Math.max(0, left) - ANCHOR_EDGE_PAD;
   const w = Math.max(minWidth, Math.min(preferred, room));
-  return { x: Math.round(left), y: Math.round(Math.max(0, num(y))), w: Math.round(w) };
+  return { x: Math.round(left), y: Math.round(num(y)), w: Math.round(w) };
 }
 
 /** ⛔ HOW WIDE A BOX IS ALLOWED TO *RENDER*, WHICH IS NOT THE SAME AS HOW WIDE IT IS (B421490).
@@ -311,11 +312,26 @@ export const NoteAnchor = Node.create({
        *  ⛔ IT WRITES NO UNDO FRAME. Ctrl+Z after abandoning a block must undo the last thing
        *  you MEANT to do, not put an empty box back; and nothing was lost, so there is nothing
        *  to restore. */
-      dropEmptyAnchors: ({ keep = null } = {}) => ({ tr, state, dispatch }) => {
+      /* ⛔ AND IT SAYS WHAT IT TOOK (NOTES-FREE-PLACEMENT / NEW-3, owner report 2026-09-08:
+       * *"it disappears with no animation, no toast, no undo… this repeatedly read as 'the create
+       * gesture failed' when it had in fact succeeded and then self-destructed."*).
+       *
+       * The prune itself is UNCHANGED and stays — four rounds of his own reports are behind it
+       * (`notesAnchorPrune.js`'s header), and it is enforced at the storage seam so no crashed
+       * tab can carry an empty box out. What was wrong was that it was SILENT. `onDropped` is
+       * handed the boxes' own coordinates as they were removed, so the editor can offer to put
+       * one back exactly where it was — which is the "visible and undoable" half of his ask.
+       *
+       * ⛔ IT IS A CALLBACK RATHER THAN AN UNDO FRAME, DELIBERATELY. `addToHistory: false` is
+       * kept: an undo frame here would restore the box with the caret still OUTSIDE it, and the
+       * very next selection update would prune it again — an Undo that visibly does nothing is
+       * worse than no Undo. The editor's own restore puts the caret back INSIDE the box, which is
+       * what spares it (`keep`), so pressing Undo actually leaves you where you were. */
+      dropEmptyAnchors: ({ keep = null, onDropped = null } = {}) => ({ tr, state, dispatch }) => {
         const targets = [];
         state.doc.descendants((node, pos) => {
           if (node.type.name !== "noteAnchor") return true;
-          if (pos !== keep && anchorIsEmpty(node.toJSON())) targets.push({ pos, size: node.nodeSize });
+          if (pos !== keep && anchorIsEmpty(node.toJSON())) targets.push({ pos, size: node.nodeSize, attrs: node.attrs });
           return false;                       // nothing inside a block is another block
         });
         if (!targets.length) return false;
@@ -324,6 +340,11 @@ export const NoteAnchor = Node.create({
           for (let i = targets.length - 1; i >= 0; i -= 1) tr.delete(targets[i].pos, targets[i].pos + targets[i].size);
           tr.setMeta("addToHistory", false);
           dispatch(tr);
+          if (typeof onDropped === "function") {
+            onDropped(targets.map((t) => ({
+              x: num(t.attrs?.x), y: num(t.attrs?.y), w: num(t.attrs?.w, ANCHOR_WIDTH),
+            })));
+          }
         }
         return true;
       },
@@ -410,46 +431,19 @@ export const NoteAnchor = Node.create({
         return true;
       },
 
-      /** ⛔ BRING ANY BOX BACK ONTO THE PAGE, IN ONE TRANSACTION THAT DOES NOT COUNT AS AN EDIT
-       *  (NOTES-PAGE-GROWTH, owner report 2026-09-06 — "if I type outside of the note... it
-       *  would just expand the page", found not to hold for a box sitting above the page's own
-       *  top edge). The page's own top-left corner is a fixed origin: nothing may be PLACED or
-       *  DRAGGED to a negative `x`/`y` (`placeAnchor`, `moveAnchorPoint`, `resizeBox` all hold
-       *  that floor already) — the page may only grow away from it, to the right and down
-       *  (`anchorExtentX`/`anchorExtent`). A box stored at a negative coordinate predates one of
-       *  those floors and is data from before the rule existed, not a case the rule permits
-       *  today, so it is repaired rather than left to render off the page forever.
+      /* ⛔ `repairOffPageAnchors` IS RETIRED (NOTES-FREE-PLACEMENT, owner report 2026-09-08) —
+       * DELETED RATHER THAN LEFT AS A NO-OP, and this note is why, so nobody restores it from a
+       * stale comment. It clamped every box back to `x >= 4, y >= 0` on every load, on the
+       * premise that "the page's own top-left corner is a fixed origin: nothing may be placed or
+       * dragged to a negative x/y". That premise is exactly what the owner overturned: the page
+       * now grows LEFT and UP to hold a box the same way it has always grown right and down
+       * (`anchorExtentLeft`/`anchorExtentTop`), so a negative coordinate is an ordinary position
+       * and repairing it would drag his boxes off the spot he put them on every single load —
+       * silently, and through a transaction that saves. His own legacy scratch anchor at
+       * `y: -21`, which this command was written for, simply renders where it says it is now.
        *
-       *  ⛔ NON-DESTRUCTIVE: this only ever REPOSITIONS a box back onto the page — the exact
-       *  clamp `moveAnchorPoint` already applies to every drag — and never touches its content,
-       *  its width, or its identity. It reuses that same function so a box repaired here lands
-       *  exactly where a drag would have stopped it, never a second rule that could disagree.
-       *
-       *  ⛔ `setMeta("addToHistory", false)`, same reasoning as `ensureNoteAnchorIds` right
-       *  above: this is bookkeeping the editor does on your behalf, not a keystroke you made, so
-       *  it must not cost you an undo frame or make Ctrl+Z appear to do nothing on an old note.
-       *  It DOES run through `onUpdate` like any other transaction, so the repaired position is
-       *  saved and survives a reload — a silent fix that reverted itself on the next load would
-       *  not be a fix. */
-      repairOffPageAnchors: () => ({ tr, dispatch, state }) => {
-        const fixes = [];
-        state.doc.descendants((node, pos) => {
-          if (node.type.name !== "noteAnchor") return;
-          const { x, y } = node.attrs;
-          const at = moveAnchorPoint({ x, y });
-          if (at.x !== num(x) || at.y !== num(y)) fixes.push({ pos, at });
-        });
-        if (!fixes.length) return false;
-        if (dispatch) {
-          for (const { pos, at } of fixes) {
-            const node = tr.doc.nodeAt(pos);
-            if (!node || node.type.name !== "noteAnchor") continue;
-            tr.setNodeMarkup(pos, undefined, { ...node.attrs, x: at.x, y: at.y });
-          }
-          dispatch(tr.setMeta("addToHistory", false));
-        }
-        return true;
-      },
+       * The identity repair above (`ensureNoteAnchorIds`) is untouched: a missing id genuinely is
+       * data from before an attribute existed, which a coordinate no longer is. */
 
       /** ⛔ MOVE MANY AS ONE UNDO STEP. A group drag that produced N frames would need N presses
        *  of Ctrl+Z to put back, which is not an undo — it is a chore that looks like a bug. */
@@ -529,7 +523,7 @@ export const NoteAnchor = Node.create({
       const grip = document.createElement("div");
       grip.className = "planyr-anchor-grip";
       grip.setAttribute("contenteditable", "false");
-      grip.setAttribute("title", "Drag to move this block");
+      grip.setAttribute("title", "Drag anywhere on this note to move it");
       grip.setAttribute("data-testid", "note-anchor-grip");
 
       const content = document.createElement("div");
@@ -730,12 +724,58 @@ export const NoteAnchor = Node.create({
 
       syncHandles(node);
 
+      /* ⛔ THE WHOLE BOX IS THE DRAG SURFACE (NOTES-FREE-PLACEMENT / NEW-2, owner report
+       * 2026-09-08: *"click and drag it anywhere in its body… nothing, with no feedback"*, and
+       * the grip he was expected to find instead measured 9×14px at zero opacity until hover).
+       *
+       * ⛔ SO THE SAME DRAG IS WIRED TO TWO SURFACES, WHICH IS NOT REDUNDANCY — THEY ANSWER
+       * DIFFERENT QUESTIONS. The BODY drags only while the caret is elsewhere, because once you
+       * are typing in a box a press-and-travel inside it is somebody selecting a phrase, which is
+       * his own rule (*"text selection taking over only once the note has focus"*). The GRIP
+       * drags UNCONDITIONALLY, because a box you have just typed into still has to be movable
+       * without pressing Escape first — which is the whole reason a grip exists and why it stays
+       * a real target rather than becoming decoration. It sits in the box's own 16px left padding
+       * (left: 3px, 12px wide), so it covers no text and eats no press meant for a word.
+       *
+       * ⛔ AND THE BODY ENGAGES ON MOVEMENT, NEVER ON THE PRESS ITSELF. The grip can `preventDefault`
+       * on `pointerdown` because nothing else wanted that press; the BODY's press is already
+       * spoken for by the two-stage select/enter model in `focusFromMat`, and swallowing it would
+       * take selecting a box away to buy dragging it. So the press is recorded and passed
+       * through, and only a pointer that actually TRAVELS past the threshold becomes a drag. The
+       * grip has no such constraint and keeps its own immediate `preventDefault`.
+       *
+       * ⛔ WHAT DECIDES BETWEEN "MOVE IT" AND "SELECT ITS TEXT" IS THE CARET, READ LIVE — not
+       * the selection ring, and not a React attribute. His rule is *"text selection takes over
+       * once the note has focus"*: press 1 leaves the caret outside the box (`focusFromMat`
+       * preventDefaults it), so a travelling press 1 is a move; press 2 puts the caret inside, so
+       * a travelling press 2 is an ordinary text selection. `anchorPosAtSelection` answers that
+       * synchronously off the editor's own state, which is what makes it immune to whether React
+       * has repainted `data-selected`/`data-editing` yet — the exact race a DOM attribute would
+       * have lost on the first move of a gesture. */
+      const caretInside = () => {
+        try {
+          const at = anchorPosAtSelection(editor.state);
+          const mine = typeof getPos === "function" ? getPos() : null;
+          return at != null && mine != null && at === mine;
+        } catch (_) { return false; }
+      };
+      /** A press that belongs to something else on the box: a resize handle, the delete button,
+       *  the size readout. Chrome with its own gesture keeps it. */
+      const onOwnChrome = (target) => !!(target instanceof Element)
+        && !!target.closest(".planyr-anchor-h, .planyr-anchor-del, .planyr-anchor-size");
+      /** How far a pointer has to travel before a press becomes a drag rather than a click. */
+      const DRAG_SLOP = 4;
+
       /* The drag. Pointer capture rather than a document-level listener, so releasing outside
        * the window still ends it — a drag that never ends is a note you cannot type in. */
       let from = null;
-      grip.addEventListener("pointerdown", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      /** ⛔ ONE GESTURE, WIRED TWICE. `immediate` is the grip: it owns its press outright. The
+       *  body's is deferred to the movement threshold in `pointermove` below. */
+      const beginDrag = (e, { immediate }) => {
+        if (e.button !== 0) return;
+        if (!immediate && onOwnChrome(e.target)) return;
+        if (!immediate && caretInside()) return;   // the note has focus: this press is about text
+        if (immediate) { e.preventDefault(); e.stopPropagation(); }
         /* ⛔ WHERE IN THE BOX YOU GRABBED IT, kept — so the box cannot re-seat itself under the
          * cursor when the drag starts. Every position below is then derived from the pointer's
          * offset INSIDE THE EDITOR, read fresh on each move, which makes the whole gesture
@@ -787,11 +827,31 @@ export const NoteAnchor = Node.create({
           hostWidth: host.offsetWidth,
           group,
           moved: false,
+          immediate,
         };
-        grip.setPointerCapture(e.pointerId);
-      });
-      grip.addEventListener("pointermove", (e) => {
+        /* ⛔ THE POINTER IS CAPTURED AT THE PRESS, NOT AT THE THRESHOLD — and this line is the
+         * difference between the body drag working and doing nothing at all. Measured: without
+         * it, a drag that left the box's own 180px frame stopped receiving `pointermove` on that
+         * element entirely, so the gesture never reached its threshold and the box never moved —
+         * indistinguishable from the defect being fixed, and it read exactly like it in the
+         * harness. Capturing does not swallow the press: `mousedown` still reaches the mat's own
+         * select/enter handler, which is the whole reason this drag is deferred rather than
+         * `preventDefault`ed. */
+        try { dom.setPointerCapture(e.pointerId); } catch (_) { /* already captured */ }
+        if (immediate) from.moved = true;
+      };
+      dom.addEventListener("pointerdown", (e) => beginDrag(e, { immediate: false }));
+      grip.addEventListener("pointerdown", (e) => beginDrag(e, { immediate: true }));
+      dom.addEventListener("pointermove", (e) => {
         if (!from) return;
+        /* ⛔ THE THRESHOLD IS WHAT KEEPS A PLAIN CLICK A PLAIN CLICK. Below it nothing has
+         * happened yet: no capture, no preventDefault, no write. Past it the gesture is a drag
+         * and takes the pointer, so releasing outside the window still ends it. */
+        if (!from.moved) {
+          if (Math.abs(e.clientX - from.startX) < DRAG_SLOP && Math.abs(e.clientY - from.startY) < DRAG_SLOP) return;
+          if (caretInside()) { from = null; return; }
+        }
+        e.preventDefault();
         from.moved = true;
         const host = editor.view.dom;
         const hostRect = host.getBoundingClientRect();       // read FRESH: the page may scroll
@@ -810,7 +870,7 @@ export const NoteAnchor = Node.create({
           const moves = moveSelection(from.group, {
             dx: (e.clientX - from.startX) / from.scale,
             dy: (e.clientY - from.startY) / from.scale,
-          }, { maxX: from.hostWidth });
+          });
           from.moves = moves;            // ⛔ the gesture's own record — same reason as the width
           const byId = new Map(from.group.map((g) => [String(g.id), g.el]));
           for (const m of moves) {
@@ -839,7 +899,7 @@ export const NoteAnchor = Node.create({
         const at = from.at;               // kept past the reset below
         const moves = from.moves;         // …and the group's, when this was a group drag
         from = null;
-        try { grip.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
+        try { dom.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
         /* ⛔ A PRESS THAT NEVER MOVED WRITES NOTHING AT ALL — not a transaction, not an undo
          * frame, not a save. It used to commit the box's own coordinates back over themselves,
          * which is a no-op only for as long as nothing in that round trip is ever wrong; the
@@ -858,8 +918,8 @@ export const NoteAnchor = Node.create({
         // (B434417) applied to the other axis, and it would have been the next one reported.
         editor.commands.moveNoteAnchor(pos, { x: at.x, y: at.y });
       };
-      grip.addEventListener("pointerup", end);
-      grip.addEventListener("pointercancel", end);
+      dom.addEventListener("pointerup", end);
+      dom.addEventListener("pointercancel", end);
 
       return {
         dom,
