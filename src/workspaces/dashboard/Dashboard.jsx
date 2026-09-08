@@ -40,9 +40,10 @@ import { Button, ToggleChip } from "../../shared/ui/controls.jsx";
 import DashboardCard from "./components/DashboardCard.jsx";
 import DashboardTopoBackground from "./components/DashboardTopoBackground.jsx";
 import {
-  JumpBackInCard, PipelineCard, GoingQuietCard, CompsSummaryCard, ScheduleHealthCard,
+  JumpBackInCard, PipelineCard, GoingQuietCard, ScheduleHealthCard,
   CardSkeleton,
 } from "./components/DashboardCards.jsx";
+import CompsCard from "./components/CompsCard.jsx";
 import { NeedsAttentionCard } from "./components/NeedsAttentionCard.jsx";
 import { PursuitsCard } from "./components/PursuitsCard.jsx";
 import {
@@ -51,7 +52,8 @@ import {
 } from "./lib/dashboardLayout.js";
 import { loadDashboardLayout, saveDashboardLayout } from "./lib/dashboardPrefs.js";
 import { fetchSiteSummaries } from "./lib/dashboardSitesFetch.js";
-import { fetchCompsCounts } from "./lib/dashboardCompsFetch.js";
+import { fetchAllCompsForCard } from "./lib/dashboardCompsFetch.js";
+import { buildCompsCardData } from "./lib/compsCardModel.js";
 import { fetchLastTouchedDoc } from "./lib/dashboardDocFetch.js";
 import { fetchScheduleProjects } from "./lib/dashboardScheduleFetch.js";
 import { fetchAllElementRecency } from "./lib/dashboardElementRecencyFetch.js";
@@ -93,7 +95,7 @@ function useMeasuredWidth() {
   return [ref, width];
 }
 
-export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler }) {
+export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenCompInSitePlanner }) {
   const [layout, setLayout] = useState(() => normalizeLayout(null));
   const [customizing, setCustomizing] = useState(false);
   const [saveNote, setSaveNote] = useState(null); // null | "saved" | "local" | "error"
@@ -144,7 +146,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
 
   // ── Data: one fetch per source, in parallel, once per mount. ──────────────────────────────
   const [sites, setSites] = useState([]);
-  const [comps, setComps] = useState(null);
+  const [comps, setComps] = useState([]);
   const [doc, setDoc] = useState(null);
   const [scheduleProjects, setScheduleProjects] = useState(null);
   // B1161793 (NEW-2) — building elements for each open pursuit's own representative plan, for
@@ -168,7 +170,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     (async () => {
       const results = await Promise.allSettled([
         fetchSiteSummaries().then((v) => { if (live) setSites(v); return v; }),
-        fetchCompsCounts().then((v) => { if (live) setComps(v); }),
+        fetchAllCompsForCard().then((v) => { if (live) setComps(v); }),
         fetchLastTouchedDoc().then((v) => { if (live) setDoc(v); }),
         fetchScheduleProjects().then((v) => { if (live) setScheduleProjects(v); }),
         fetchAllElementRecency().then((v) => v),
@@ -198,7 +200,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     needsAttention: { rows: needsAttentionRows },
     pursuitsTable: { rows: pursuitsRows, yieldBySite: yieldBySiteMap },
     goingQuiet: { rows: goingQuiet(projects) },
-    compsSummary: { counts: comps },
+    compsSummary: { data: buildCompsCardData(comps) },
     scheduleHealth: { rows: scheduleProjects ? summarizeScheduleHealth(scheduleProjects) : [] },
   }), [projects, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap]);
 
@@ -206,19 +208,28 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   const openSchedule = (p) => onNavigate?.({ module: "scheduler", projectId: p.linkedSiteId, cross: false, org: false });
   const openDoc = (d) => onOpenReviewInDocReview?.({ id: d.id, project_id: d.projectId });
   const openTask = (row) => onOpenTaskInScheduler?.({ linkedSiteId: row.linkedSiteId, taskId: row.taskId });
+  const openComp = (comp) => onOpenCompInSitePlanner?.({ compId: comp.id });
+  // Empty-state "add one" — there's no specific comp to deep-link into yet, so this lands the
+  // owner on the map/finder view, one click from the Comps tab (MapFinder's own toolbar).
+  const addComp = () => onNavigate?.({ module: "site-planner", projectId: null, cross: false, org: false });
 
   // NEW-1 — while data is still loading every slot renders the SAME stable-height skeleton
   // instead of its real (variable-height) content; see the `dataReady` effect above.
-  const SKELETON_ROWS = { jumpBackIn: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 2, goingQuiet: 3 };
+  const SKELETON_ROWS = { jumpBackIn: 2, pipelineStatus: 2, scheduleHealth: 3, needsAttention: 4, pursuitsTable: 4, compsSummary: 6, goingQuiet: 3 };
   const CARD_RENDERERS = dataReady ? {
     jumpBackIn: () => <JumpBackInCard {...cardData.jumpBackIn} onOpenProject={openProject} onOpenDoc={openDoc} />,
     pipelineStatus: () => <PipelineCard {...cardData.pipelineStatus} />,
     needsAttention: () => <NeedsAttentionCard {...cardData.needsAttention} onOpenTask={openTask} />,
     pursuitsTable: () => <PursuitsCard {...cardData.pursuitsTable} onOpenProject={openProject} />,
     goingQuiet: () => <GoingQuietCard {...cardData.goingQuiet} onOpenProject={openProject} />,
-    compsSummary: () => <CompsSummaryCard {...cardData.compsSummary} />,
+    compsSummary: () => <CompsCard {...cardData.compsSummary} onOpenComp={openComp} onAddComp={addComp} />,
     scheduleHealth: () => <ScheduleHealthCard {...cardData.scheduleHealth} onOpenSchedule={openSchedule} />,
   } : Object.fromEntries(Object.keys(CARD_DEFS).map((k) => [k, () => <CardSkeleton rows={SKELETON_ROWS[k]} />]));
+
+  // NEW-COMPS-CARD — the header row's quiet right-side "latest of N" meta, computed only once
+  // real data is in (a skeleton card has nothing to count yet).
+  const compsHeaderMeta = dataReady && cardData.compsSummary.data.total
+    ? `latest of ${cardData.compsSummary.data.total}` : undefined;
 
   const toAdd = availableToAdd(layout);
   const orderedForNarrow = isNarrow ? narrowOrder(layout) : layout;
@@ -230,6 +241,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     return (
       <DashboardCard
         title={def.title}
+        headerMeta={entry.key === "compsSummary" ? compsHeaderMeta : undefined}
         customizing={customizing}
         showDragHandle={!isNarrow}
         onRemove={() => setLayout((l) => removeCard(l, entry.key))}

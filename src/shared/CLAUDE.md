@@ -133,6 +133,10 @@ into every consumer. Root rules in `/CLAUDE.md`; deep detail in `/docs/REFERENCE
   `var()`). `ui/statusTokens.js` — the single project-status palette source. `ui/controls.jsx` —
   shared control primitives (Button/ToggleChip/IconButton/Field/Section/MenuItem) + the one
   radius/padding/type scale; token-driven, an `accent` prop keeps each module's hue (B657-5B).
+  `ui/Chip.jsx` + `ui/RowInfo.jsx` (NEW-COMPS-CARD, moved from site-planner/components/ — every
+  consumer already spanned workspaces) — the small bordered status-chip primitive (tone
+  amber/neutral, optional ⓘ popover) used by the Yield panel, Pond inspector and the Dashboard's
+  Comps card.
   `ui/ColorField.jsx` + pure `ui/colorRecents.js` — the color control: a current-colour CHIP that
   opens a compact picker popover (palette grid → divider → RECENTLY USED, hidden when empty →
   a quiet "Custom…" row that opens the native OS wheel, the only way to reach an off-palette
