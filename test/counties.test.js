@@ -105,6 +105,37 @@ describe("candidateCountiesForPoint — click routing (B11/B130/B787)", () => {
   });
 });
 
+/* NEW-1 (2026-09-08) — CLICK ROUTING REALLY REACHES THE TWO STATES THIS ITEM RESCUED.
+ *
+ * Wiring an entry into COUNTIES_MAP is not the same claim as "a click in that state can select a
+ * lot from it", and this repo has been bitten before by proving the first and assuming the second.
+ * California and Rhode Island had both been recorded as `no-free-source` with `Candidate: none
+ * found` — both findings were wrong (docs/STATEWIDE-PARCELS.md), and both sources were found by
+ * the official-ArcGIS-Online-organization pass NEW-2 makes systematic.
+ *
+ * ⛔ WHAT THIS DOES *NOT* CLAIM. Neither state has a dialed-in county entry, so its point matches
+ * no bbox and `siteState`'s envelopes cover only TX/CO — the list therefore falls through to the
+ * every-key branch, which is the SAME coarse routing every out-of-TX/CO statewide source added
+ * since B1332016 already has. That coarseness is deliberately not narrowed here (it would change
+ * routing for 27 other states); what is asserted is only the property the wiring is for: the
+ * state's own source is genuinely among the candidates, and a Texas click is not made to carry it. */
+describe("NEW-1 — California and Rhode Island are reachable by a click in their own state", () => {
+  it("a Fresno point can reach ca_statewide", () => {
+    expect(candidateCountiesForPoint(36.74, -119.79)).toContain("ca_statewide");
+  });
+
+  it("a Providence point can reach ri_statewide", () => {
+    expect(candidateCountiesForPoint(41.824, -71.412)).toContain("ri_statewide");
+  });
+
+  it("a Houston point carries NEITHER — a Texas click must not drag 49 other states' sources along", () => {
+    const cand = candidateCountiesForPoint(29.76, -95.37);
+    expect(cand).not.toContain("ca_statewide");
+    expect(cand).not.toContain("ri_statewide");
+    expect(cand).toContain("txgio_statewide");
+  });
+});
+
 // The statewide TxGIO layer is the universal fallback when a county's own CAD server
 // is down. statewideFallbackFor returns that layer scoped to the requested county, so
 // an ID/address search can't leak into another county (B244).

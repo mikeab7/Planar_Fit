@@ -21,7 +21,7 @@ import {
 } from "../src/workspaces/notes/lib/notesModel.js";
 import { absoluteStamp, daysLeft, editedLabel, relativeTime, stampLabel } from "../src/workspaces/notes/lib/notesTime.js";
 import { docToMarkdown, imageIdsInDoc, imageIdsInDocs, pageToMarkdown } from "../src/workspaces/notes/lib/notesMarkdown.js";
-import { buildPrintDocument } from "../src/workspaces/notes/lib/notesPrint.js";
+import { buildPrintDocument, pageAnchorExtentLeftPx, pageAnchorExtentTopPx } from "../src/workspaces/notes/lib/notesPrint.js";
 
 /* A minimal localStorage, installed before the store module is reached. The store resolves
  * `window.localStorage` per call (never captured), so this is enough for the real code path
@@ -494,6 +494,60 @@ describe("the print sheet", () => {
     it("a missing or unreadable doc grows nothing — one bad page does not take the print run down", () => {
       const html = buildPrintDocument({ title: "T", pages: [{ title: "T", html: "<p>x</p>", doc: null }, { title: "U", html: "<p>y</p>" }] });
       expect(html).not.toContain('style="max-width');
+    });
+  });
+
+  /* ⛔ AND THE OTHER TWO EDGES ON PAPER (NOTES-FREE-PLACEMENT / NEW-7, 2026-09-08). The screen
+   * grows LEFT and UP by taking on extra padding rather than by moving anybody's box; paper does
+   * exactly the same to the same element. Without this a box at a negative x or y prints off the
+   * paper entirely — which is precisely the "prove what a placed note does when the page is
+   * printed" question he refused to have closed on a code reading. */
+  describe("the sheet grows LEFT and UP too, mirroring the screen (NOTES-FREE-PLACEMENT)", () => {
+    const page = (attrs) => ({ title: "T", html: "<p>x</p>", doc: { type: "doc", content: [{ type: "noteAnchor", attrs }] } });
+
+    it("a box left of the page's origin reserves extra LEFT padding — and extra width to pay for it", () => {
+      const html = buildPrintDocument({ title: "T", pages: [page({ x: -260, y: 20, w: 180 })] });
+      expect(html).toContain("padding-left: calc(8mm + 276px)");   // 260 + the 16px pad
+      /* The width has to carry the growth as well, or growing left would simply squeeze the text
+       * column into what was left over. 0 (nothing overhangs right) + 276 + the sheet's own 60. */
+      expect(html).toContain("max-width: max(190mm, 336px)");
+    });
+
+    it("a box above the page's origin reserves extra TOP padding", () => {
+      const html = buildPrintDocument({ title: "T", pages: [page({ x: 20, y: -140, w: 180 })] });
+      expect(html).toContain("padding-top: calc(10mm + 156px)");
+    });
+
+    it("⛔ all four at once — the four edges are one rule, not four that can disagree", () => {
+      const html = buildPrintDocument({
+        title: "T",
+        pages: [{
+          title: "T", html: "<p>x</p>",
+          doc: { type: "doc", content: [
+            { type: "noteAnchor", attrs: { x: -260, y: 120, w: 180 } },
+            { type: "noteAnchor", attrs: { x: 620, y: 120, w: 180 } },
+            { type: "noteAnchor", attrs: { x: 200, y: -140, w: 180 } },
+            { type: "noteAnchor", attrs: { x: 200, y: 640, w: 180 } },
+          ] },
+        }],
+      });
+      expect(html).toContain("padding-left: calc(8mm + 276px)");
+      expect(html).toContain("padding-top: calc(10mm + 156px)");
+      expect(html).toContain("max-width: max(190mm, 1152px)");     // 816 right + 276 left + 60
+    });
+
+    it("an ordinary page still carries no override at all — the quiet case stays quiet", () => {
+      const html = buildPrintDocument({ title: "T", pages: [page({ x: 20, y: 20, w: 180 })] });
+      expect(html).not.toContain("padding-left: calc");
+      expect(html).not.toContain("padding-top: calc");
+    });
+
+    it("⛔ the extents are exported so a caller can ask without parsing HTML", () => {
+      const doc = { type: "doc", content: [{ type: "noteAnchor", attrs: { x: -300, y: -50, w: 180 } }] };
+      expect(pageAnchorExtentLeftPx(doc)).toBe(316);
+      expect(pageAnchorExtentTopPx(doc)).toBe(66);
+      expect(pageAnchorExtentLeftPx(null)).toBe(0);
+      expect(pageAnchorExtentTopPx(undefined)).toBe(0);
     });
   });
 });

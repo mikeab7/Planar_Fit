@@ -176,16 +176,23 @@ describe("⛔ the floors — nothing is ever crushed below a usable size", () =>
     expect(out.h).toBe(ANCHOR_MIN_WIDTH / 0.25);
   });
 
-  it("the page's own left edge is still a wall — a box is not dragged off the sheet", () => {
+  /* ⛔ SUPERSEDED (NOTES-FREE-PLACEMENT, owner report 2026-09-08). These two used to assert the
+   * page's left and top edges were WALLS — `out.x >= 0` and `out.y === 0` after a drag past the
+   * corner. They are the resize half of the positive-only floor he measured: right and down grew
+   * the page, left and up stopped dead. The property is now the opposite one, and it is asserted
+   * rather than merely un-asserted, because "the clamp is gone" and "the arithmetic still works
+   * out there" are different claims and only the second is worth keeping. */
+  it("⛔ the page's left edge is NOT a wall — a west drag past it keeps going, and the page grows", () => {
     const out = resizeBox({ box: { x: 20, y: 100, w: 400, h: 200 }, handle: "w", dx: -500, aspect: null });
-    expect(out.x).toBeGreaterThanOrEqual(0);
+    expect(out.x).toBe(-480);
     expect(out.x + out.w).toBe(420);                          // the right edge still did not move
+    expect(out.w).toBe(900);                                  // …so the width is the whole travel
   });
 
-  it("…and the top edge likewise", () => {
+  it("⛔ …and the top edge likewise — a north drag past it is an ordinary negative y", () => {
     const out = resizeBox({ box: { x: 300, y: 10, w: 400, h: 200 }, handle: "n", dx: 0, dy: -500, aspect: null });
-    expect(out.y).toBe(0);
-    expect(out.y + out.h).toBe(210);
+    expect(out.y).toBe(-490);
+    expect(out.y + out.h).toBe(210);                          // the bottom edge still did not move
   });
 });
 
@@ -265,8 +272,12 @@ describe("⛔ a move never resizes (NEW-DRAG-NARROWS)", () => {
     expect(moveAnchorPoint({ x: 5000, y: 200 })).toEqual({ x: 5000, y: 200 });
   });
 
-  it("keeps the left and top guards — a drag past the corner of the page is not a place", () => {
-    expect(moveAnchorPoint({ x: -80, y: -80 })).toEqual({ x: 4, y: 0 });
+  /* ⛔ SUPERSEDED, same round, same reason: the guard was the bug. A box dragged 434px past the
+   * page's left edge landed at `left: 4px` with the page still 580 wide, while the identical
+   * gesture rightward grew the page 580 → 1212 and shrank it back. */
+  it("⛔ has NO left or top guard — the point somebody dragged to is the point that is kept", () => {
+    expect(moveAnchorPoint({ x: -80, y: -80 })).toEqual({ x: -80, y: -80 });
+    expect(moveAnchorPoint({ x: -434, y: 0 })).toEqual({ x: -434, y: 0 });
   });
 
   it("rounds to whole pixels, like every other stored coordinate here", () => {
@@ -274,9 +285,9 @@ describe("⛔ a move never resizes (NEW-DRAG-NARROWS)", () => {
   });
 
   it("never throws on rubbish, which is what a listener gets before the first move", () => {
-    expect(moveAnchorPoint()).toEqual({ x: 4, y: 0 });
-    expect(moveAnchorPoint({})).toEqual({ x: 4, y: 0 });
-    expect(moveAnchorPoint({ x: NaN, y: "abc" })).toEqual({ x: 4, y: 0 });
+    expect(moveAnchorPoint()).toEqual({ x: 0, y: 0 });
+    expect(moveAnchorPoint({})).toEqual({ x: 0, y: 0 });
+    expect(moveAnchorPoint({ x: NaN, y: "abc" })).toEqual({ x: 0, y: 0 });
   });
 
   /* ⛔ THE CONTRAST THAT IS THE WHOLE POINT, asserted rather than described: at the same x,

@@ -147,19 +147,29 @@ describe("moving a selection", () => {
     ]);
   });
 
-  it("⛔ CLAMPS THE SET, NOT EACH BOX — the arrangement must not deform", () => {
-    /* Dragging far left: the leftmost box stops at the edge, and the other must stop by the SAME
-     * amount. Clamping members independently is what silently destroys a layout somebody built. */
+  /* ⛔ AMENDED (NOTES-FREE-PLACEMENT, owner report 2026-09-08): there is no left/top edge to clamp
+   * against any more — the page grows to hold whatever the set reaches, on all four sides. The
+   * property worth keeping is the OTHER half of what these two were guarding, and it is the half
+   * that matters: whatever the clamp does, the arrangement must not deform. So they now assert the
+   * gap survives an unclamped drag, and the right-hand case below still exercises a real clamp. */
+  it("⛔ MOVES THE SET AS ONE — no left edge to stop at, and the arrangement must not deform", () => {
     const moved = moveSelection(set, { dx: -500, dy: 0 });
-    expect(moved[0].x).toBe(0);
-    expect(moved[1].x).toBe(200);                       // 300 − 100, the same delta as the first
+    expect(moved[0].x).toBe(-400);
+    expect(moved[1].x).toBe(-200);                      // the same delta as the first
     expect(moved[1].x - moved[0].x).toBe(200);          // the gap is unchanged
   });
 
   it("…and the same going up", () => {
     const moved = moveSelection(set, { dx: 0, dy: -1000 });
+    expect(moved[0].y).toBe(-900);
+    expect(moved[1].y - moved[0].y).toBe(140);          // the gap of 140 survives
+  });
+
+  it("⛔ …but a caller that asks for a wall still gets one — the parameter is not dead", () => {
+    const moved = moveSelection(set, { dx: -500, dy: -1000 }, { min: 0 });
+    expect(moved[0].x).toBe(0);
     expect(moved[0].y).toBe(0);
-    expect(moved[1].y).toBe(140);                       // the gap of 140 survives
+    expect(moved[1].x - moved[0].x).toBe(200);
   });
 
   it("…and against a right-hand edge", () => {

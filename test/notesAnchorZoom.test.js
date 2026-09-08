@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { anchorExtentX,
+import { anchorExtentLeft, anchorExtentTop, anchorExtentX,
   anchorExtent, placeAnchor, ANCHOR_EDGE_PAD, ANCHOR_MIN_WIDTH, ANCHOR_WIDTH,
 } from "../src/workspaces/notes/lib/notesAnchorNode.js";
 import {
@@ -79,19 +79,31 @@ describe("placeAnchor — a block starts where you clicked, and is NARROWED to f
    * suite cannot reconstruct. `placeAnchor` never had the floor those two functions have always
    * had; it does now, for the same reason they do — the page's own top edge is a fixed origin
    * and nothing may be placed above it. */
-  it("⛔ AND THE PAGE'S OWN TOP EDGE IS A FLOOR, THE SAME ONE moveAnchorPoint HOLDS", () => {
-    expect(placeAnchor({ x: 10, y: -21, ...box }).y).toBe(0);
-    expect(placeAnchor({ x: 10, y: -1, ...box }).y).toBe(0);
+  /* ⛔ SUPERSEDED BY NOTES-FREE-PLACEMENT (owner report 2026-09-08). These asserted the page's top
+   * and left edges were FLOORS. The owner measured what that cost from the other side — the page
+   * grew right and down and CLAMPED left and up, so a box dragged past the left margin stopped
+   * dead at `left: 4px` while the page stayed its natural width. The page now grows on all four
+   * edges (`anchorExtentLeft`/`anchorExtentTop`) and a negative coordinate is an ordinary
+   * position, so the property is the opposite one and is asserted rather than merely dropped. */
+  it("⛔ THE PAGE'S TOP EDGE IS NOT A FLOOR — a negative y is kept and the page grows to reach it", () => {
+    expect(placeAnchor({ x: 10, y: -21, ...box }).y).toBe(-21);
+    expect(placeAnchor({ x: 10, y: -1, ...box }).y).toBe(-1);
     expect(placeAnchor({ x: 10, y: 0, ...box }).y).toBe(0);
   });
 
-  it("never starts left of the margin", () => {
-    expect(placeAnchor({ x: -400, y: 10, ...box }).x).toBe(ANCHOR_EDGE_PAD);
+  it("⛔ …and neither is the left margin", () => {
+    expect(placeAnchor({ x: -400, y: 10, ...box }).x).toBe(-400);
+  });
+
+  it("⛔ …but a box left of the origin still gets its ordinary width, not a bonus for being out there", () => {
+    /* `room` is measured from the page's own origin rather than from a negative left, so the
+     * arithmetic cannot hand a box at x = -300 an extra 300px of width by accident. */
+    expect(placeAnchor({ x: -300, y: 10, ...box }).w).toBe(placeAnchor({ x: 0, y: 10, ...box }).w);
   });
 
   it("refuses nonsense instead of writing NaN into the document", () => {
     const r = placeAnchor({ x: undefined, y: "abc", ...box });
-    expect(r).toEqual({ x: ANCHOR_EDGE_PAD, y: 0, w: ANCHOR_WIDTH });
+    expect(r).toEqual({ x: 0, y: 0, w: ANCHOR_WIDTH });
   });
 });
 
@@ -286,6 +298,53 @@ describe("anchorExtentX — how far right the blocks reach", () => {
   it("⛔ mirrors anchorExtent's shape — the two axes must not drift apart", () => {
     expect(anchorExtent([{ y: 100, height: 50 }], { pad: 0 })).toBe(150);
     expect(anchorExtentX([{ x: 100, w: 50 }], { pad: 0 })).toBe(150);
+  });
+});
+
+/* ⛔ THE OTHER TWO EDGES (NOTES-FREE-PLACEMENT, owner report 2026-09-08). Their ABSENCE was the
+ * whole of NEW-1: `anchorExtent`/`anchorExtentX` grew the page down and right, nothing asked the
+ * same question of the top and left, and so those two were CLAMPED instead — a box dragged 434px
+ * past the left margin landed at `left: 4px` with the page still 580 wide. */
+describe("anchorExtentLeft / anchorExtentTop — how far past the origin the blocks reach", () => {
+  it("answers 0 when nothing overhangs — the ordinary page costs nothing", () => {
+    expect(anchorExtentLeft([{ x: 100, w: 180 }])).toBe(0);
+    expect(anchorExtentTop([{ x: 100, y: 40 }])).toBe(0);
+    expect(anchorExtentLeft([{ x: 0 }])).toBe(0);
+    expect(anchorExtentTop([{ y: 0 }])).toBe(0);
+  });
+
+  it("⛔ RETURNS A POSITIVE DISTANCE, never a negative coordinate — one direction for every caller", () => {
+    expect(anchorExtentLeft([{ x: -260 }], { pad: 16 })).toBe(276);
+    expect(anchorExtentTop([{ y: -140 }], { pad: 16 })).toBe(156);
+  });
+
+  it("takes the furthest box, not the last one", () => {
+    expect(anchorExtentLeft([{ x: -50 }, { x: -400 }, { x: 900 }], { pad: 0 })).toBe(400);
+    expect(anchorExtentTop([{ y: -5 }, { y: -300 }, { y: 900 }], { pad: 0 })).toBe(300);
+  });
+
+  it("survives an empty or unreadable list rather than throwing", () => {
+    expect(anchorExtentLeft([])).toBe(0);
+    expect(anchorExtentLeft(null)).toBe(0);
+    expect(anchorExtentTop([])).toBe(0);
+    expect(anchorExtentTop(undefined)).toBe(0);
+    expect(anchorExtentLeft([{ x: "nonsense" }])).toBe(0);
+    expect(anchorExtentTop([{ y: null }])).toBe(0);
+  });
+
+  it("⛔ anchorExtentTop needs no measured height — which is why paper can answer it too", () => {
+    /* `anchorExtent` (downward) takes a rendered `height` because a box's height is its words.
+     * Upward, a box's top IS its stored `y`, so the print path gets the same answer as the screen
+     * from the raw document — see notesPrint.js's pageAnchorExtentTopPx. */
+    expect(anchorExtentTop([{ y: -100, height: 999 }], { pad: 0 })).toBe(100);
+    expect(anchorExtentTop([{ y: -100 }], { pad: 0 })).toBe(100);
+  });
+
+  it("⛔ the four edges are ONE symmetry — a box 300 out reserves the same room on every side", () => {
+    expect(anchorExtentLeft([{ x: -300 }], { pad: 0 })).toBe(300);
+    expect(anchorExtentTop([{ y: -300 }], { pad: 0 })).toBe(300);
+    expect(anchorExtentX([{ x: 300, w: 0 }], { pad: 0 })).toBe(300);
+    expect(anchorExtent([{ y: 300, height: 0 }], { pad: 0 })).toBe(300);
   });
 });
 

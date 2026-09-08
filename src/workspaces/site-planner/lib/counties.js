@@ -817,6 +817,38 @@ const COUNTIES_MAP_RAW = {
     state: "AR", center: [34.9, -92.4], zoom: 7, mapServer: null, statewide: true,
     layerUrl: "https://gis.arkansas.gov/arcgis/rest/services/FEATURESERVICES/Planning_Cadastre/FeatureServer/6",
   },
+  /* NEW-1 (2026-09-08) — CALIFORNIA and RHODE ISLAND, both of which this repo had on record as
+   * `no-free-source` with `Candidate: none found`, and both of which are REAL. The doc's own
+   * claims about them ("only a static 2014 file-geodatabase, 51 of 58 counties" for California;
+   * "RIGIS publishes standards and a per-town tracker, not a merged statewide layer" for Rhode
+   * Island) were WRONG, not merely incomplete — they are retracted outright in
+   * docs/STATEWIDE-PARCELS.md rather than softened.
+   *
+   * ⛔ THE BLIND SPOT THAT PRODUCED BOTH, because it is the reusable lesson and NEW-2 is the fix:
+   * every earlier pass resolved a state's candidate from that STATE'S OWN `.gov` GIS host plus
+   * whatever a web search surfaced. This sandbox reaches `*.arcgis.com` and cannot reach most
+   * state `.gov` domains — so a state that publishes the SAME dataset to its own ArcGIS Online
+   * ORGANIZATIONAL ACCOUNT was reachable all along and was never looked for. New York was already
+   * saved by exactly that route (see `ny_statewide` above, which says so in its own comment) and
+   * it was treated as a one-off workaround for one state instead of as the default second pass for
+   * all fifty. A hand-run of that second pass over 13 `no-free-source` states returned these two.
+   * `ui-audit/probe-statewide-parcels.mjs` now runs that AGOL pass systematically (NEW-2). */
+  ca_statewide: {
+    // MEASURED FROM THIS SANDBOX (HTTP 200): 13,138,000 parcels, polygon, 21 fields. Published by
+    // ITS.CALFIRE — the California Dept. of Forestry & Fire Protection, a state agency — as a
+    // public Feature Service view. Attribute-light: PARCEL_APN, FIPS_CODE, PARCEL_DMP_ID,
+    // COUNTYNAME, SITE_ADDR/CITY/STATE/ZIP, FullStreetAddress, Search_PARCELAPN. NO owner field
+    // and NO appraised-value field — both stay ABSENT, never zero and never an empty string, the
+    // same standing this file already gives Hawaii's, New Hampshire's and Virginia's thin schemas.
+    // ⛔ SIZE: at 13.1M parcels this is the largest source in the file (~21% above Florida's
+    // 10.8M, already wired). That is safe because NOTHING here ever fetches a layer whole — the
+    // display layer is an esri-leaflet featureLayer gated at PARCEL_MINZOOM and queried per map
+    // viewport (parcelDisplay.js), and a truncated draw is reported LOUDLY via
+    // `responseWasTruncated` rather than silently drawn short. Feature count scales the SERVER's
+    // index, not the client's payload.
+    state: "CA", center: [37.2, -119.5], zoom: 6, mapServer: null, statewide: true,
+    layerUrl: "https://bz1uwWPKUInZBK94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/rest/services/CA_Statewide_Parcels_Public_view/FeatureServer/0",
+  },
   ct_statewide: {
     state: "CT", center: [41.6, -72.7], zoom: 9, mapServer: null, statewide: true,
     layerUrl: "https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_State_Parcel_Layer_2023/FeatureServer/0",
@@ -918,6 +950,18 @@ const COUNTIES_MAP_RAW = {
     // view (a MailAddressAll field exists as a mailing-address proxy).
     state: "OH", center: [40.4, -82.8], zoom: 7, mapServer: null, statewide: true,
     layerUrl: "https://services2.arcgis.com/MlJ0G8iWUyC7jAmu/arcgis/rest/services/OhioStatewidePacels_full_view/FeatureServer/0",
+  },
+  ri_statewide: {
+    // Verify: live — risegis.ri.gov is a state `.gov` host this build environment's egress
+    // allowlist blocks (confirmed: the CONNECT tunnel never opens). MEASURED FROM THE OWNER'S OWN
+    // BROWSER 2026-09-08, never this sandbox: "Tax Parcels", polygon, 394,167 parcels, published
+    // by RIGIS_ADMIN — the Rhode Island state GIS clearinghouse ITSELF, not a town and not a
+    // third-party rehost. Fields: PlatLot (Rhode Island's own parcel identifier — RI abolished
+    // county government in 1842 and each of its 39 towns keys parcels by plat + lot), Acres, E911
+    // and E911_Type (address), TownCode, IMP_sqft, Last_UPD. NO owner, NO appraised value — both
+    // absent, never zero or blank.
+    state: "RI", center: [41.68, -71.55], zoom: 10, mapServer: null, statewide: true,
+    layerUrl: "https://risegis.ri.gov/hosting/rest/services/RIDEM/Tax_Parcels/MapServer/0",
   },
   tn_statewide: {
     // Covers 86 of 95 counties (9 use non-state assessment systems and are excluded).
