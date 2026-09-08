@@ -30,7 +30,7 @@ async function openMap(page) {
     Object.defineProperty(Element.prototype, "requestFullscreen", { value: refuse, configurable: true });
   });
   await page.goto("/#/");
-  await expect(page.getByTestId("map-start-blank-menu-btn")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("map-toolbar-draw")).toBeVisible({ timeout: 30_000 });
   await page.waitForTimeout(1500); // let the Leaflet map + layer probes settle
 }
 

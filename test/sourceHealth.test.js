@@ -108,6 +108,29 @@ describe("sourceHealth — parcel-server circuit breaker (B244)", () => {
     expect(out.map((c) => c.county)).toEqual(["harris", "wv_statewide"]); // open breaker, still never dropped
   });
 
+  it("NEW-1 (2026-09-08) — California and Rhode Island survive their own outage exactly like every other statewide composite, via the real STATEWIDE_KEYS list", () => {
+    // Same mutation proof as the AR/NE/WV cases above, for the two states NEW-1 rescued from a
+    // `no-free-source` row that was simply WRONG (docs/STATEWIDE-PARCELS.md; both found via the
+    // official-ArcGIS-Online-organization pass NEW-2 makes systematic). Neither needs one line of
+    // per-state outage code — that is the property under test.
+    //
+    // RHODE ISLAND is the one driven here, deliberately: risegis.ri.gov is a REAL, confirmed
+    // egress-policy block from this build environment (the CONNECT tunnel never opens), so this is
+    // a genuine outage rather than a simulated one — the same standing
+    // e2e/parcel-outage-fallback.spec.js already established for county-level sources, and the
+    // same reason Arkansas and Nebraska were picked for the two cases above. California is
+    // asserted present but not driven: its host answers HTTP 200 from here, so an outage for it
+    // would be the simulated kind.
+    expect(STATEWIDE_KEYS).toContain("ri_statewide");
+    expect(STATEWIDE_KEYS).toContain("ca_statewide");
+    const t = 1000;
+    for (let i = 0; i < SOURCE_FAIL_THRESHOLD; i++) recordSourceResult("ri_statewide", false, t);
+    expect(isSourceOpen("ri_statewide", t)).toBe(true); // the breaker really did open — not a no-op
+    const cands = [{ county: "harris", url: "u1" }, { county: "ri_statewide", url: "u2" }];
+    const out = filterHealthyCandidates(cands, STATEWIDE_KEYS, t);
+    expect(out.map((c) => c.county)).toEqual(["harris", "ri_statewide"]); // open breaker, still never dropped
+  });
+
   it("never returns empty even if every candidate's breaker is open (coverage must survive)", () => {
     const t = 1000;
     for (let i = 0; i < SOURCE_FAIL_THRESHOLD; i++) { recordSourceResult("harris", false, t); recordSourceResult("fortbend", false, t); }

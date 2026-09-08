@@ -134,21 +134,20 @@ export default function ParcelInfoCard({
             </>
           )}
 
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
-            {mode === "comp" ? (
-              onComp && (
-                <button onClick={onComp}
-                  style={{ height: 30, padding: "0 12px", borderRadius: RADIUS.sm, border: "none", background: compAccent || PAL.accent, color: "var(--on-accent)", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                  Add as comp →
-                </button>
-              )
-            ) : (
-              <button onClick={onPlan}
-                style={{ height: 30, padding: "0 12px", borderRadius: RADIUS.sm, border: "none", background: PAL.accent, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                Plan this site →
-              </button>
-            )}
-          </div>
+          {/* ⛔ NEW-1 (2026-09-08) — THIS CARD NO LONGER CARRIES A PRIMARY ACTION, and the removal
+              is the point, not a trim. It used to end in one button chosen by the map toolbar's
+              Site/Comp mode ("Plan this site →" / "Add as comp →"). That mode is gone: an address
+              search now simply FINDS, and the parcel it finds lands in the map toolbar's decide
+              bar directly above this card, where all three verbs are offered at once. A single
+              action down here would be the old guess wearing new clothes — it would name ONE of
+              those three as the answer, on the very surface whose job is to describe the ground
+              rather than decide about it. B831776/NEW-6's rule (never offer the Site action while
+              the user is logging comps) is satisfied absolutely rather than conditionally: there
+              is no action here to be wrong.
+              `onPlan` / `onComp` / `mode` / `compAccent` stay in the signature deliberately —
+              `onStartBlank` below is a different case (an OUTAGE, where no parcel was found, so no
+              decide bar is showing and this card is the only way forward) and the props keep this
+              component's contract stable for it. */}
         </div>
       ) : info.status === "none" ? (
         <div style={{ padding: "9px 11px", fontSize: 11.5, color: PAL.muted, lineHeight: 1.5 }}>

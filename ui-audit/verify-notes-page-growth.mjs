@@ -121,10 +121,20 @@ console.log("=".repeat(100));
   console.log(JSON.stringify(state, null, 2));
   ok("no page errors", errs.length === 0, errs.join(" | "));
   ok("the anchor renders fully inside the page sheet", state.allAnchorsInsideSheet);
-  ok("the page's own top edge is a floor — the negative y was repaired, not merely hidden",
-    state.storedAnchors[0]?.y === 0, `stored y=${state.storedAnchors[0]?.y}`);
-  ok("the repair SURVIVES A RELOAD (it was written back, not painted over)",
-    (await measureCase(doc)).state.storedAnchors[0]?.y === 0);
+  /* ⛔ SUPERSEDED, AND REVERSED, BY NOTES-FREE-PLACEMENT (owner report 2026-09-08). These two used
+   * to assert that the page's top edge was a FLOOR — that this anchor's `y: -21` was repaired to
+   * 0 on load and written back. The owner then measured the consequence of that floor from the
+   * other side: the page grew right and down but was CLAMPED left and up, so a box dragged past
+   * the left margin stopped dead at `left: 4px` with the page unchanged. The floor was the bug.
+   * `repairOffPageAnchors` is retired, the page grows on all four edges, and a negative coordinate
+   * is now an ordinary position — so this anchor must render EXACTLY where it says it is, and the
+   * document must come back byte-identical rather than quietly rewritten on every load. The
+   * "renders fully inside the page sheet" assertion above is untouched and now carries the weight:
+   * it is what proves the page reached the box rather than the box being dragged to the page. */
+  ok("⛔ the negative y is KEPT, not repaired — the page reaches the box instead",
+    state.storedAnchors[0]?.y === -21, `stored y=${state.storedAnchors[0]?.y}`);
+  ok("⛔ …and opening the note does not rewrite the stored document at all",
+    (await measureCase(doc)).state.storedAnchors[0]?.y === -21);
 }
 
 /* ═══ 2. THE ADJACENT CASES ══════════════════════════════════════════════════════════════════ */

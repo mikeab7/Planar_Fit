@@ -35,7 +35,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { noteExtensions, EMPTY_DOC } from "../lib/notesExtensions.js";
-import { anchorExtent, anchorExtentX, anchorPosAtSelection, fitAnchorBox, placeAnchor } from "../lib/notesAnchorNode.js";
+import { anchorExtent, anchorExtentLeft, anchorExtentTop, anchorExtentX, anchorPosAtSelection, fitAnchorBox, placeAnchor } from "../lib/notesAnchorNode.js";
 import {
   applyMarquee, boxesInMarquee, gestureOutcome, marqueeRect, moveSelection, nudgeDelta, toggleSelection,
 } from "../lib/notesMarquee.js";
@@ -79,6 +79,32 @@ const SHEET_RADIUS = 12; // RADIUS.lg (shared/ui/radius.js) — a surface that C
 const SHEET_MAX_WIDTH = 580;
 const SHEET_PAD_X = { narrow: 16, wide: 40 };   // left+right padding, per side
 const SHEET_MARGIN_X = { narrow: 8, wide: 0 };  // left+right margin, per side
+/* The sheet's own TOP padding, pulled out for the same reason and used by the same effect: it is
+ * the first thing a box reaching above the body's origin gets to sit in before the card itself
+ * has to grow upward (NOTES-FREE-PLACEMENT). */
+const SHEET_PAD_TOP = { narrow: 18, wide: 30 };
+/* The gap under the title band, before the body starts. */
+const TITLE_BAND_GAP = 16;
+
+/* ⛔ THE PAGE TITLE IS A RATIO OF THE BODY, NOT A PIXEL NUMBER (NOTES-FREE-PLACEMENT / NEW-6,
+ * owner report 2026-09-08: *"42px against 15px body, 2.8x, on a 580px column… it is the one
+ * element still shouting"*).
+ *
+ * ⛔ EXPRESSED AS A RATIO ON PURPOSE, and that is the half of his ask that outlives this commit:
+ * the previous 42/34 were fixed numbers chosen against a 15px body, so the next time the body
+ * size moves they become wrong silently. `NOTE_BODY_FONT_PX` is the same 15 the stylesheet sets
+ * for `.ProseMirror`, declared once here and interpolated into it, so the two cannot drift.
+ *
+ * ⛔ THE WEIGHT KEEPS THE DISTINCTION, NOT THE SIZE — also his instruction. The title stays 700
+ * against a heading scale that tops out at h1's 2em/700, and comes down to 2.05× (≈31px), inside
+ * the 28–32px he named. It reads as the page's own name because it sits alone above the metadata
+ * line in the title band, not because it is the loudest thing on screen. The phone keeps a
+ * slightly tighter ratio for the same reason it always did — a real page name has to fit on a
+ * 390px-class screen before the input's own scrolling takes over. */
+const NOTE_BODY_FONT_PX = 15;
+const TITLE_SCALE = { narrow: 1.75, wide: 2.05 };
+export const noteTitleFontPx = (narrow) =>
+  Math.round(NOTE_BODY_FONT_PX * (narrow ? TITLE_SCALE.narrow : TITLE_SCALE.wide));
 
 /* Editor surface styling. It lives here (rather than in src/index.css) so it rides the lazy
  * editor chunk instead of the app's first-paint stylesheet, and it is written entirely
@@ -106,7 +132,7 @@ const EDITOR_CSS = `
    ⛔ NO BACKTICKS IN A COMMENT INSIDE THIS TEMPLATE LITERAL — one backtick ends EDITOR_CSS and
    the module stops parsing. This file's own PRINT_CSS sibling in lib/notesPrint.js carries the
    identical warning, so this is a re-statement of a known trap, not a new discovery of one. */
-.planyr-note .ProseMirror { outline: none; min-height: 46vh; color: var(--text-primary); line-height: var(--note-line, 1.15); font-size: 15px; tab-size: 4; overflow-wrap: anywhere; }
+.planyr-note .ProseMirror { outline: none; min-height: 46vh; color: var(--text-primary); line-height: var(--note-line, 1.15); font-size: ${NOTE_BODY_FONT_PX}px; tab-size: 4; overflow-wrap: anywhere; }
 /* ⛔ REAL VERTICAL RHYTHM (B1203504) — read this before touching a margin below.
    Before this, every block here — paragraphs, lists, all four heading levels, blockquote,
    table — carried an explicit "margin: 0", which is MORE specific than the catch-all sibling
@@ -205,9 +231,27 @@ ${indentCssRules(".planyr-note .ProseMirror li")}
 .planyr-note .ProseMirror .planyr-anchor[data-empty="1"]:focus-within { border-color: var(--accent-notes); }
 .planyr-note .ProseMirror .planyr-anchor[data-empty="1"]:focus-within .planyr-anchor-content::after { content: "Type here"; position: absolute; left: 16px; top: 3px; pointer-events: none; color: var(--text-tertiary); font-style: italic; }
 .planyr-note .ProseMirror .planyr-anchor-content { position: relative; }
-.planyr-note .ProseMirror .planyr-anchor-grip { position: absolute; left: 3px; top: 5px; width: 9px; height: 14px; cursor: grab; border-radius: 2px; opacity: 0; background: repeating-linear-gradient(to bottom, var(--text-tertiary) 0 2px, transparent 2px 4px); }
-.planyr-note .ProseMirror .planyr-anchor[data-selected="1"] .planyr-anchor-grip { opacity: 1; }
+/* ⛔ THE GRIP IS AN AFFORDANCE, NOT A TARGET (NOTES-FREE-PLACEMENT / NEW-2). It used to be the
+   ONLY way to move a box — 9×14px, at opacity 0 until the box was selected, and dragging the box
+   by its body did nothing at all and said nothing about it. The whole body drags now (see the
+   node view), so this exists purely to SAY so: it appears on hover as well as on selection, at a
+   size somebody can actually see. It stays a REAL target rather than becoming decoration for one
+   reason: a box you have just typed into must still be movable without pressing Escape first, and
+   the body's own drag deliberately stands down while the caret is inside (see the node view). It
+   sits inside the box's own 16px left padding, so it covers no text — instrument trap #9's hazard
+   was a harness aiming at a fixed offset from the corner, which is a harness rule, not a reason to
+   remove the affordance. */
+.planyr-note .ProseMirror .planyr-anchor-grip { position: absolute; left: 3px; top: 4px; width: 12px; height: 20px; cursor: grab; border-radius: 3px; opacity: 0; transition: opacity 90ms linear; background: repeating-linear-gradient(to bottom, var(--text-tertiary) 0 2px, transparent 2px 4px); }
 .planyr-note .ProseMirror .planyr-anchor-grip:active { cursor: grabbing; }
+.planyr-note .ProseMirror .planyr-anchor:hover .planyr-anchor-grip,
+.planyr-note .ProseMirror .planyr-anchor[data-selected="1"] .planyr-anchor-grip { opacity: 1; }
+/* ⛔ AND THE CURSOR READS grab OVER THE WHOLE DRAGGABLE AREA, not over a sliver of chrome —
+   his third point on NEW-2. It flips to a text cursor for the one state where a press is about
+   words rather than position: while the caret is inside this box. data-editing is painted from
+   the editor's own two-stage state, beside data-selected. */
+.planyr-note .ProseMirror .planyr-anchor { cursor: grab; }
+.planyr-note .ProseMirror .planyr-anchor[data-editing="1"] { cursor: text; }
+.planyr-note .ProseMirror .planyr-anchor[data-editing="1"] .planyr-anchor-content { cursor: text; }
 /* ⛔ THE BOX'S OWN CHROME SITS ABOVE THE BOX'S OWN TEXT, AND THAT z-index IS THE WHOLE FIX
    (B421488). A control inside the box's padding box overlaps the first line of text; the content
    wrapper below is position:relative (it has to be, for the empty box's "Type here" hint) and is
@@ -1094,6 +1138,16 @@ export default function NoteEditor({
    * keystroke. Same reasoning as the callback refs above. */
   const runSlashRef = useRef(null);
 
+  /* ⛔ THE OFFER TO PUT BACK AN EMPTY NOTE THE PRUNE TOOK (NEW-3). The handler lives in a ref for
+   * the same reason `runSlashRef` does: `useEditor`'s option object must not change identity, or
+   * the editor rebuilds mid-keystroke and loses the keystroke. */
+  const [discardedAnchor, setDiscardedAnchor] = useState(null);
+  const noteDroppedRef = useRef(null);
+  noteDroppedRef.current = (boxes) => {
+    const last = Array.isArray(boxes) && boxes.length ? boxes[boxes.length - 1] : null;
+    if (last) setDiscardedAnchor({ ...last, at: Date.now() });
+  };
+
   const editor = useEditor({
     extensions,
     content: initialDoc,
@@ -1160,11 +1214,18 @@ export default function NoteEditor({
      * loses focus altogether. `writePage` is the belt to this brace — nothing empty can reach
      * storage even if the tab is closed mid-gesture — and this is what stops one being left on
      * screen as an invisible obstacle in the meantime. */
+    /* ⛔ …AND IT IS NO LONGER SILENT (NOTES-FREE-PLACEMENT / NEW-3, owner report 2026-09-08:
+     * *"it disappears with no animation, no toast, no undo. During review this repeatedly read as
+     * 'the create gesture failed' when it had in fact succeeded and then self-destructed."*).
+     * The prune is unchanged — it is the answer to four earlier rounds of his own reports — but
+     * it now says what it took and offers to put it back exactly where it was. `onEmptyDropped`
+     * is deliberately given the box's own coordinates rather than a boolean: an offer to undo
+     * that re-created the box somewhere else would be a different bug wearing an apology. */
     onSelectionUpdate: ({ editor: ed }) => {
-      ed.commands.dropEmptyAnchors({ keep: anchorPosAtSelection(ed.state) });
+      ed.commands.dropEmptyAnchors({ keep: anchorPosAtSelection(ed.state), onDropped: noteDroppedRef.current });
     },
     onBlur: ({ editor: ed }) => {
-      ed.commands.dropEmptyAnchors();
+      ed.commands.dropEmptyAnchors({ onDropped: noteDroppedRef.current });
     },
   });
 
@@ -1466,7 +1527,11 @@ export default function NoteEditor({
       y: (clientY - box.top) / scale,
       width: dom.offsetWidth,
     });
-    editor.chain().dropEmptyAnchors().addNoteAnchorAt(point).run();
+    /* ⛔ AND THIS DROP SAYS SO TOO (NEW-3). It is the one that fires in his own repro — create a
+     * note in the margin, then press somewhere else, which both discards the first and places a
+     * second. Leaving this call site silent while the blur/Escape ones announce themselves would
+     * reproduce the exact complaint through the exact gesture that produced it. */
+    editor.chain().dropEmptyAnchors({ onDropped: noteDroppedRef.current }).addNoteAnchorAt(point).run();
   }, [editor]);
 
   /* ═══ SELECT SEVERAL BOXES AND MOVE THEM TOGETHER (B421494) ══════════════════════════════
@@ -1522,14 +1587,15 @@ export default function NoteEditor({
   /* Every box needs an identity before a selection can refer to it; old documents have none.
    * It is stamped outside the undo history — see the command's own note.
    *
-   * ⛔ AND EVERY BOX IS BROUGHT BACK ONTO THE PAGE, SAME BREATH (NOTES-PAGE-GROWTH). A box
-   * placed or dragged today can never land at a negative x/y (`placeAnchor`/`moveAnchorPoint`/
-   * `resizeBox` all hold that floor) — this repairs the ones that predate the floor, the same
-   * way `ensureNoteAnchorIds` repairs boxes that predate `aid`. See the command's own note. */
+   * ⛔ AND NOTHING IS "BROUGHT BACK ONTO THE PAGE" ANY MORE (NOTES-FREE-PLACEMENT). The
+   * `repairOffPageAnchors` call that used to sit here dragged every negative coordinate back to
+   * the page's top-left corner on every load; negative coordinates are now ordinary positions and
+   * the SHEET grows to hold them, so repairing one would silently move a box off the spot the
+   * owner put it on — through a transaction that saves. See the retired command's note in
+   * `lib/notesAnchorNode.js`. The identity repair is untouched. */
   useEffect(() => {
     if (!editor || editor.isDestroyed || readOnly) return;
     editor.commands.ensureNoteAnchorIds();
-    editor.commands.repairOffPageAnchors();
   }, [editor, readOnly, docTick]);
 
   /* ⛔ THE SELECTION IS VISIBLE, and it is painted onto the real elements rather than mirrored
@@ -1541,8 +1607,16 @@ export default function NoteEditor({
     const paint = () => {
       if (editor.isDestroyed) return;
       for (const el of editor.view.dom.querySelectorAll(".planyr-anchor")) {
-        const on = selection.has(String(el.getAttribute("data-anchor-id")));
+        const id = String(el.getAttribute("data-anchor-id"));
+        const on = selection.has(id);
         if (on) el.setAttribute("data-selected", "1"); else el.removeAttribute("data-selected");
+        /* ⛔ AND WHICH BOX THE CARET IS ACTUALLY IN (NOTES-FREE-PLACEMENT / NEW-2) — the second
+         * stage of the same model, painted the same way and for the same reason. The stylesheet
+         * needs it to show a text cursor rather than a grab cursor on the one box a press is
+         * about words in. It is read from `editingRef` rather than `editingId` because this
+         * paint also runs from the editor's own transaction handler, outside React's render. */
+        if (String(editingRef.current || "") === id) el.setAttribute("data-editing", "1");
+        else el.removeAttribute("data-editing");
       }
     };
     paint();
@@ -1555,7 +1629,7 @@ export default function NoteEditor({
     editor.on("focus", paint);
     editor.on("blur", paint);
     return () => { editor.off("transaction", paint); editor.off("focus", paint); editor.off("blur", paint); };
-  }, [editor, selection, docTick]);
+  }, [editor, selection, editingId, docTick]);
 
   const clearSelection = useCallback(() => {
     setSelection((s) => (s.size ? new Set() : s));
@@ -1882,10 +1956,27 @@ export default function NoteEditor({
       top: Math.min(Math.max(e.clientY, box.top + 1), box.bottom - 1),
     });
 
-    if (hit && Number.isFinite(hit.pos) && pressIsBesideLine(editor, hit.pos, e.clientY)) {
+    /* ⛔ ON THE PAPER → CARET. OFF THE PAPER → PLACE A NOTE (NOTES-FREE-PLACEMENT / NEW-4, owner
+     * report 2026-09-08: *"a double-click ~140px out in the right mat creates nothing; closer in
+     * it works. Unmarked reach limit."*).
+     *
+     * ⛔ AND IT IS NOT A REACH LIMIT — MEASURED, ON A LOCAL BUILD, BEFORE ANYTHING WAS CHANGED.
+     * A fresh page accepts the gesture at 20, 60, 100, 140, 180, 260 and 400px out into the right
+     * mat; every one of those created a box and grew the page. What actually decides it is the
+     * press's HEIGHT: at a y level with ANY line of body text the press is "beside a line" and is
+     * forwarded to the caret instead, at 40px out exactly as at 140px out. His page's text ran
+     * down to where he was clicking, so the failure tracked how far right he went only by
+     * coincidence — which is why it read as a horizontal wall with no marking on it.
+     *
+     * The rule is now one sentence somebody can hold: a press ON the white page goes to the text
+     * (that is what B1368 was for, and it keeps click-beside-a-short-line working, including in
+     * the page's own left and right margins); a press on the grey mat AROUND the page places a
+     * note there. Nothing invisible decides it, and there is no distance in it at all. */
+    const onSheet = !!el.closest("[data-testid='note-sheet']");
+    if (onSheet && hit && Number.isFinite(hit.pos) && pressIsBesideLine(editor, hit.pos, e.clientY)) {
       // Beside real writing. Inside the document the browser is already right and must stay
       // right, or double-click-to-select-a-word dies; outside it (left of the column, above
-      // the first line) the mat forwards the press, which is what B1368 was for.
+      // the first line) the sheet forwards the press, which is what B1368 was for.
       if (el.closest(".ProseMirror") || el.closest("[contenteditable]")) return;
       e.preventDefault();
       editor.chain().focus().setTextSelection(hit.pos).run();
@@ -1924,6 +2015,23 @@ export default function NoteEditor({
    * every keystroke costs nothing on the overwhelmingly common case — nothing to grow — and
    * only actually re-renders on the rare keystroke that changes it. */
   const [sheetGrowWidth, setSheetGrowWidth] = useState(null);
+  /* ⛔ AND THE OTHER TWO DIRECTIONS (NOTES-FREE-PLACEMENT / NEW-1, owner report 2026-09-08).
+   * Growth right and down shipped; left and up were CLAMPED, so a box dragged 434px past the
+   * page's left edge landed at `left: 4px` with the page still 580 wide, while the identical
+   * gesture rightward grew it 580 → 1212 and shrank it back. These two are how far the sheet has
+   * had to reach BEYOND its own left and top edges — extra padding on the card, so the page grows
+   * outward and the content inside it keeps its coordinates rather than every box being rewritten.
+   * `0` is the ordinary state and costs nothing. */
+  const [sheetGrowLeft, setSheetGrowLeft] = useState(0);
+  const [sheetGrowTop, setSheetGrowTop] = useState(0);
+  /* The title + metadata band's own height, measured rather than assumed: it is what sits between
+   * the sheet's top padding and the body's own origin, so it is exactly how far ABOVE the body a
+   * box may reach before the sheet itself has to grow. Measuring the band (content the effect
+   * never writes) rather than the body's rendered offset (which `sheetGrowTop` moves) is what
+   * keeps this out of the feedback loop `fitAnchorBox`'s header warns about. */
+  const titleBandRef = useRef(null);
+  /** Where the body sat the last time the page's growth changed — see the compensation effect. */
+  const growAnchorRef = useRef(null);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
 
@@ -2175,13 +2283,33 @@ export default function NoteEditor({
        * PANE-fitted `blocks` above, so a box already fitted for reachability is never re-fitted
        * a second time against a second, smaller number. `sheetGrowWidth` is `null` — leaving the
        * sheet at its ordinary 580px card — the moment nothing needs it. */
-      const padX = (narrow ? SHEET_PAD_X.narrow : SHEET_PAD_X.wide) * 2;
+      const padSide = narrow ? SHEET_PAD_X.narrow : SHEET_PAD_X.wide;
+      const padX = padSide * 2;
       const marginX = (narrow ? SHEET_MARGIN_X.narrow : SHEET_MARGIN_X.wide) * 2;
       const naturalSheetWidth = Math.max(1, Math.min(SHEET_MAX_WIDTH, paneWidth - marginX));
       const naturalPageWidth = Math.max(1, naturalSheetWidth - padX);
       const needX = anchorExtentX(blocks);
-      const grow = needX > naturalPageWidth;
-      setSheetGrowWidth(grow ? needX + padX : null);
+      /* ⛔ AND THE SAME QUESTION ASKED OF THE OTHER TWO EDGES (NOTES-FREE-PLACEMENT / NEW-1).
+       * `anchorExtentLeft`/`anchorExtentTop` answer "how far past the page's LEFT/TOP origin does
+       * anything reach", in the same positive-distance units as the two above. The sheet already
+       * has room for some of that in its own padding — a box 20px left of the body's origin still
+       * sits on the white card, because the card's side padding is wider than that — so only the
+       * SHORTFALL becomes growth. A box above the body's origin has the whole title band to sit
+       * in first, which is what makes NEW-5 (placing something level with the title) fall out of
+       * this rather than needing a coordinate migration: the origin the DOCUMENT stores never
+       * moves, and the sheet reaches up to meet it. */
+      const bandH = titleBandRef.current?.offsetHeight || 0;
+      const padTop = narrow ? SHEET_PAD_TOP.narrow : SHEET_PAD_TOP.wide;
+      const growLeft = Math.max(0, anchorExtentLeft(blocks) - padSide);
+      const growTop = Math.max(0, anchorExtentTop(blocks) - padTop - bandH - TITLE_BAND_GAP);
+      /* The content column keeps its natural width unless something overhangs the RIGHT; growth
+       * on the left is paid for by the sheet getting wider, never by the column getting narrower
+       * (which would rewrap his words as a side effect of moving a box). */
+      const contentW = Math.max(naturalPageWidth, needX);
+      const grow = growLeft > 0 || needX > naturalPageWidth;
+      setSheetGrowWidth(grow ? growLeft + padX + contentW : null);
+      setSheetGrowLeft(growLeft);
+      setSheetGrowTop(growTop);
     };
     measure();
     /* Re-measured as the text inside a block reflows, which is the half that matters: the
@@ -2200,6 +2328,36 @@ export default function NoteEditor({
      * the fresh value immediately rather than wait on the ResizeObserver to fire against a
      * still-stale `narrow` from the render this effect was last registered under. */
   }, [editor, docTick, narrow]);
+
+  /* ⛔ THE PAGE GROWS; THE WORDS DO NOT MOVE (NOTES-FREE-PLACEMENT, VIEWPORT-STABLE (a)).
+   *
+   * Growing LEFT is the one direction that cannot be free: the card is left-aligned once anything
+   * has grown it, so extra padding on its left edge pushes the title and every line of text
+   * sideways under the reader. That is precisely the class VIEWPORT-STABLE forbids, and this
+   * repo has already paid for it once — NOTES-PAGE-GROWTH found centring shifting a grown page
+   * 48px left in the same gesture that widened it, invisible to the eye and caught only by
+   * re-measuring the real gesture.
+   *
+   * So the reflow is compensated against the MEASURED delta, in a layout effect, before paint:
+   * the body's own `offsetLeft`/`offsetTop` are its position within the scroller's content and
+   * are unaffected by scrolling, so their change between two runs IS the layout shift and nothing
+   * else. Folding it into the scroll position in the same frame leaves the writing exactly where
+   * it was while the page extends outward around it. An ASSUMED width would not do — the sheet's
+   * alignment flips from centred to left the first time anything grows, which moves the body by
+   * an amount no constant knows. */
+  useLayoutEffect(() => {
+    const dom = editor && !editor.isDestroyed ? editor.view.dom : null;
+    const sc = scrollerRef.current;
+    if (!dom || !sc) return;
+    const at = { left: dom.offsetLeft, top: dom.offsetTop };
+    const was = growAnchorRef.current;
+    growAnchorRef.current = at;
+    if (!was) return;                       // first measurement: nothing to hold steady against
+    const dx = at.left - was.left;
+    const dy = at.top - was.top;
+    if (dx) sc.scrollLeft += dx;
+    if (dy) sc.scrollTop += dy;
+  }, [editor, sheetGrowWidth, sheetGrowLeft, sheetGrowTop]);
 
   /* ---- PASTE JUST THE TEXT (B36051) ------------------------------------------------------
    *
@@ -2399,7 +2557,7 @@ export default function NoteEditor({
              It does NOT stop propagation: Escape's other job here — releasing the next Tab —
              still has to happen. */
           if (e.key === "Escape" && editor && !editor.isDestroyed) {
-            editor.commands.dropEmptyAnchors();
+            editor.commands.dropEmptyAnchors({ onDropped: noteDroppedRef.current });
             return;
           }
           if (!(e.key === "V" || e.key === "v") || !e.shiftKey || !(e.ctrlKey || e.metaKey)) return;
@@ -2475,7 +2633,7 @@ export default function NoteEditor({
            there, and the pane-overflow case (this same rule, one door further) is already
            subsumed — a sheet wide enough to outgrow the pane was already wide enough to have
            grown at all. */
-        style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column", alignItems: (narrow || sheetGrowWidth != null) ? "flex-start" : "center", position: "relative" }}
+        style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column", alignItems: (narrow || sheetGrowWidth != null || sheetGrowTop > 0) ? "flex-start" : "center", position: "relative" }}
       >
         <PasteOptions
           offer={pasteAt && pasteOffer ? { ...pasteOffer, ...pasteAt } : null}
@@ -2566,9 +2724,15 @@ export default function NoteEditor({
                a leftover alignment hack. Widened on desktop to match the generosity the rest of
                this item gives the page — Craft/Bear both give a paragraph real room to breathe
                on every side, not just between lines. */
+            /* ⛔ GROWING LEFT AND UP IS EXTRA PADDING ON THIS CARD (NOTES-FREE-PLACEMENT / NEW-1).
+               The page reaches outward to contain a box; the document's own coordinates never
+               move, so nothing is rewritten and nothing has to migrate — which is also why the
+               title band becomes reachable (NEW-5) without a coordinate change. Both are 0 in the
+               ordinary case and shrink straight back the moment nothing needs them, exactly as
+               `sheetGrowWidth` already does on the right. */
             padding: narrow
-              ? `18px ${SHEET_PAD_X.narrow}px max(96px, calc(96px + env(safe-area-inset-bottom))) ${SHEET_PAD_X.narrow}px`
-              : `30px ${SHEET_PAD_X.wide}px 96px ${SHEET_PAD_X.wide}px`,
+              ? `${SHEET_PAD_TOP.narrow + sheetGrowTop}px ${SHEET_PAD_X.narrow}px max(96px, calc(96px + env(safe-area-inset-bottom))) ${SHEET_PAD_X.narrow + sheetGrowLeft}px`
+              : `${SHEET_PAD_TOP.wide + sheetGrowTop}px ${SHEET_PAD_X.wide}px 96px ${SHEET_PAD_X.wide + sheetGrowLeft}px`,
             margin: narrow ? `10px ${SHEET_MARGIN_X.narrow}px 0` : `24px ${SHEET_MARGIN_X.wide}px 0`,
           }}
         >
@@ -2588,7 +2752,7 @@ export default function NoteEditor({
               secondary line (defect #6) — every reference app named in this item's brief puts
               that information directly under the title, never floating far right on the same
               line with a large gap to the name. */}
-          <div style={{ marginBottom: 16 }}>
+          <div ref={titleBandRef} style={{ marginBottom: TITLE_BAND_GAP }}>
             <input
               data-testid="note-title"
               value={title}
@@ -2618,7 +2782,7 @@ export default function NoteEditor({
                    full width). This is the one further step: a smaller size on a phone gives a
                    real name more room to actually show on a 390px-class phone before the
                    input's own internal scroll takes over. */
-                font: "inherit", fontSize: narrow ? 34 : 42, fontWeight: 700, letterSpacing: "-0.01em",
+                font: "inherit", fontSize: noteTitleFontPx(narrow), fontWeight: 700, letterSpacing: "-0.01em",
                 padding: "2px 0", outline: "none",
               }}
               onFocus={(e) => { e.target.style.borderBottomColor = "var(--accent-notes)"; }}
@@ -2712,6 +2876,64 @@ export default function NoteEditor({
             ) : null}
           </div>
         </div>
+        {/* ⛔ AN EMPTY NOTE IS NOT DESTROYED IN SILENCE (NOTES-FREE-PLACEMENT / NEW-3). It is
+            still discarded — `notesAnchorPrune.js`'s header is four rounds of the owner's own
+            reports on why an empty box may not survive — but the discard now SAYS so and offers
+            to put it back at the coordinates it had. Placed on the mat rather than in the app's
+            global toast rail because it belongs to this page and to the gesture that just
+            happened, and because the only thing it can act on is this editor. */}
+        {discardedAnchor ? (
+          <div
+            data-testid="note-anchor-discarded"
+            style={{
+              position: "absolute", zIndex: 6, left: "50%", bottom: 18, transform: "translateX(-50%)",
+              display: "flex", alignItems: "center", gap: 10, maxWidth: "min(92%, 420px)",
+              padding: "7px 10px 7px 12px", borderRadius: RADIUS.control,
+              border: "1px solid var(--border-default)", background: "var(--surface-raised)",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.10)", // design-exempt: no shadow-color token yet repo-wide (matches note-sheet's own card shadow)
+              color: "var(--text-secondary)", fontSize: 12.5, fontWeight: 600,
+            }}
+          >
+            <span>Empty note discarded</span>
+            {/* ⛔ STYLED FROM THIS FILE'S OWN MIRRORED SCALE, NOT FROM controls.jsx — the notes
+                module deliberately does not import that module (it would hoist a third shared
+                chunk onto the Site route; `test/notesModule.test.js` fails the build on it), so
+                every control here follows NoteToolbar's established local convention. */}
+            <button
+              type="button"
+              data-testid="note-anchor-discarded-undo"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const at = discardedAnchor;
+                setDiscardedAnchor(null);
+                if (!editor || editor.isDestroyed || !at) return;
+                /* Back where it was, with the caret INSIDE it — which is what spares it from the
+                   very next prune (keep). An undo that restored the box and let it be taken
+                   again on the next selection change would be worse than none. */
+                editor.commands.addNoteAnchorAt({ x: at.x, y: at.y, w: at.w });
+              }}
+              style={{
+                height: 26, padding: "0 10px", borderRadius: RADIUS.control,
+                border: "1px solid var(--accent-notes)", background: "transparent",
+                color: "var(--accent-notes-text)", font: "inherit", fontSize: 11.5,
+                fontWeight: 700, cursor: "pointer",
+              }}
+            >Undo</button>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              title="Dismiss"
+              data-testid="note-anchor-discarded-close"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setDiscardedAnchor(null)}
+              style={{
+                height: 24, width: 24, borderRadius: RADIUS.control,
+                border: "1px solid var(--border-default)", background: "transparent",
+                color: "var(--text-secondary)", font: "inherit", fontSize: 12, cursor: "pointer",
+              }}
+            >✕</button>
+          </div>
+        ) : null}
       </div>
 
         {/* ⛔ BOTH PANES SIT TO THE **RIGHT** OF THE SHEET, and that is what makes them free
