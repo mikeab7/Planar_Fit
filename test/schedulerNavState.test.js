@@ -410,15 +410,32 @@ describe("Scheduler.jsx — the ROUTE outranks the embed's section", () => {
  * fallback) must resolve unambiguously. */
 describe("selectSchedule — a bare site id resolves definitely, not to always-the-first (B1112449/NEW-2)", () => {
   const SRC = readFileSync(fileURLToPath(new URL("../src/workspaces/scheduler/Scheduler.jsx", import.meta.url)), "utf8");
-  it("uses findAllBySiteId + prefers the already-active schedule over the old always-first .find()", () => {
+  // B1358128 — the resolution itself moved into projectModel.js's resolveControlledId (shared
+  // with ProjectBreadcrumb.jsx's rename/delete/duplicate, which needed the identical logic and
+  // never had it); selectSchedule now calls that shared function rather than reimplementing the
+  // findAllBySiteId + prefer-active-schedule shape inline. Assert the call site here, and assert
+  // the shared function itself still carries the real behavior in its own describe block below.
+  it("delegates to the shared resolveControlledId(projects, id, activeId) rather than reimplementing resolution inline", () => {
     const i = SRC.indexOf("const selectSchedule = (id) => {");
     expect(i).toBeGreaterThan(-1);
     const block = SRC.slice(i, SRC.indexOf("};", i));
-    expect(block).toMatch(/findAllBySiteId\(projects,\s*id\)/);
-    expect(block).toMatch(/linked\.find\(\(p\) => p\.id === activeId\)/);
+    expect(block).toMatch(/resolveControlledId\(projects,\s*id,\s*activeId\)/);
     // The pre-fix shape — a bare `.find(p => p.linkedSiteId === id)` with no preference for the
-    // already-active schedule — must not survive as the resolution path.
+    // already-active schedule — must not survive as the resolution path, in this file or the
+    // shared one it now delegates to.
     expect(SRC).not.toMatch(/projects\.find\(\(p\) => p && p\.linkedSiteId === id\)/);
+  });
+});
+
+describe("resolveControlledId — the shared resolution selectSchedule delegates to (B1358128)", () => {
+  const SRC = readFileSync(fileURLToPath(new URL("../src/shared/projects/projectModel.js", import.meta.url)), "utf8");
+  it("uses list.filter (findAllBySiteId's own shape) + prefers the already-active schedule over the old always-first .find()", () => {
+    const i = SRC.indexOf("export function resolveControlledId(");
+    expect(i).toBeGreaterThan(-1);
+    const block = SRC.slice(i, SRC.indexOf("\n}", i));
+    expect(block).toMatch(/list\.filter\(\(p\) => p && p\.linkedSiteId != null && p\.linkedSiteId === id\)/);
+    expect(block).toMatch(/linked\.find\(\(p\) => p\.id === preferId\)/);
+    expect(SRC).not.toMatch(/list\.find\(\(p\) => p && p\.linkedSiteId === id\)/);
   });
 });
 
