@@ -1314,6 +1314,22 @@ export async function ensureProjectRow(id, { name = "Untitled site", confirmLive
 // Group the cloud's soft-deleted rows into projects. Returns { ok, supported, projects }:
 // supported:false = db/sites_soft_delete.sql hasn't run on this DB (there is no bin — deletes are
 // still immediate + permanent there), so the caller hides the section rather than showing it empty.
+//
+// ⛔ B1336576 (found auditing B1164192/B1164193 — "Richfield reads as deleted" recurrence check,
+// 2026-09-08) — a GROUP is not a deleted PROJECT just because one of its plans is soft-deleted.
+// This used to group every soft-deleted row by group_id with no notion of whether that group also
+// has live siblings, so Richfield and Woods Road — both real, live, actively-worked projects whose
+// only soft-deleted row is a discarded duplicate-and-rename original — showed up as entries in
+// "Recently deleted" in the project switcher, offering a Restore that would resurrect a plan the
+// owner deliberately discarded, and a "Delete forever" aimed at a project that was never actually
+// in the bin. `cloudCheckDeleted`'s own rule ("a project is deleted only when EVERY plan row it has
+// is soft-deleted") was applied to the route gate in B1164192 but never to this listing — a second,
+// independent implementation of the same question that drifted. Filtered here with the same
+// `groupStillHasLivePlans` helper B1164193 already uses to guard the folder purge, and the same
+// fail-safe direction: an inconclusive check keeps a group OUT of the bin rather than risk telling
+// the owner a live project is trash. The individual dead sibling plan keeps aging toward its normal
+// 30-day auto-purge either way (purgeExpiredDeletedProjects, unaffected by this filter) — this only
+// changes what's OFFERED for manual restore/purge in the switcher.
 export async function listDeletedProjects() {
   if (!activeUid()) return { ok: true, supported: false, projects: [] };
   let r;
@@ -1331,7 +1347,10 @@ export async function listDeletedProjects() {
     if (ts > e.deletedAt) e.deletedAt = ts; // the group's most recent binning drives its position + expiry
     by.set(gid, e);
   }
-  const projects = [...by.values()]
+  const entries = [...by.values()];
+  const stillLive = await Promise.all(entries.map((e) => groupStillHasLivePlans(e.id)));
+  const projects = entries
+    .filter((_, i) => !stillLive[i])
     .map((p) => ({ ...p, name: p.name || "Untitled project", expiresAt: p.deletedAt + DELETED_RETENTION_DAYS * 86400000 }))
     .sort((a, b) => b.deletedAt - a.deletedAt);
   return { ok: true, supported: true, projects };
@@ -1386,7 +1405,12 @@ export async function restoreDeletedProject(ids) {
  * Fails SAFE: an inconclusive check (`ok:false` — offline, RLS, a thrown error) is treated as
  * "still live" and the folder purge is skipped rather than risked on a maybe — a destructive,
  * irreversible action needs a POSITIVE fact that the project is genuinely gone, never the absence
- * of one. */
+ * of one.
+ *
+ * ⛔ Also used by `listDeletedProjects` (declared earlier in this file, calls this via ordinary
+ * function hoisting) for the SAME reason from the other direction — never SHOW a live project as
+ * deleted, not just never DESTROY one — so the two callers must keep agreeing on what "still live"
+ * means. */
 async function groupStillHasLivePlans(groupId) {
   if (!groupId) return false;
   const status = await cloudCheckDeleted(activeUid(), groupId).catch(() => null);

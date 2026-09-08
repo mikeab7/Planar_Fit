@@ -31,6 +31,15 @@ vi.mock("../src/workspaces/site-planner/lib/supabase.js", () => ({
           data: h.error ? null : h.rows.filter((r) => r && r[field] === val),
           error: h.error,
         }),
+        // cloudDeletedRows: `.not("deleted_at", "is", null).order(...)` — every soft-deleted row,
+        // most-recently-deleted first (listDeletedProjects's own input).
+        not: (field) => ({
+          order: () => Promise.resolve({
+            data: h.error ? null : h.rows.filter((r) => r && r[field] != null)
+              .sort((a, b) => new Date(b.deleted_at) - new Date(a.deleted_at)),
+            error: h.error,
+          }),
+        }),
       }),
       // ensureProjectRow's cloud push (cloudUpsert → casUpsert) INSERTs a brand-new row — the
       // mock records it and makes it visible to the SAME select().eq() lookups above, so a later
@@ -51,7 +60,7 @@ vi.mock("../src/workspaces/site-planner/lib/supabase.js", () => ({
 vi.mock("../src/shared/telemetry/clientErrors.js", () => ({ reportClientEvent: () => {} }));
 
 import { cloudCheckDeleted } from "../src/workspaces/site-planner/lib/cloudSync.js";
-import { checkProjectDeletionStatus, setActiveUser, ensureProjectRow } from "../src/workspaces/site-planner/lib/storage.js";
+import { checkProjectDeletionStatus, setActiveUser, ensureProjectRow, listDeletedProjects } from "../src/workspaces/site-planner/lib/storage.js";
 import { projectGateStatus, markProjectFreshlyMinted, wasProjectFreshlyMinted } from "../src/shared/projects/projectModel.js";
 
 // storage.js's saveSite/readSites (and projectModel.js's persisted freshly-minted list) persist
@@ -185,6 +194,88 @@ describe("cloudCheckDeleted — the one question a routed project id must answer
       expect(res.exists).toBe(true);
       expect(res.deleted).toBe(false);
     });
+  });
+});
+
+/* ⛔ B1336576 — listDeletedProjects (the "Recently deleted" bin in the project switcher) is the
+ * SECOND independent place that had to learn the B1164192 rule ("a project is deleted only when
+ * EVERY plan in its group is deleted") and, until this fix, never did. It grouped soft-deleted
+ * rows by group_id with no notion of live siblings, so it listed Richfield/Woods Road — both real,
+ * live projects whose only soft-deleted row is a discarded duplicate-and-rename original — as
+ * entries in "Recently deleted", offering a Restore that would resurrect a plan the owner
+ * deliberately discarded and a "Delete forever" aimed at a project that was never actually binned. */
+describe("listDeletedProjects — the project switcher's Recently-deleted bin, and the SAME group-liveness rule", () => {
+  beforeEach(() => { h.rows = []; h.error = null; setActiveUser("u1"); });
+
+  it("THE CORE REPRO (B1164192 family) — a group whose anchor is soft-deleted but has live siblings never appears in the bin", async () => {
+    h.rows = [
+      { id: "smsdrvzr9gzx", group_id: "smsdrvzr9gzx", site: "Richfield", name: "Concept A", county: null, updated_at: null, deleted_at: "2026-08-29T20:49:12+00:00" },
+      // The two live siblings never appear in cloudDeletedRows' result (only rows with a set
+      // deleted_at do) — h.rows here models the WHOLE table, and only the ones with deleted_at
+      // set are what cloudDeletedRows' `.not(...)` mock actually returns; cloudCheckDeleted's
+      // own `.eq("group_id", …)` lookup (inside groupStillHasLivePlans) reads all of them.
+      { id: "concept-b", group_id: "smsdrvzr9gzx", site: "Richfield", name: "Concept B", deleted_at: null },
+      { id: "concept-a-bn", group_id: "smsdrvzr9gzx", site: "Richfield", name: "Concept A BN", deleted_at: null },
+    ];
+    const bin = await listDeletedProjects();
+    expect(bin.ok).toBe(true);
+    expect(bin.supported).toBe(true);
+    expect(bin.projects).toHaveLength(0);
+  });
+
+  it("a project where EVERY plan in the group is deleted still appears in the bin", async () => {
+    h.rows = [
+      { id: "gone-anchor", group_id: "gone-anchor", site: "Old Deal", name: "Concept A", deleted_at: "2026-08-01T00:00:00+00:00" },
+      { id: "gone-plan-2", group_id: "gone-anchor", site: "Old Deal (renamed)", name: "Concept B", deleted_at: "2026-08-02T00:00:00+00:00" },
+    ];
+    const bin = await listDeletedProjects();
+    expect(bin.projects).toHaveLength(1);
+    expect(bin.projects[0].id).toBe("gone-anchor");
+    expect(bin.projects[0].ids.sort()).toEqual(["gone-anchor", "gone-plan-2"]);
+    expect(bin.projects[0].name).toBe("Old Deal (renamed)"); // most-recently-deleted row's facts
+  });
+
+  it("a single-plan project (its own row IS the whole group) still appears in the bin, unaffected", async () => {
+    h.rows = [{ id: "smtjb0lrexb3", group_id: "smtjb0lrexb3", site: "Concept A", name: null, deleted_at: "2026-09-03T20:13:59+00:00" }];
+    const bin = await listDeletedProjects();
+    expect(bin.projects).toHaveLength(1);
+    expect(bin.projects[0].id).toBe("smtjb0lrexb3");
+  });
+
+  it("an anchor HARD-deleted (no row named by the group id exists at all) with a soft-deleted sibling but a LIVE sibling elsewhere never appears in the bin", async () => {
+    h.rows = [
+      // The anchor row itself is gone entirely — never appears in h.rows.
+      { id: "old-dup", group_id: "smsrpaiqu5sv", site: "Woods Road", name: "old duplicate", deleted_at: "2026-08-17T16:33:14+00:00" },
+      { id: "concept-c", group_id: "smsrpaiqu5sv", site: "Woods Road", name: "Concept C", deleted_at: null },
+    ];
+    const bin = await listDeletedProjects();
+    expect(bin.projects).toHaveLength(0);
+  });
+
+  it("a shared TEAM project with live siblings is unaffected — same rule, no ownership filter", async () => {
+    h.rows = [
+      { id: "team-anchor", group_id: "team-anchor", site: "Woods Road", name: "Concept A", deleted_at: "2026-08-13T21:21:18+00:00" },
+      { id: "team-plan-2", group_id: "team-anchor", site: "Woods Road", name: "Concept C", deleted_at: null },
+    ];
+    const bin = await listDeletedProjects();
+    expect(bin.projects).toHaveLength(0);
+  });
+
+  it("a project whose anchor row is alive (the common case) never even reaches this listing (no soft-deleted row at all)", async () => {
+    h.rows = [
+      { id: "healthy", group_id: "healthy", site: "Bain", name: null, deleted_at: null },
+      { id: "healthy-copy", group_id: "healthy", site: "Bain", name: "Copy", deleted_at: null },
+    ];
+    const bin = await listDeletedProjects();
+    expect(bin.projects).toHaveLength(0);
+  });
+
+  it("signed out reports unsupported (no cloud bin to read) rather than throwing", async () => {
+    setActiveUser(null);
+    const bin = await listDeletedProjects();
+    expect(bin.ok).toBe(true);
+    expect(bin.supported).toBe(false);
+    expect(bin.projects).toEqual([]);
   });
 });
 
