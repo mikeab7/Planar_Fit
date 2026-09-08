@@ -1008,9 +1008,40 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     if (stored === "0") return true;
     try { return !window.matchMedia("(max-width: 760px)").matches; } catch (_) { return true; }
   });
+  // NEW-1 (regression from B1310209, this item) — THE ADJUST PANEL COVERED THE LAYERS PANEL.
+  // Both dock to the map's right edge (Layers at `topright`, Adjust at `bottomright`, per
+  // mapChromeStack.js's corner assignments) and each sizes itself to the room BETWEEN its own
+  // edge and the other's clearance constant, with no awareness of the other panel's actual
+  // rendered height. On a short window (measured: 1600×465 and 1191×465, the owner's own real
+  // sizes) there simply isn't room for two independently-sized full-height panels in one
+  // column — Layers' own `panelMaxHeight` and Adjust's both resolve to nearly the whole map
+  // height, so the two collide over their entire width. There is no third corner to move either
+  // one to (mapChromeStack.js's header already accounts for all four), so per that file's own
+  // rule ("give the newcomer a corner, or stack it clear" — there is no clearance that fits both
+  // at this height) the Layers panel YIELDS: it force-collapses to its header chip while Adjust
+  // is open, and — because that's a TEMPORARY yield, not the user's own choice — it does NOT
+  // write through `toggleLayersPanel`'s localStorage persistence, and restores itself the moment
+  // Adjust closes if it was the user's own choice to have it open. `onAdjustOpenChange` (below,
+  // passed to SitePlansSection) is what keeps this state in sync with the portaled panel.
+  const [sitePlanAdjustOpen, setSitePlanAdjustOpen] = useState(false);
+  const sitePlanAdjustOpenRef = useRef(sitePlanAdjustOpen);
+  sitePlanAdjustOpenRef.current = sitePlanAdjustOpen;
+  const layersPanelPreAdjustRef = useRef(null); // non-null while forced closed: the value to restore
+  useEffect(() => {
+    if (sitePlanAdjustOpen) {
+      setLayersPanelOpen((v) => { layersPanelPreAdjustRef.current = v; return false; });
+    } else if (layersPanelPreAdjustRef.current != null) {
+      setLayersPanelOpen(layersPanelPreAdjustRef.current);
+      layersPanelPreAdjustRef.current = null;
+    }
+  }, [sitePlanAdjustOpen]);
   /* One control drives both breakpoints (B427409). The phone half is unchanged: opening Layers
    * there closes Your sites, because the two overlays would otherwise stack on a narrow screen. */
   const toggleLayersPanel = () => setLayersPanelOpen((v) => {
+    // NEW-1 (regression from B1310209) — refuse to OPEN over the docked site-plan Adjust panel
+    // (see the header above); collapsing while Adjust is open is still allowed (a no-op here,
+    // since the effect above already forces it closed) so this never fights that effect.
+    if (!v && sitePlanAdjustOpenRef.current) return v;
     const n = !v;
     try { localStorage.setItem("planarfit:layersPanelClosed:v1", n ? "0" : "1"); } catch (_) { /* private mode */ }
     if (n) { try { if (window.matchMedia("(max-width: 760px)").matches) setSitesPanelOpen(false); } catch (_) {} }
@@ -3703,6 +3734,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                     onStartPinExistingComp={pinExistingCompOnOverlay}
                     startUploadRef={startOverlayUploadRef}
                     mapHostRef={mapHostRef}
+                    onAdjustOpenChange={setSitePlanAdjustOpen}
                   />
                 </Suspense>
               </PanelErrorBoundary>
@@ -3712,7 +3744,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
 
         {/* imagery + labels + overlay layers control — on a phone this collapses to a tap
             (default closed) so it stops covering the search bar / Select-parcels button. */}
-        <div style={{ position: "absolute",
+        <div data-testid="map-layers-panel" style={{ position: "absolute",
           // B649136 — the box that actually PAINTS the collapsed chip (background/border/radius
           // live here, not on the inner button — see the constant's own header). RADIUS.lg (a
           // "surface that CONTAINS other things") is right for the OPEN content card; collapsed,
@@ -3757,7 +3789,11 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             // cluster (the switch, the rail tabs, the checkboxes below); this OPEN-state header
             // used to be the one holdout still in UPPERCASE + letterspacing, which is exactly
             // what read as "a section header" rather than "a sibling control."
-            <button onClick={toggleLayersPanel} title={layersPanelOpen ? "Collapse layers" : "Imagery & layers"}
+            <button onClick={toggleLayersPanel}
+              // NEW-1 (regression from B1310209) — while the docked Adjust panel is open this is
+              // forced collapsed and refuses to reopen (see `sitePlanAdjustOpen` above); say why
+              // rather than leaving a control that looks clickable and silently does nothing.
+              title={sitePlanAdjustOpen ? "Close Adjust to reopen Imagery & layers" : (layersPanelOpen ? "Collapse layers" : "Imagery & layers")}
               style={layersPanelOpen ? {
                 display: "flex", alignItems: "center", gap: 6, width: "100%", background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit",
                 fontSize: 12, color: PAL.ink, fontWeight: 700, padding: "0 0 6px",
@@ -3769,6 +3805,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                 // border pixel for no visible gain.
                 ...MAP_CORNER_CHIP_STYLE, border: "none", background: "transparent", boxShadow: "none", height: "100%",
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%",
+                ...(sitePlanAdjustOpen ? { opacity: 0.4, cursor: "default" } : null),
               }}>
               <span style={{ fontSize: 8, lineHeight: 1, transform: layersPanelOpen ? "none" : "rotate(-90deg)", display: "inline-block" }}>▼</span>
               <span style={{ flex: 1, textAlign: "left" }}>Imagery &amp; layers</span>
