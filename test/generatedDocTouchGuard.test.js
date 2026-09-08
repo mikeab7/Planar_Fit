@@ -1,4 +1,4 @@
-/* generated-doc-touch-guard.mjs (NEW-1, B<PENDING>). Fails CI if a branch modifies a GENERATED
+/* generated-doc-touch-guard.mjs (NEW-1, B1358128). Fails CI if a branch modifies a GENERATED
  * file — MAP.md, BACKLOG_OPEN.md, docs/UI-INVENTORY.md — instead of leaving them for the
  * scheduled regen job. Pure verdict only; the real-git half (`runGate`) is exercised live by CI
  * on every push, same shape as `test/mintGuard.test.js` vs. `check-mint.mjs`'s `runGate`. */

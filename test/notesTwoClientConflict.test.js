@@ -21,7 +21,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { copyPageWithin, migrate, pageProjectIndex, allPageIds, addPage } from "../src/workspaces/notes/lib/notesModel.js";
+import { adoptDeletedOrphans, copyPageWithin, migrate, pageProjectIndex, allPageIds, addPage } from "../src/workspaces/notes/lib/notesModel.js";
 import { findCrossProjectDuplicates } from "../src/workspaces/notes/lib/notesDuplicates.js";
 
 const GRAND_PORT = "smqfy2r7pdec";
@@ -437,6 +437,95 @@ describe("a real conflict between two clients", () => {
     // An EMPTY stray is still swept — an interrupted delete leaves no words behind.
     A.store.writePage("junk", { type: "doc", content: [] });
     expect(A.store.sweepOrphans(["co_page1", "gp_coord"]).removed).toEqual(["junk"]);
+  });
+
+  /* ⛔ NEW-1, THE NOTES-RECONCILER-STALE-INDEX FIX. A body with no tree node is not always a
+   * LOST note — an interrupted 30-day purge (`purgePages`'s cloud call is fire-and-forget) can
+   * leave `deleted_at` set on the server with the bin entry gone from the account's own tree,
+   * which is the exact shape found on the owner's real account (a stale "Recovered — …" page
+   * that turned out to be a note he had already deleted, wrongly un-deleted, and then flagged
+   * as a "duplicate" of the still-live original it used to be a copy of). The OLD behaviour —
+   * `unreachableNotes` reporting every node-less body as recoverable, unconditionally — put it
+   * straight back on the live page list. This proves the real seed pipeline (a real
+   * `fetchPageIndex` round trip against the fake server, not a hand-built index) now tells the
+   * two cases apart. */
+  it("a body the SERVER marks binned is never resurrected to the live page list", async () => {
+    const server = fakeServer();
+    const A = await openWindow(server);
+    focus(A);
+    A.store.setNotesScope(UID);
+    A.store.writeTree(seedTree());
+    A.store.writePage("gp_coord", COORD_V1);
+    A.store.writePage("co_page1", doc("Weld County — dead pursuit"));
+    await A.store.startNotesSync({});
+
+    // The row is genuinely binned (as any ordinary delete would leave it)…
+    await A.store.markPagesBinned(["gp_coord"]);
+    // …but its bin entry is gone from the ACCOUNT's own tree — the interrupted-cascade shape,
+    // simulated directly on the server rather than through this device (which may not be the
+    // one that ran the original delete at all).
+    server.tree = { ...seedTree(), pages: seedTree().pages.filter((p) => p.id !== "gp_coord") };
+    server.treeRev += 1;
+
+    await A.store.refreshNotesSync();
+    const tree = readTree(A);
+    expect(allPageIds(tree)).not.toContain("gp_coord");   // the merge did not bring it back live
+
+    const orphans = A.store.unreachableNotes(tree, { binned: A.store.knownBinnedPages() });
+    const gp = orphans.find((o) => o.pageId === "gp_coord");
+    expect(gp).toBeTruthy();
+    expect(gp.deletedAt).toBeGreaterThan(0);              // known-binned, never treated as "lost"
+  });
+
+  it("…and within its 30-day window, it gets a normal bin entry back rather than a live one", async () => {
+    const server = fakeServer();
+    const A = await openWindow(server);
+    focus(A);
+    A.store.setNotesScope(UID);
+    A.store.writeTree(seedTree());
+    A.store.writePage("gp_coord", COORD_V1);
+    A.store.writePage("co_page1", doc("Weld County — dead pursuit"));
+    await A.store.startNotesSync({});
+    await A.store.markPagesBinned(["gp_coord"]);
+    const fiveDaysAgo = new Date(Date.now() - 5 * 86400000).toISOString();
+    server.pages.get("gp_coord").deleted_at = fiveDaysAgo;
+    server.tree = { ...seedTree(), pages: seedTree().pages.filter((p) => p.id !== "gp_coord") };
+    server.treeRev += 1;
+    await A.store.refreshNotesSync();
+
+    const tree = readTree(A);
+    const orphans = A.store.unreachableNotes(tree, { binned: A.store.knownBinnedPages() });
+    const r = adoptDeletedOrphans(tree, orphans);
+    expect(r.purge).toEqual([]);
+    expect(r.binned.map((b) => b.pageId)).toEqual(["gp_coord"]);
+    expect(allPageIds(r.tree)).not.toContain("gp_coord");
+    const entry = r.tree.trash.find((e) => (e.pageIds || []).includes("gp_coord"));
+    expect(entry).toBeTruthy();
+    expect(entry.deletedAt).toBe(Date.parse(fiveDaysAgo));
+  });
+
+  it("…and once its window has already passed, the interrupted purge is completed outright", async () => {
+    const server = fakeServer();
+    const A = await openWindow(server);
+    focus(A);
+    A.store.setNotesScope(UID);
+    A.store.writeTree(seedTree());
+    A.store.writePage("gp_coord", COORD_V1);
+    A.store.writePage("co_page1", doc("Weld County — dead pursuit"));
+    await A.store.startNotesSync({});
+    await A.store.markPagesBinned(["gp_coord"]);
+    server.pages.get("gp_coord").deleted_at = new Date(Date.now() - 40 * 86400000).toISOString();
+    server.tree = { ...seedTree(), pages: seedTree().pages.filter((p) => p.id !== "gp_coord") };
+    server.treeRev += 1;
+    await A.store.refreshNotesSync();
+
+    const tree = readTree(A);
+    const orphans = A.store.unreachableNotes(tree, { binned: A.store.knownBinnedPages() });
+    const r = adoptDeletedOrphans(tree, orphans);
+    expect(r.binned).toEqual([]);
+    expect(r.purge).toEqual(["gp_coord"]);
+    expect(allPageIds(r.tree)).not.toContain("gp_coord");
+    expect((r.tree.trash || []).find((e) => (e.pageIds || []).includes("gp_coord"))).toBeFalsy();
   });
 });
 

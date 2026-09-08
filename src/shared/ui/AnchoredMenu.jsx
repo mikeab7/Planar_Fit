@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { placeMenu } from "./anchoredMenuPlacement.js";
 import { menuPanelStyle } from "./controls.jsx";
+import { MENU_LAYER_ATTR, pressBelongsToHigherMenu } from "./menuLayers.js";
 
 /**
  * AnchoredMenu — a dropdown / flyout that renders in a PORTAL at document.body
@@ -212,11 +213,21 @@ export default function AnchoredMenu({
       const anchor = anchorRef?.current;
       if (panel && panel.contains(e.target)) return;
       if (anchor && anchor.contains(e.target)) return;
+      /* ⛔ B1358128 — A PRESS INSIDE A MENU STACKED ABOVE ME IS NOT A PRESS OUTSIDE ME. This
+       * listener replaced a rendered click-away backdrop (B1106256 above), and a backdrop had this
+       * property for free: a second menu opened at a HIGHER z-index physically absorbed the press,
+       * so it never reached the layer below. A document listener has no such geometry — every press
+       * inside a second portal reads as "outside" — and that silently closed the project switcher
+       * the instant its own per-row Rename/Delete menu was used, which erased that menu's target
+       * mid-gesture and made project delete a no-op. Strictly ABOVE, so a sibling menu at the same
+       * level still dismisses this one (opening one menu from another's trigger must keep working).
+       * See menuLayers.js for the whole mechanism. */
+      if (pressBelongsToHigherMenu(e.target, zIndex)) return;
       onClose?.();
     };
     document.addEventListener("mousedown", onDown, true);
     return () => document.removeEventListener("mousedown", onDown, true);
-  }, [open, onClose, anchorRef]);
+  }, [open, onClose, anchorRef, zIndex]);
 
   if (!open) return null;
 
@@ -241,6 +252,7 @@ export default function AnchoredMenu({
       ref={menuRef}
       className={className}
       data-menu-owner={ownerScope}
+      {...{ [MENU_LAYER_ATTR]: zIndex }}
       style={{
         // B1263075/NEW-4 — a caller that forgot `panelStyle` used to get a fully transparent
         // portal (no background, no border, no shadow — two bare text labels floating over

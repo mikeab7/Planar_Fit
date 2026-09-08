@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { placeContextMenu } from "./contextMenuPlacement.js";
 import { consumeProgrammaticScroll } from "./programmaticScroll.js";
+import { MENU_LAYER_ATTR } from "./menuLayers.js";
 
 /**
  * ContextMenu — the ONE shared right-click / context menu primitive (B915).
@@ -158,6 +159,10 @@ export default function ContextMenu({
       <div
         onPointerDown={onClose}
         onContextMenu={(e) => { e.preventDefault(); onClose?.(); }}
+        /* B1358128 — declare this menu's stacking layer so a menu UNDER it (an AnchoredMenu
+           dropdown this one was opened from) can tell "a press inside the menu above me" from
+           "a press outside me" and not dismiss itself mid-gesture. See menuLayers.js. */
+        {...{ [MENU_LAYER_ATTR]: zIndex }}
         style={{ position: "fixed", inset: 0, zIndex }}
       />
       <div
@@ -166,6 +171,7 @@ export default function ContextMenu({
         role={role}
         aria-label={ariaLabel}
         data-testid={testId}
+        {...{ [MENU_LAYER_ATTR]: zIndex + 1 }}
         onContextMenu={(e) => e.preventDefault()}
         style={{
           ...panelStyle,

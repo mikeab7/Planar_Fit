@@ -44,6 +44,16 @@
  * has no controlled entity behind it at all (a project with no linked schedule), rename/delete fall
  * back to the plain site-store action instead of no-op'ing — duplicate has no such fallback (no
  * uncontrolled implementation exists) and surfaces a toast instead of doing nothing.
+ *
+ * ⛔ B1358128 — AND THE BRIDGE IS NOT THE WHOLE ACTION FOR A REAL PROJECT. Resolving the id was
+ * necessary and not sufficient: a resolved row was handed to the bridge and the function RETURNED,
+ * so in the Schedule module "Delete project" deleted the SCHEDULE and left `public.sites` untouched
+ * — the project was still there everywhere else and came back on reload ("i cant delete projects
+ * from the schedule module, so why does it even offer that ability"). Rename had the mirror defect:
+ * `unionProjectLists` displays the REGISTRY copy of a linked project, so renaming only the schedule
+ * left the visible row unchanged. The rule now: a row the site registry knows is a PROJECT, and is
+ * renamed/deleted as one — with the linked schedule carried along; only a schedule-only
+ * pseudo-project (Pursuits / Operations, which no `sites` row describes) is bridge-only.
  */
 import { useEffect, useRef, useState } from "react";
 import { RADIUS } from "./radius.js";
@@ -462,6 +472,14 @@ export default function ProjectBreadcrumb({
     try { window.dispatchEvent(new StorageEvent("storage", { key: "planarfit:sites:v1" })); } catch (_) {}
   };
 
+  /* Telemetry from this file is DYNAMIC on purpose: this breadcrumb is chrome on every route, and
+   * `clientErrors.js` statically pulls the Supabase client — the same reason the notes census and
+   * the storage engine are reached by `import()` here (see this file's header). These two paths are
+   * "this should be impossible" reports, so paying for the chunk only when one fires is free. */
+  const reportBreadcrumbDefect = (event, message) => {
+    import("../telemetry/clientErrors.js").then((m) => m.reportClientEvent(event, message, {})).catch(() => {});
+  };
+
   // Transient toast helper, reused for an honest delete-failure surface (B439).
   const flashToast = (msg, ms = 7000) => {
     clearTimeout(toastTimer.current);
@@ -510,8 +528,21 @@ export default function ProjectBreadcrumb({
     const v = (editVal || "").trim();
     setEditingId(null);
     if (!v) return; // reject empty/whitespace-only — keep the prior name
+    // B1358128 — same refusal as doDelete: renaming "no project" is a defect, not a no-op.
+    if (!id) {
+      reportBreadcrumbDefect("project-rename-no-target", "the project rename editor had no project behind it");
+      flashToast("Something went wrong — that menu lost track of which project it was for, so nothing was renamed.");
+      return;
+    }
     const resolvedId = resolveControlledId(id); // no-ops to `id` unchanged when uncontrolled
-    const bridged = controlled && resolvedId != null;
+    /* B1358128 — SAME RULE AS DELETE (see doDelete): a row that names a REAL project is renamed
+     * as a PROJECT, and its linked schedule is renamed alongside it. Bridging alone renamed only
+     * the schedule, and `unionProjectLists` shows the REGISTRY copy of a linked project — so the
+     * row the user just renamed in the Schedule picker kept its old name and the rename read as
+     * dead. Only a schedule-only pseudo-project (no registry row) is a bridge-only rename. */
+    const isRegistryProject = internalProjects.some((p) => p && p.id === id);
+    const bridged = controlled && resolvedId != null && !isRegistryProject;
+    if (controlled && resolvedId != null && isRegistryProject) onRenameProject?.(resolvedId, v);
     // NEW-2 — a rename that didn't reach the cloud must SAY so. Both branches now return the
     // store's promise, so a failure surfaces as a toast here instead of the old silent no-op that
     // only showed up later as the name having reverted. (The Site Planner also raises its own
@@ -567,6 +598,19 @@ export default function ProjectBreadcrumb({
   }, [menuFor?.confirm, menuFor?.id]);
 
   const doDelete = (id, { moveNotes = false } = {}) => {
+    /* ⛔ LOUD-FAILURE, B1358128 — a MISSING id is a defect in this component, not a project that
+     * happens not to exist. Passing it on reached `deleteSiteGroup(undefined)`, which finds no
+     * local plans, refuses to ask the cloud (no group id to ask about) and resolves
+     * `{ ok: true, removed: 0 }` — zero network traffic, no error, nothing thrown, and the caller
+     * carries on as though the delete happened. That is precisely how a delete could rewrite the
+     * notes index, navigate the user home, and never touch `public.sites`. Refuse it here, say so,
+     * and record it, rather than laundering a bug into a clean-looking no-op. */
+    if (!id) {
+      reportBreadcrumbDefect("project-delete-no-target", "the project delete confirmation had no project behind it");
+      setMenuFor(null);
+      flashToast("Something went wrong — that menu lost track of which project it was for, so nothing was deleted. Try again from the project list.");
+      return;
+    }
     const wasCurrent = id === currentProject?.id;
     setMenuFor(null);
     /* Move FIRST, delete second. The other order leaves a window in which the project is
@@ -580,6 +624,18 @@ export default function ProjectBreadcrumb({
         })
         .catch(() => flashToast("Those notes couldn't be moved, so they are still filed under the deleted project."));
     }
+    /* ⛔ B1358128 — DELETING A PROJECT DELETES THE PROJECT, ON EVERY SURFACE THAT OFFERS IT.
+     * This used to hand a controlled row STRAIGHT to the bridge and `return`, so in the Schedule
+     * module "Delete project" deleted the SCHEDULE and left `public.sites` completely untouched —
+     * the project was still there on every other surface and came back on the next reload. That is
+     * the owner's report in as many words: "i cant delete projects from the schedule module, so why
+     * does it even offer that ability". A row that names a REAL project (one the site registry
+     * knows) is deleted as a project, and its linked controlled entity — the schedule — is deleted
+     * alongside it, because the project it belonged to is gone. Only a row with NO registry entry
+     * behind it (a schedule-only pseudo-project like Pursuits / Operations, which no `sites` row
+     * has ever described) is a bridge-only delete; asking the site store to delete one of those
+     * would be asking it about an id from a different namespace. */
+    const isRegistryProject = internalProjects.some((p) => p && p.id === id);
     if (onDeleteProject) {
       // B1358128 — `id` may be a registry standin (see resolveControlledId's header) that the
       // bridge cannot resolve on its own; resolve it here rather than pass it through raw, which
@@ -587,8 +643,9 @@ export default function ProjectBreadcrumb({
       // linked schedules in the Schedule module.
       const resolvedId = resolveControlledId(id);
       if (resolvedId != null) {
-        onDeleteProject(resolvedId); // controlled (Schedule) — the bridge deletes + routes home in the embedded app
-        return;
+        onDeleteProject(resolvedId); // the bridge removes the linked schedule and routes home
+        // A schedule-only row has no project to delete; a real project still does, so fall through.
+        if (!isRegistryProject) return;
       }
       // No controlled entity behind this row (e.g. a project with no linked schedule) — fall
       // through to the ordinary site-store delete below rather than silently doing nothing.
@@ -964,8 +1021,18 @@ export default function ProjectBreadcrumb({
         </button>
       </AnchoredMenu>
 
-      {/* Per-row manage menu (B439) — Rename / Delete, a SECOND portal layer above the dropdown's
-          click-away backdrop, so clicking inside it never closes the parent dropdown. */}
+      {/* Per-row manage menu (B439) — Rename / Delete, a SECOND portal layer stacked above the
+          dropdown (zIndex 5000 against its 4000).
+          ⛔ B1358128 — THIS COMMENT USED TO SAY "above the dropdown's click-away BACKDROP, so
+          clicking inside it never closes the parent dropdown", and that stopped being true when
+          B1106256 replaced AnchoredMenu's backdrop with a document-level listener. A backdrop
+          absorbed the press; a listener sees every press in this portal as "outside" and closed
+          the dropdown — which cleared this menu's own target and the inline rename editor
+          mid-gesture (see the `[open]` effect and the confirm row's updater). The property is now
+          ASSERTED rather than assumed: both menus declare their stacking layer and AnchoredMenu
+          stands down for a press inside a higher one (menuLayers.js), and
+          e2e/menu-layer-nesting.spec.js fails if a press in this menu ever closes the dropdown
+          again. */}
       {menuFor && (
         <ContextMenu
           x={menuFor.x} y={menuFor.y} onClose={() => setMenuFor(null)}
@@ -1014,7 +1081,17 @@ export default function ProjectBreadcrumb({
                   <button
                     data-testid="project-delete"
                     role="menuitem"
-                    onClick={() => setMenuFor((m) => ({ ...m, confirm: true }))}
+                    /* ⛔ B1358128 — `(m) => ({ ...m, confirm: true })` HERE IS HOW A PROJECT
+                       DELETE BECAME A NO-OP, and it is worth stating plainly because the shape
+                       looks harmless. If anything clears `menuFor` in the same React batch as
+                       this press (the `[open]` effect below did exactly that, because opening
+                       this second portal menu used to close the parent dropdown — see
+                       menuLayers.js), the spread of `null` yields `{ confirm: true }`, which is
+                       TRUTHY: the menu does not close, it re-renders its confirmation step with
+                       the project ERASED. The dialog then says "Delete this project?" and the
+                       confirm deletes `undefined` — a clean, silent, zero-row success. A lost
+                       target must CLOSE the menu, never survive as a partial one. */
+                    onClick={() => setMenuFor((m) => (m ? { ...m, confirm: true } : null))}
                     onMouseEnter={(e) => (e.currentTarget.style.background = "var(--hover-ghost)")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                     style={menuItem({ color: "var(--danger, #dc2626)" })}
@@ -1055,7 +1132,7 @@ export default function ProjectBreadcrumb({
                 </div>
                 <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
                   <button
-                    onClick={() => setMenuFor((m) => ({ ...m, confirm: false }))}
+                    onClick={() => setMenuFor((m) => (m ? { ...m, confirm: false } : null))}
                     style={{ ...btnSm, background: "var(--hover-menu)", color: "var(--text-primary)" }}
                   >Cancel</button>
                   {noteCensus?.state === "ready" && noteCensus.noteCount > 0 ? (
