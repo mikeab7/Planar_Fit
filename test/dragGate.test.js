@@ -275,7 +275,9 @@ describe("NEW-2 (wiring): the undo frame belongs to the MOVE, not to the press",
   it("the frame is pushed on the arming frame instead, exactly once", () => {
     const guard = SP.slice(SP.indexOf("if (d.gate) {"), SP.indexOf('if (d.mode === "acChip")'));
     expect(guard).toMatch(/if \(g\.justArmed\)/);
-    expect(guard).toMatch(/if \(d\.histOnArm\) \{ pushHistory\(\); d\.pushed = true; \}/);
+    // B472048 (NEW-7 · NEW-1) — pushHistory() now takes the op_kind for the activity feed
+    // (DRAG_OP_KIND[d.mode]); the ONE-call-per-arm invariant this test guards is unchanged.
+    expect(guard).toMatch(/if \(d\.histOnArm\) \{ pushHistory\(DRAG_OP_KIND\[d\.mode\]\); d\.pushed = true; \}/);
   });
 
   it("a cancelled gesture that never armed does NOT drop someone else's undo frame", () => {

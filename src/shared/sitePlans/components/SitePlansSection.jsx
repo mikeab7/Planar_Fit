@@ -537,6 +537,10 @@ export default function SitePlansSection({
   // Adjust panel can portal straight onto the map instead of rendering wherever this component
   // happens to sit in the tree (deep inside the rail's own scroll region).
   mapHostRef,
+  // NEW-1 (this item) — tells MapFinder whether the docked Adjust panel is on screen right now,
+  // so it can collapse the Imagery & layers panel (same bottom-right column on a short viewport)
+  // rather than let the two overlap. See the effect below.
+  onAdjustOpenChange,
 }) {
   const [overlays, setOverlays] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -570,6 +574,18 @@ export default function SitePlansSection({
   // B1310208 — switching to a different comp (a different plan) must never leave the PREVIOUS
   // plan's Adjust panel standing open over the map with nothing in the rail pointing at it.
   useEffect(() => { setAdjustOpen(false); }, [focusedProjectId]);
+  // NEW-1 (this item, regression from B1310209) — `open` gates whether this component's own JSX
+  // return is `null` (below), which the DOM-rendered Adjust panel follows; reporting `open &&
+  // adjustOpen` rather than the bare flag keeps MapFinder from believing the panel is still on
+  // screen after this section itself goes inactive (its hooks still run every render even past
+  // that early return, so a bare `adjustOpen` could go stale true).
+  useEffect(() => { onAdjustOpenChange?.(open && adjustOpen); }, [open, adjustOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  // This whole component only mounts while its rail tab is open (MapFinder's own
+  // `sitesPanelOpen && panelTab === "comp"` gate) — an unmount skips the effect above's cleanup
+  // path entirely (there isn't one), so without this a plan left "Editing on map" when the user
+  // switches away to Sites/Layers would leave MapFinder believing the Adjust panel is still open
+  // and the Layers panel stuck collapsed for no visible reason.
+  useEffect(() => () => onAdjustOpenChange?.(false), []); // eslint-disable-line react-hooks/exhaustive-deps
   const notifiedRef = useRef(onOverlaysChange);
   notifiedRef.current = onOverlaysChange;
   const overlaysRef = useRef(overlays);

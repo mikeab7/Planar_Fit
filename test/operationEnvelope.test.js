@@ -14,7 +14,7 @@ import { describe, it, expect } from "vitest";
 import {
   OP_KINDS, OP_KIND_LIST, isOpKind, isCompositeOpKind, mintOpId, makeEnvelope,
   envelopeAnswersWhoAndWhat, createOperationTracker, groupRowsIntoOperations,
-  describeOperation, halfLandedComposites, undoOwnership,
+  describeOperation, halfLandedComposites, undoOwnership, undoRiskEnvelope,
 } from "../src/workspaces/site-planner/lib/operationEnvelope.js";
 
 const tracker = (over = {}) => createOperationTracker({ sessionId: "sess-A", userId: () => "user-1", now: () => 1000, ...over });
@@ -202,5 +202,35 @@ describe("NEW-7 · undo ownership — three verdicts, and the middle one is new"
   it("the SAME ACCOUNT in two tabs is still foreign — the case user id cannot see", () => {
     const v = undoOwnership({ actor_session_id: "sess-B", actor_user_id: "u1" }, "sess-A");
     expect(v.verdict).toBe("foreign");
+  });
+});
+
+describe("NEW-7 · undoRiskEnvelope — the local undo stack never holds a foreign frame", () => {
+  it("no foreign write ever seen → own identity, undo proceeds silently", () => {
+    const env = undoRiskEnvelope(1000, null, "sess-A");
+    expect(env).toEqual({ actor_session_id: "sess-A" });
+    expect(undoOwnership(env, "sess-A").verdict).toBe("own");
+  });
+
+  it("a foreign write BEFORE the frame was pushed is stale — not what this undo would erase", () => {
+    const env = undoRiskEnvelope(2000, { sessionId: "sess-B", userId: "u1", at: 1000 }, "sess-A");
+    expect(env).toEqual({ actor_session_id: "sess-A" });
+    expect(undoOwnership(env, "sess-A").verdict).toBe("own");
+  });
+
+  it("⛔ a foreign write AFTER the frame was pushed IS what this undo would erase — reports it, by name", () => {
+    const env = undoRiskEnvelope(1000, { sessionId: "sess-B", userId: "u1", opKind: "move", at: 2000 }, "sess-A");
+    expect(env).toEqual({ actor_session_id: "sess-B", actor_user_id: "u1", op_kind: "move" });
+    const v = undoOwnership(env, "sess-A", { nameOf: () => "Michael" });
+    expect(v.verdict).toBe("foreign");
+    expect(v.needsConfirm).toBe(true);
+    expect(v.message).toMatch(/Michael/);
+  });
+
+  it("a single most-recent foreign op is sufficient for a multi-step undo — the push it postdates is the boundary any depth must cross", () => {
+    // undoN(3) reverts PAST the most recent push; if the foreign write landed after even that one
+    // push, every deeper step in the same run reverts past it too — one timestamp suffices.
+    const env = undoRiskEnvelope(1500, { sessionId: "sess-B", userId: "u1", at: 1600 }, "sess-A");
+    expect(undoOwnership(env, "sess-A").verdict).toBe("foreign");
   });
 });

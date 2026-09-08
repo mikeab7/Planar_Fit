@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
+import zlib from "node:zlib";
 import { handleParcelCache, snapshotFileName, SNAPSHOT_COUNTIES } from "../functions/api/parcel-cache/_handler.js";
+
+const gz = (obj) => zlib.gzipSync(Buffer.from(JSON.stringify(obj)));
 
 // Minimal in-memory Drive client — the methods the read-through handler uses (findFile/media).
 function fakeDrive(now = () => Date.now()) {
@@ -39,24 +42,36 @@ describe("snapshotFileName — Drive filename shaping (path-traversal guard)", (
 });
 
 describe("handleParcelCache — serve a stored snapshot", () => {
-  it("returns the gzipped GeoJSON bytes with content-encoding: gzip", async () => {
+  /* B1164656 (NEW-1) — the response body must be PLAIN, ALREADY-DECOMPRESSED GeoJSON: a real
+   * browser's fetch() does not auto-gunzip a body that was manually marked content-encoding:
+   * gzip by the Worker itself (measured live, 2026-09-07 — a plain `res.json()` threw), so the
+   * handler decompresses server-side and never declares content-encoding on the way out. */
+  it("decompresses the stored gzip bytes and returns plain GeoJSON with no content-encoding header", async () => {
     const client = fakeDrive();
-    const bytes = new Uint8Array([1, 2, 3, 4]);
-    client.put("chambers.json.gz", bytes);
+    const fc = { type: "FeatureCollection", features: [{ type: "Feature", properties: { OBJECTID: 1 }, geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] } }] };
+    client.put("chambers.json.gz", gz(fc));
     const res = await handleParcelCache({ client, segs: ["svc", "chambers"], folderIdFor });
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-encoding")).toBe("gzip");
+    expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("content-type")).toMatch(/geo\+json/);
-    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
+    expect(await res.json()).toEqual(fc);
     expect(client.calls.media).toBe(1);
   });
 
-  it("serves a Fort Bend viewport tile", async () => {
+  it("serves a Fort Bend viewport tile, decompressed the same way", async () => {
     const client = fakeDrive();
-    client.put("fortbend_12_955_1710.json.gz", new Uint8Array([9]));
+    const fc = { type: "FeatureCollection", features: [] };
+    client.put("fortbend_12_955_1710.json.gz", gz(fc));
     const res = await handleParcelCache({ client, segs: ["svc", "fortbend", "12", "955", "1710"], folderIdFor });
     expect(res.status).toBe(200);
-    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([9]));
+    expect(await res.json()).toEqual(fc);
+  });
+
+  it("404s rather than throwing when the stored bytes are not valid gzip (corrupt/legacy record)", async () => {
+    const client = fakeDrive();
+    client.put("waller.json.gz", new Uint8Array([1, 2, 3, 4]));
+    const res = await handleParcelCache({ client, segs: ["svc", "waller"], folderIdFor });
+    expect(res.status).toBe(404);
   });
 });
 

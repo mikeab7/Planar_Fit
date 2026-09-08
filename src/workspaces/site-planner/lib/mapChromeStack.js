@@ -169,3 +169,25 @@ export const MAP_OVERLAY_BAR_H_PX = 42;
  * (NEW-MAPCTRL-3, `ZOOM_CONTROL_CLEARANCE_PX`'s own call site). This is what keeps it clear of the
  * scale bar at every content height without a second measurement. */
 export const SCALE_BAR_CLEARANCE_PX = 44;
+
+/* ⛔ NEW-1 (regression from B1310209, this item) — A CLEARANCE CONSTANT ASSUMES THE OTHER PANEL IS
+ * PASSIVE FURNITURE (a scale bar, a zoom stack) THAT NEVER GROWS TALL. Two PANELS in the same
+ * column can each independently size themselves to "the room between my edge and the nearest
+ * furniture," and both answers can be honest and still overlap, because neither panel knows the
+ * OTHER one is also claiming room in that column.
+ *
+ * That's what happened here: Layers (`topright`) sizes to `panelMaxHeight({ topPx: 10, bottomPx:
+ * 76 })`; the site-plan Adjust panel (`bottomright`) sizes to `panelMaxHeight({ topPx: 70,
+ * bottomPx: SCALE_BAR_CLEARANCE_PX })`. Both are real, both are correctly computed, and on a
+ * short window (measured: 1600×465 and 1191×465, the owner's own real window sizes) both resolve
+ * to nearly the full map height — so they collide across their entire shared width. There is no
+ * fifth corner to move either one to, and no clearance number closes this: at 465px tall there is
+ * provably not enough room for two independently-sized full-height right-edge panels at once.
+ *
+ * The fix is NOT a bigger clearance constant. It's MapFinder.jsx's `sitePlanAdjustOpen` effect:
+ * Layers force-collapses to its header chip the moment Adjust opens (and its "Imagery & layers"
+ * toggle refuses to reopen it while Adjust is open), then restores itself the instant Adjust
+ * closes if the user had it open. Read that effect's own header before adding a fifth docked
+ * panel or reworking either of these two — a NEW panel that can grow tall in a claimed corner
+ * needs the SAME yield relationship with whatever else can be tall in that corner, not a new
+ * clearance constant assumed to be enough. */
