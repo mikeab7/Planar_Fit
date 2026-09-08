@@ -1160,8 +1160,12 @@ export default function Notes({
     // NEW-2 (B1202176 ×2 / B1160480) — see handleAddPage's note.
     if (pid) ensureProjectExists(pid).catch(() => {});
     setRecovered((prev) => prev.filter((r) => r.pageId !== pageId));
-    const where = pid == null ? NO_PROJECT_LABEL : (projects.find((p) => p.id === pid)?.name || "that project");
-    setExportNote(`Filed under ${where}. You can rename it from the row's menu — its original name was lost with its entry.`);
+    // ⛔ NO-PROJECT GETS ITS OWN SENTENCE, NEVER "Filed under <NO_PROJECT_LABEL>" (NEW-1, the
+    // banner-wording fix's audit of every project-name interpolation in this module —
+    // NO_PROJECT_LABEL is already a full phrase, "Not in a project", so it cannot be dropped
+    // into "under <X>" without producing a phrase inside a phrase).
+    const filedLine = pid == null ? "Kept unfiled." : `Filed under ${projects.find((p) => p.id === pid)?.name || "that project"}.`;
+    setExportNote(`${filedLine} You can rename it from the row's menu — its original name was lost with its entry.`);
   }, [persistTree, projects, treeNow]);
 
   /** …and the other honest answer: they did not want it. Bins it like any other note, with
