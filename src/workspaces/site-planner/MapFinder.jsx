@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { COUNTIES, COUNTIES_MAP, candidateCountiesForPoint, countyForView, countyKeyForName, STATEWIDE_KEYS, SNAPSHOT_COUNTIES, isStatewideLayerUrl, trimLayerUrl, loadCountyPolygons, countyIdentity, noParcelSourceNote } from "./lib/counties.js";
 import { landingView, milesBetween, CLUSTER_RADIUS_MI } from "./lib/landingView.js";
+import { decideTargetOf, orderVerbs, verbLabel } from "./lib/decideBar.js";
 import {
   shouldShowAccuracyCircle, formatAccuracyFt, locateErrorMessage,
   isAccuracyUsable, garbageAccuracyMessage, locateAvailability, locateUnavailableTooltip,
@@ -22,7 +23,7 @@ import { PLACE_NAMES_MIN_ZOOM } from "./lib/layerZoomGate.js";
 // disagreed visibly in this file alone before it existed.
 import { RADIUS, nestedIn } from "../../shared/ui/radius.js";
 // B649136 — the control-height / type-scale siblings of RADIUS (B809906), used by MAP_CORNER_CHIP_STYLE below.
-import { CONTROL_H, FONT_SIZE } from "../../shared/ui/designTokens.js";
+import { CONTROL_H, FONT_SIZE, SPACE } from "../../shared/ui/designTokens.js";
 // NEW-1 (map-view locked-geometry conversion, B989104-B989106 follow-up) — `Button` is the base
 // every nested search-bar action button now renders through — see NESTED_ACTION_SIZE below for
 // why its own RADIUS.control is deliberately overridden at every call site. (The collapsed
@@ -70,7 +71,7 @@ import { isTextControl, PICKER_TAGS } from "../../shared/keyboard/keyScope.js";
 import ContextMenu from "../../shared/ui/ContextMenu.jsx";
 import AnchoredMenu from "../../shared/ui/AnchoredMenu.jsx";
 import FloatingNotice from "../../shared/ui/FloatingNotice.jsx";
-import { menuPanelStyle, MenuItem } from "../../shared/ui/controls.jsx";
+import { menuPanelStyle } from "../../shared/ui/controls.jsx";
 import DealDatesForm from "./components/DealDatesForm.jsx";
 import {
   resolveLayerUrl,
@@ -139,11 +140,22 @@ const PAL = {
 const COMP_ACCENT = "#2f6fb0";
 const ON_COMP_ACCENT = PALETTES.light.onAccent; // white — see the palette.js import above
 
-// B848304 — the "Place comp" split button's three anchor kinds, each a prepositional phrase that
-// grammatically completes "Place comp / …" (the caret's own menu item text, verbatim). Also what
-// the primary button appends to its own label once a kind has been chosen this session, so the
-// armed anchor reads without opening the menu.
-const COMP_ANCHOR_PHRASE = { map: "on the map", parcel: "on a parcel", site_plan: "on a site plan" };
+/* NEW-1 (2026-09-08) — the ON-MAP chips: a selection's acreage, and a dropped decide pin. These
+ * paint directly ON THE AERIAL PHOTOGRAPH, not on any app surface, which is why they are fixed
+ * dark/white instead of theme tokens — exactly the reasoning `overlayPlacementHandles.js`'s own
+ * readout chip already carries. No token models "legible over an arbitrary satellite image": a
+ * light-theme value disappears over a pale field, a dark-theme one over new asphalt, and the
+ * chip has to be readable over both in the same view. Hoisted to module scope so the two chips
+ * cannot drift into two different dark greys. */
+const MAP_CHIP_INK = "#fff"; // design-exempt: legible over any aerial — see this block's header
+const MAP_CHIP_BG = "rgba(0,0,0,0.62)"; // design-exempt: a HUD chip over a photograph, no token models it
+const MAP_CHIP_SHADOW = "0 1px 4px rgba(0,0,0,0.35)"; // design-exempt: no shadow-color token exists repo-wide yet
+const MAP_PIN_SHADOW = "0 1px 5px rgba(0,0,0,0.45)"; // design-exempt: no shadow-color token exists repo-wide yet
+
+// ⛔ NEW-1 (2026-09-08) — `COMP_ANCHOR_PHRASE` lived here for B848304's "Place comp ▾" split
+// button, which this item removed. All three of its anchors are still reachable, just not as one
+// comp-only control: "on the map" is Drop a pin → Log a comp, "on a parcel" is Select parcels →
+// Log a comp, and "on a site plan" is the plan card's own "Pin comp here" (its three-dot menu).
 
 // The aerial-source registry (BASEMAPS) lives in lib/basemaps.js (B693) — it's shared
 // with the planner's Basemap control so both surfaces always offer the same sources.
@@ -490,57 +502,17 @@ const PinGlyph = ({ size = 12 }) => (
   </svg>
 );
 
-/* B831776 (NEW-1) — the far-left Site/Comp switch. MODULE-SCOPE-COMPONENTS: defined here, not
- * inside MapFinder's render.
- * ⛔ B850016 (NEW-11) — SUPERSEDES this comment's original claim of "one piece of state, no second
- * `which tab` variable." That was a deliberate coupling and the owner reversed it: clicking this
- * switch must never move the left rail's tab, and vice versa (see `mode`'s own state comment).
- * This switch is keyed on `mode` ONLY now — what an address search creates and which toolbar
- * workflow is armed (Select-parcels vs. Place-comp) — never `panelTab`.
- * ⛔ B848304 — RENAMED, not removed: read this before "simplifying" it away. Once the map
- * toolbar's placement buttons collapsed into the "Place comp" split button, this switch stopped
- * being about arming a click at all — it never was ONLY that, which is why it stays. It still
- * does a real, distinct job the split button cannot: it decides what a search creates and which
- * toolbar workflow is active. The RENAME lives in the accessible name and each segment's own
- * tooltip — precisely so this no longer READS as a second way to say "place a comp" (the
- * duplication the owner flagged) — without touching the terse visible glyph, which stays
- * "Site"/"Comp" on purpose: a segmented toggle this narrow keeps PANEL-BREVITY's short label, and
- * pluralizing it to "Comps" collides with the rail tab's own accessible name ("Comps 0") for any
- * locator that doesn't disambiguate
- * — tried, reverted, see this item's PR history. */
-const SWITCH_SEG_H = 26;
-function SiteCompSwitch({ mode, onChange }) {
-  // NEW-1/NEW-3 (map landing radius audit) — measured `nestedIn(RADIUS.sm, 2)` = 4px against this
-  // switch's own 2px padding, and a literal 4 is a genuinely NEW off-scale number (radius.js's
-  // scale is {6,8,12,999} — nestedIn() derives concentric values for a LARGER outer radius nested
-  // inside a bigger surface; at the smallest step, sm=6, a 2px inset floors below the next rung
-  // down rather than landing on one). Between "perfectly concentric but off-scale" and "on-scale
-  // but 2px shy of concentric on a 26px-tall segment" (imperceptible at working zoom —
-  // PERCEPTUAL-PARITY), the second is the one that doesn't invent a fifth radius step, so the
-  // segment stays on RADIUS.sm, matching its own shell. See docs/DESIGN.md's radius section for
-  // the rule this documents ("snap to the nearest canonical step rather than mint a derived one").
-  const seg = (key, label, accent, title) => {
-    const on = mode === key;
-    return (
-      <button key={key} type="button" role="tab" aria-selected={on} title={title} onClick={() => onChange(key)}
-        style={{
-          flex: "none", height: SWITCH_SEG_H, padding: "0 8px", borderRadius: RADIUS.sm, border: "none",
-          background: on ? accent : "transparent", color: on ? "#fff" : "var(--chrome-muted)",
-          fontSize: 12, fontWeight: on ? 700 : 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
-        }}
-      >{label}</button>
-    );
-  };
-  return (
-    <div role="tablist" aria-label="What an address search creates" style={{
-      flex: "none", display: "flex", gap: 2, padding: 2, marginRight: 6,
-      height: SWITCH_SEG_H + 4, borderRadius: RADIUS.sm, background: "var(--chrome-bg-elev)",
-    }}>
-      {seg("site", "Site", PAL.accent, "Address search creates a new site")}
-      {seg("comp", "Comp", COMP_ACCENT, "Address search creates a new leasing comp")}
-    </div>
-  );
-}
+/* ⛔ NEW-1 (map toolbar goes ground-first, 2026-09-08) — `SiteCompSwitch` LIVED HERE AND IS GONE
+ * ON PURPOSE. Do not reintroduce a Site/Comp segmented toggle on this toolbar in any form.
+ * It asked "what are you making?" BEFORE the user had pointed at any ground, which meant every
+ * one of its answers was a guess about a click that had not happened yet, and it was the only
+ * reason an address search had to branch at all. The owner reviewed three designs for the
+ * replacement (2026-09-08) and picked the one where the TOOLBAR ITSELF becomes the question: you
+ * point at ground first (select parcels, Draw, Drop a pin, or search an address) and only then
+ * say what it is, on the decide bar below (`selected.length > 0` / `droppedPin`), where all three
+ * verbs are live at once instead of one verb chosen by a mode. B850016's decoupling of the left
+ * rail's tab from this switch is preserved by construction — the state it was decoupled FROM no
+ * longer exists — and `panelTab` keeps doing exactly what it did. */
 
 /* B831777 (NEW-2) — one rail tab, counts included on the tab itself (never a separate badge).
  * NEW-1/NEW-3 (map landing radius audit) — repointed from the bare `RADIUS.sm` literal to
@@ -683,29 +655,47 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   const [selectMode, setSelectMode] = useState(false); // off = pan only; on = add/remove parcels
   // NEW-1 (map "Start blank" consolidation) — the secondary-action dropdown on the "Select
   // parcels" split button, below. One state/ref pair for the one caret this toolbar now has.
-  const [startBlankMenuOpen, setStartBlankMenuOpen] = useState(false);
-  const startBlankMenuBtnRef = useRef(null);
   // NEW-COMPS: armed by "+ Comp" — the next map click drops a leasing comp anchor there. A
   // second, independent one-shot mode alongside `selectMode` (mutually exclusive in the UI,
   // never both true at once) rather than folded into it, because it needs none of selectMode's
   // parcel-identify machinery — just a raw point.
   const [placingCompPin, setPlacingCompPin] = useState(false);
   useEffect(() => { placingCompPinRef.current = placingCompPin; }, [placingCompPin]);
-  // B848304 (map toolbar "Place comp" split button) — which anchor kind the primary click uses,
-  // STICKY FOR THE SESSION (sessionStorage, not localStorage — a fresh tab starts over, matching
-  // the owner's spec: "first use of the session defaults to On the map"). Null until the user's
-  // first real choice this session (either the primary click's own default, or an explicit caret
-  // pick); the button's own label reads it back so the armed anchor is visible without opening
-  // the menu.
-  const [lastCompAnchorKind, setLastCompAnchorKindRaw] = useState(() => {
-    try { return sessionStorage.getItem("planarfit:compAnchorKind:v1") || null; } catch (_) { return null; }
+  /* NEW-1 (2026-09-08) — THE STICKY ANSWER. The old Site/Comp toggle made one thing cheap that
+   * this design makes dearer: flipping to Comp once meant every following search made a comp, so
+   * entering comps one at a time cost nothing extra. Ground-first asks each time, which is one
+   * more click per comp. This pays that back: the last verb chosen becomes the PRIMARY verb on
+   * the next decide bar, so a run of comps is still one click each after the first.
+   * Deliberately sessionStorage, not localStorage — the exact pattern B848304 established for
+   * `planarfit:compAnchorKind:v1` (which this replaces): a sticky answer is a shortcut for the
+   * task you are in the middle of, never a mode you can leave armed for tomorrow and be surprised
+   * by. A fresh tab starts over on "Track as site", the safest of the three (a plan is private
+   * scratch work; a comp is a standing market record).
+   * Bulk comp entry (Paste comps, Import KML) does not come through this toolbar at all and is
+   * untouched by any of it. */
+  const [lastVerb, setLastVerbRaw] = useState(() => {
+    try {
+      const v = sessionStorage.getItem("planarfit:mapDecideVerb:v1");
+      return v === "comp" || v === "siteplan" || v === "site" ? v : null;
+    } catch (_) { return null; }
   });
-  const setLastCompAnchorKind = (kind) => {
-    setLastCompAnchorKindRaw(kind);
-    try { sessionStorage.setItem("planarfit:compAnchorKind:v1", kind); } catch (_) { /* private mode */ }
+  const setLastVerb = (v) => {
+    setLastVerbRaw(v);
+    try { sessionStorage.setItem("planarfit:mapDecideVerb:v1", v); } catch (_) { /* private mode */ }
   };
-  const [placeCompMenuOpen, setPlaceCompMenuOpen] = useState(false);
-  const placeCompMenuBtnRef = useRef(null);
+  /* NEW-1 — WHY the pin is armed, which decides what its click does. Two callers arm
+   * `placingCompPin`: this toolbar's own "Drop a pin" (ground-first — the click marks a POINT and
+   * the decide bar then asks what it is), and the comps panel's armed-row Location cell
+   * (`onArmMapPin`, B986096-HARDENING-13 — that row is already a comp and is waiting for its
+   * anchor, so asking "site or comp?" there would be asking a question already answered). One
+   * boolean rather than folding the reason into `placingCompPin` itself, so every existing
+   * `setPlacingCompPin(false)` cancel path keeps working untouched. */
+  const [pinDecideArmed, setPinDecideArmed] = useState(false);
+  const pinDecideArmedRef = useRef(false);
+  useEffect(() => { pinDecideArmedRef.current = pinDecideArmed; }, [pinDecideArmed]);
+  // NEW-1 — the ground the user has pointed at with a raw pin (no parcel under it, or none
+  // wanted): {lat, lon} | null. The decide bar's second target, beside a parcel selection.
+  const [droppedPin, setDroppedPin] = useState(null);
   useEffect(() => {
     if (!mapRef.current) return;
     if (placingCompPin) mapRef.current.getContainer().style.cursor = ADD_CURSOR;
@@ -716,31 +706,23 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [placingCompPin]);
 
-  /* ⛔ B850016 (NEW-11) — B831776's original design ("the Site/Comp switch and the left-rail tab
-   * are ONE piece of state, never two") is SUPERSEDED. Owner, verbatim: "when i click comp in the
-   * center it shouldnt auto switch the left side to comp mode as well." Measured live: the
-   * coupling was bidirectional — the centre toggle flipped the rail tab AND the rail tab flipped
-   * the centre toggle — so wanting to look up a comp's address while keeping your Sites list open
-   * (or vice versa) was impossible. The two now have DIFFERENT jobs and DIFFERENT state: `mode`
-   * decides what an address SEARCH creates (a site or a comp) and drives the toolbar's
-   * placement workflow (Select-parcels vs. Place-comp); `panelTab` (below) decides what the left
-   * rail BROWSES. Neither setter touches the other. It still does not drive what's drawn on the
-   * map — see `showSitesLayer`/`showCompsLayer` below (NEW-3): those stay independent too. */
-  const [mode, setModeRaw] = useState(() => {
-    try { return localStorage.getItem("planarfit:mapMode:v1") === "comp" ? "comp" : "site"; } catch (_) { return "site"; }
-  });
-  const setMode = (m) => {
-    setModeRaw(m);
-    try { localStorage.setItem("planarfit:mapMode:v1", m); } catch (_) { /* private mode */ }
-    // Leaving a mode cancels whatever that mode had armed, so switching Site<->Comp never leaves
-    // a stale one-shot click-handler live under the other mode's toolbar (NEW-6's armed state is
-    // keyed on `mode`, so this keeps the visual and the actual armed handler from disagreeing).
-    if (m !== "comp") { setPlacingCompPin(false); }
-    setSelectMode(false);
-  };
-  // B850016 (NEW-11) — the rail tab's OWN state, independent of `mode` above. A plain setter, no
+  /* ⛔ B850016 (NEW-11) — the `mode` state THAT USED TO LIVE HERE IS GONE (NEW-1, 2026-09-08),
+   * along with its `planarfit:mapMode:v1` key. It answered "what does an address search create?"
+   * before the user had pointed at anything; a search now simply FINDS, and the decide bar asks
+   * afterwards. B850016's rule survives its removal and still binds: the left rail's tab is
+   * SEPARATE state and nothing on the centre toolbar may move it. `panelTab` below is that state,
+   * unchanged. Do not recouple them, and do not resurrect a centre-toolbar mode to couple them
+   * with. (Two deliberate exceptions predate and outlive this item, both DIRECT actions on a comp
+   * rather than a mode flip: dropping a file on the map, and clicking an existing comp's marker —
+   * see their own effects below.) It never drove what's DRAWN on the map either — see
+   * `showSitesLayer`/`showCompsLayer` below (NEW-3): those stay independent too.
+   * ⚠ `panelTab` still seeds itself from the retired `planarfit:mapMode:v1` key on purpose: it is
+   * the value already sitting in every existing user's browser for "which list was I looking at",
+   * and dropping the read would silently reset the rail for all of them. It is read-only now —
+   * nothing writes that key any more. */
+  // B850016 (NEW-11) — the rail tab's OWN state. A plain setter, no
   // side effects: switching which list you're browsing must never cancel an in-flight comp
-  // placement or parcel selection the way leaving `mode` does (those belong to the toolbar
+  // placement or parcel selection the way arming one does (those belong to the toolbar
   // workflow, untouched by which tab is merely visible).
   const [panelTab, setPanelTab] = useState(() => {
     try { return localStorage.getItem("planarfit:mapMode:v1") === "comp" ? "comp" : "site"; } catch (_) { return "site"; }
@@ -758,11 +740,9 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // through the EXISTING onPlaceComp/pendingCompAnchor flow.
   const [sitePlanOverlays, setSitePlanOverlays] = useState([]);
   const overlaysById = useMemo(() => Object.fromEntries(sitePlanOverlays.map((o) => [o.id, o])), [sitePlanOverlays]);
-  // B848304 — reachability for the "Place comp" caret's "On a site plan" item: whether ANY
-  // overlay has been uploaded on this site. Deliberately not `visibleSitePlanOverlays` below —
-  // that's zoom-gated for on-screen rendering, a different question from "does this flow exist
-  // at all right now", which is what the menu item's disabled state answers.
-  const hasSitePlanOverlay = sitePlanOverlays.length > 0;
+  // ⛔ NEW-1 (2026-09-08) — `hasSitePlanOverlay` lived here for B848304's "On a site plan" menu
+  // item's disabled state. That menu is gone; the plan card's own "Pin comp here" is the door now,
+  // and a card only exists when a plan does, so the reachability question answers itself.
   // Meaningless zoomed all the way out — a site plan is building-scale detail.
   const SITE_PLAN_MIN_ZOOM = 15;
   const visibleSitePlanOverlays = useMemo(
@@ -817,14 +797,17 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // OPEN comp routes the very next overlay click into `repinCompAnchorRef` (CompsPanel's own
   // comp-update logic) instead of `onPlaceComp` (which always creates a NEW comp — see
   // placeCompOnOverlay below). Cleared the moment a click resolves OR pin mode is cancelled, so a
-  // later "Place comp → on a site plan" pin (unrelated, still creates new comps) can never be
+  // later site-plan pin (unrelated, still creates new comps) can never be
   // mistaken for a leftover repin target.
   const repinCompIdRef = useRef(null);
   const repinCompAnchorRef = useRef(null); // set by CompsPanel; called once per finished repin click
-  // B848304 — every entry point that arms a site-plan pin (the "Place comp" caret's "On a site
-  // plan" item, AND the Site plans panel's own per-overlay "Pin a comp here" button) routes
-  // through here, so stickiness records the real choice regardless of which door was used.
-  const startPinOnOverlay = (id) => { setActiveOverlayId(null); setClickableOverlayId(id); setLastCompAnchorKind("site_plan"); };
+  // B848304 — every entry point that arms a site-plan pin routes through here. As of NEW-1
+  // (2026-09-08) there is exactly one door left: the Site plans panel's own per-overlay
+  // "Pin a comp here" button (the map toolbar's caret menu that was the other one is gone).
+  // NEW-1 (2026-09-08) — no longer records anchor stickiness: B848304's `lastCompAnchorKind` went
+  // with the "Place comp ▾" split button that read it. The Site plans panel's own per-overlay
+  // "Pin a comp here" is now this function's only door.
+  const startPinOnOverlay = (id) => { setActiveOverlayId(null); setClickableOverlayId(id); };
   const stopPinOnOverlay = () => { setClickableOverlayId(null); repinCompIdRef.current = null; };
   // B1167713 (NEW-2) — CompDetail's own "Pin this on the plan" arms THIS comp as the repin
   // target, then arms the overlay for pinning exactly as the old "Pin comp here" flow always did.
@@ -984,10 +967,10 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       setFileDragActive(false);
       const files = e.dataTransfer.files;
       if (!files || !files.length) return;
-      // B850016 (NEW-11) — dropping a file both arms the toolbar for a comp-placement workflow
-      // (`setMode`) AND is a direct enough action that the Comps tab should surface to show it
-      // (`setPanelTab`) — unlike the centre toggle's own click, which must never move the panel.
-      setMode("comp");
+      // B850016 (NEW-11) — dropping a file is a direct enough action that the Comps tab should
+      // surface to show it (`setPanelTab`). NEW-1 (2026-09-08) — it used to also arm the retired
+      // centre `mode`; there is no mode to arm any more, and this drop lands straight in the site
+      // plan upload flow regardless, so nothing here needed replacing.
       setPanelTab("comp");
       if (!sitesPanelOpen) toggleSitesPanel();
       // NEW-17 — this is a DROP POINT only (a {lat,lng} center override), never a full placement
@@ -1618,7 +1601,15 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     L.control.scale({ imperial: true, metric: false, position: "bottomright", maxWidth: 130 }).addTo(map); // graphic scale (B96b)
     setZoom(map.getZoom());
     const onClick = (e) => {
-      if (placingCompPinRef.current) { placeCompPinAtRef.current(e.latlng); return; }
+      // NEW-1 (2026-09-08) — one armed pin, two callers, and they want different things from the
+      // same click. The toolbar's "Drop a pin" is ground-first: the click MARKS the point and the
+      // decide bar then asks what it is. The comps panel's armed Location cell is not a question —
+      // that row is already a comp waiting for its anchor — so it still places directly.
+      if (placingCompPinRef.current) {
+        if (pinDecideArmedRef.current) markDecidePinRef.current(e.latlng);
+        else placeCompPinAtRef.current(e.latlng);
+        return;
+      }
       if (selectModeRef.current) { handleClick(e.latlng); return; }
       // A background click (nothing else claimed it) deselects a site plan armed for editing —
       // its own image click already stops propagation before this ever runs (B848496 NEW-2).
@@ -2803,15 +2794,34 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     }
   };
 
-  // B831779 (NEW-4d) — the no-match row's "drop a pin here": mode-dependent, since what a raw
-  // click on the map WOULD do differs by mode (a Site pin starts a blank plan; a Comp pin anchors
-  // a leasing comp) — the same branch the toolbar's own "Start blank"/"Drop a pin" buttons take.
+  // B831779 (NEW-4d) — the no-match row's "drop a pin here". NEW-1 (2026-09-08): this used to
+  // branch on `mode`, which is exactly the question this item removed — a search that finds no
+  // parcel now marks the POINT and lets the decide bar ask what it is, the same second step every
+  // other ground-first path lands on.
   const dropPinFromSearch = () => {
-    if (mode === "comp") { const c = mapRef.current && mapRef.current.getCenter(); if (c) placeCompPinAt(c); return; }
-    startBlankHere();
+    const c = mapRef.current && mapRef.current.getCenter();
+    if (!c) return;
+    markDecidePin({ lat: c.lat, lng: c.lng });
   };
 
   const clearSel = () => { clearHilites(); setSelected([]); setParcelInfo(null); setBackupNotice(null); setCachedNotice(null); };
+
+  /* NEW-1 (2026-09-08) — GROUND FIRST. A raw point the user pointed at, with the question of what
+   * it IS deliberately not yet asked; the decide bar asks it. Clears any parcel selection, so the
+   * bar always has exactly ONE target and can never present three verbs whose meaning depends on
+   * which of two things you thought you had selected. */
+  const markDecidePin = (latlng) => {
+    setPlacingCompPin(false);
+    setPinDecideArmed(false);
+    setSelectMode(false);
+    clearSel();
+    setDroppedPin({ lat: latlng.lat, lon: latlng.lon != null ? latlng.lon : latlng.lng });
+  };
+  const markDecidePinRef = useRef(markDecidePin);
+  useEffect(() => { markDecidePinRef.current = markDecidePin; });
+  // NEW-1 — leaving the decide bar without answering it. Never destructive: a pin is a point the
+  // user marked, nothing has been written anywhere yet.
+  const clearDecidePin = () => setDroppedPin(null);
 
   /* NEW-4 — THE FALLBACK. Start a plan with no parcel, LOCATED at `at` (or wherever the map is
    * looking), so the owner can draw the boundary himself and still get the aerial, the flood
@@ -2866,58 +2876,14 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     clearSel();
   };
 
-  // B848304 — the ONE arming function behind the "Place comp" split button, for all three anchor
-  // kinds. Called both by the primary click (with the last-used kind, defaulting to "map" on a
-  // fresh session) and by each caret menu item (an explicit pick, which becomes the new last-used
-  // kind). "site_plan" resolves to a real overlay itself — the ACTIVE one if there is one, else
-  // the first uploaded — and falls back to "map" if none exists, so a stale sticky choice (an
-  // overlay deleted since it was last used) can never arm a dead menu action from the primary click.
-  const armCompAnchor = (kind) => {
-    if (kind === "site_plan") {
-      const target = (activeOverlayId && overlaysById[activeOverlayId]) ? activeOverlayId : sitePlanOverlays[0]?.id;
-      if (!target) { armCompAnchor("map"); return; }
-      startPinOnOverlay(target); // also records the "site_plan" stickiness itself
-      return;
-    }
-    setLastCompAnchorKind(kind);
-    if (kind === "parcel") setSelectMode(true); else setPlacingCompPin(true);
-  };
+  /* ⛔ NEW-1 (2026-09-08) — `armCompAnchor` (B848304's one-arming-function behind the "Place
+   * comp ▾" split button) IS GONE with that button. Its three anchors did not go with it:
+   *   • on the map    → Drop a pin, then "Log a comp" on the decide bar
+   *   • on a parcel   → Select parcels, then "Log a comp" on the decide bar
+   *   • on a site plan→ that plan card's own "Pin comp here" (its three-dot menu, shipped #1559)
+   * `startPinOnOverlay` is untouched and is still the one door to the third of those — it just
+   * no longer has a second caller on this toolbar. */
 
-  // B941152 — Enter mirrors the "Comp here" button that appears the moment a parcel is selected
-  // in Comp mode. Selecting parcels is a sequence of map clicks, which leaves nothing sitting in
-  // focus (not the address field, not a button) — so before this, Michael's Enter keystroke had
-  // no listener anywhere to reach, and the toolbar's badge + ✕ were all there was to show for it.
-  // Scoped OFF whenever a real control has focus (the address search, a rename field, the ✕/Cancel
-  // buttons…) so Enter keeps doing whatever that control already does; it only fires when nothing
-  // in the toolbar has claimed the keystroke, which is exactly the state a map click leaves you in.
-  useEffect(() => {
-    if (mode !== "comp" || !selected.length) return undefined;
-    const onKey = (e) => {
-      if (e.key !== "Enter") return;
-      const ae = document.activeElement;
-      const tag = ae && ae.tagName;
-      // NEW-1 (B1012832) — the text-entry half now reads the ONE shared authority
-      // (shared/keyboard/keyScope.js) instead of its own hand-rolled INPUT/TEXTAREA/
-      // contentEditable list, so this handler cannot drift from the planner's own
-      // definition of "is the user typing". BUTTON/SELECT stay a local exclusion — this
-      // guard is broader than "typing" (it also yields to a focused control of any kind).
-      if (isTextControl(ae) || PICKER_TAGS.includes(tag) || tag === "BUTTON") return;
-      // B986096-HARDENING-16 — the comp entry sheet (CompEntryGrid) gives every cell real DOM
-      // focus (a roving tabindex, HARDENING-14), and a selected-but-not-editing cell is a `<td>`
-      // — none of INPUT/TEXTAREA/contentEditable/SELECT/BUTTON above, so this handler's own
-      // guard let it straight through. A parcel selected on the map (e.g. from a prior "Comp
-      // from parcel" pick) plus the entry sheet open meant an Enter meant for the grid — move
-      // selection down, or open that cell's editor — instead fired an unrelated comp placement
-      // and ate the keystroke the grid never got a chance to act on. This is the same window-
-      // level "who owns Enter" collision the grid's own keyboard-commit fix (HARDENING-14/15)
-      // was built to survive; excluding the panel here is the other half of that same fix.
-      if (ae && ae.closest && ae.closest("[data-comp-entry-panel]")) return;
-      e.preventDefault();
-      placeCompOnSelectedParcel();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [mode, selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startBlankHere = async (at) => {
     const c = at || (mapRef.current ? mapRef.current.getCenter() : null);
@@ -2969,6 +2935,216 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   };
 
   const asm = selected.length ? computeAssembly(selected, BASEMAPS.esri.export) : null;
+
+  /* ────────────────────────────────────────────────────────────────────────────────────────
+   * NEW-1 (2026-09-08) — THE DECIDE BAR: what the ground you just pointed at IS.
+   *
+   * `decideTarget` is the ONE thing the bar is about. Parcels win over a raw pin because a parcel
+   * selection is the richer answer (it carries geometry, acreage, an account id and a county) and
+   * because `markDecidePin` clears the selection anyway — so the two can never actually coexist;
+   * the precedence here is a belt-and-braces guarantee that the three verbs always mean one thing.
+   * ──────────────────────────────────────────────────────────────────────────────────────── */
+  const decideTarget = decideTargetOf({ selectedCount: selected.length, hasPin: !!droppedPin });
+
+  /* NEW-1 — "Place a site plan" from the decide bar reuses the EXACT upload-first flow the Comps
+   * list's own "+ Site plan" button already drives (`startOverlayUploadRef`, wired by
+   * SitePlansSection) rather than growing a second upload path. The one wrinkle is mounting:
+   * SitePlansSection only renders on the Comps tab, so the ref is null until that tab is showing.
+   * Surfacing the Comps tab here is the same DIRECT-ACTION exception the file-drop handler and the
+   * comp-marker click already take — it is a verb the user pressed, not a mode flip, so B850016's
+   * "the centre toolbar must never move the rail" rule is not in play.
+   * LOUD-FAILURE: if the section never wires the ref, this says so on the map's own error line
+   * instead of swallowing the press. */
+  const [sitePlanUploadReq, setSitePlanUploadReq] = useState(0);
+  const startSitePlanUpload = () => {
+    setPanelTab("comp");
+    if (!sitesPanelOpen) toggleSitesPanel();
+    setSitePlanUploadReq((n) => n + 1);
+  };
+  useEffect(() => {
+    if (!sitePlanUploadReq) return undefined;
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries += 1;
+      if (startOverlayUploadRef.current) {
+        startOverlayUploadRef.current();
+        clearInterval(iv);
+        setSitePlanUploadReq(0);
+      } else if (tries >= 40) { // ~2s — far longer than a tab switch + lazy chunk needs
+        clearInterval(iv);
+        setSitePlanUploadReq(0);
+        setErr("Couldn't open the site plan upload — open the Comps tab on the left and use “＋ Site plan”.");
+      }
+    }, 50);
+    return () => clearInterval(iv);
+  }, [sitePlanUploadReq]);
+
+  /* NEW-1 — THE THREE VERBS. One table, read by the decide bar's buttons AND by the Enter key, so
+   * the keystroke and the button can never drift into doing different things (which is exactly
+   * what B941152 had to go back and fix once already, when Enter mirrored a button by hand).
+   * `run` takes the target so a verb reads the same on a parcel selection and on a raw pin.
+   * DELIBERATELY THREE, NOT FOUR: the owner also wants "add a note" here. There is no map-anchored
+   * note anywhere in this app today — no handler, no record, no marker — so it is a new concept
+   * rather than a fourth button, and it has its own backlog item. Do not invent one here. */
+  const DECIDE_VERBS = [
+    {
+      key: "site",
+      accent: PAL.accent,
+      onAccent: "var(--on-accent)",
+      title: "Start a plan on this ground",
+      run: (target) => {
+        if (target === "parcels") { planSelected(); return; }
+        const pin = droppedPin;
+        clearDecidePin();
+        if (pin) startBlankHere({ lat: pin.lat, lon: pin.lon });
+      },
+    },
+    {
+      key: "comp",
+      accent: COMP_ACCENT,
+      onAccent: ON_COMP_ACCENT,
+      title: "Record this as a leasing or sale comp",
+      run: (target) => {
+        if (target === "parcels") { placeCompOnSelectedParcel(); return; }
+        const pin = droppedPin;
+        clearDecidePin();
+        if (pin) placeCompPinAt({ lat: pin.lat, lng: pin.lon });
+      },
+      // A comp needs somewhere to go: without `onPlaceComp` this whole flow has no receiver.
+      available: () => !!onPlaceComp,
+    },
+    {
+      key: "siteplan",
+      accent: COMP_ACCENT,
+      onAccent: ON_COMP_ACCENT,
+      title: "Upload a broker flyer or park plan and place it on this ground",
+      run: () => { startSitePlanUpload(); },
+    },
+  ];
+  /* NEW-1 — the sticky answer made concrete, and its ORDERING + LABELS are pure functions in
+   * `lib/decideBar.js` so they can be unit-tested without a browser (`test/decideBar.test.js`):
+   * a verb order that quietly stops being sticky still renders a perfectly good-looking toolbar,
+   * which is exactly the kind of regression no screenshot catches. This component keeps what is
+   * genuinely its own — what each verb DOES. */
+  const verbsByKey = Object.fromEntries(DECIDE_VERBS.map((v) => [v.key, v]));
+  const orderedVerbs = orderVerbs(
+    DECIDE_VERBS.map((v) => v.key),
+    lastVerb,
+    (k) => (verbsByKey[k].available ? verbsByKey[k].available() : true),
+  ).map((k) => ({ ...verbsByKey[k], label: verbLabel(k, selected.length) }));
+  const runDecideVerb = (verb, target) => {
+    setLastVerb(verb.key);
+    verb.run(target);
+  };
+
+  /* ────────────────────────────────────────────────────────────────────────────────────────
+   * NEW-1 (2026-09-08) — THE ACREAGE CHIP, ON THE SHAPE. Part of the owner's chosen design, not
+   * a decoration: the decide bar is pinned centre-top and the parcels it is asking about can be
+   * anywhere on the map — a long way from it, or off to one side under a panel. The chip is what
+   * keeps the question tied to the ground it is about, so "3 parcels · 66.17 AC" up in the bar and
+   * the shape you are looking at are visibly the same thing.
+   * A Leaflet marker (a `divIcon`) rather than a React overlay on purpose: it has to travel with
+   * the map through every pan and zoom, which is Leaflet's job and not something a
+   * position:absolute node over the map can do without re-deriving its own screen position on
+   * every frame (VIEW-INDEPENDENT-ONCE — this way there is nothing view-derived to recompute).
+   * `interactive: false` so it can never eat a press aimed at the parcel underneath it
+   * (CHROME-NEVER-EATS-A-PRESS: chrome that paints over its own object's body must not claim the
+   * press — the cheapest form of that rule is to not be a hit target at all).
+   * Anchored on the assembly's own bbox centre — the same point "Track as site" would open the
+   * plan on, so the chip marks the spot the verb is about. */
+  const acreChipRef = useRef(null);
+  const acreChipKey = asm ? `${asm.totalAc.toFixed(2)}|${asm.origin.lat.toFixed(6)}|${asm.origin.lon.toFixed(6)}` : "";
+  useEffect(() => {
+    const map = mapRef.current;
+    if (acreChipRef.current) {
+      try { map && map.removeLayer(acreChipRef.current); } catch (_) { /* map already torn down */ }
+      acreChipRef.current = null;
+    }
+    if (!map || !acreChipKey) return undefined;
+    const [ac, lat, lon] = acreChipKey.split("|");
+    const html = `<div data-testid="map-acreage-chip" style="`
+      + `display:inline-block;white-space:nowrap;transform:translate(-50%,-50%);`
+      + `padding:${SPACE.xxs}px ${SPACE.sm}px;border-radius:${RADIUS.pill}px;`
+      + `background:${MAP_CHIP_BG};color:${MAP_CHIP_INK};`
+      + `font:700 ${FONT_SIZE.control}px/1.5 inherit;letter-spacing:0.01em;`
+      + `box-shadow:${MAP_CHIP_SHADOW};">${ac} AC</div>`;
+    const marker = L.marker([Number(lat), Number(lon)], {
+      icon: L.divIcon({ className: "", html, iconSize: [0, 0] }),
+      interactive: false, keyboard: false, zIndexOffset: 640,
+    });
+    marker.addTo(map);
+    acreChipRef.current = marker;
+    return undefined;
+  }, [acreChipKey]);
+
+  /* NEW-1 — and the raw pin's own marker, for the same reason: the decide bar says "Pin dropped",
+   * and this is WHERE. Same non-interactive divIcon treatment. */
+  const decidePinRef = useRef(null);
+  const decidePinKey = droppedPin ? `${droppedPin.lat.toFixed(6)}|${droppedPin.lon.toFixed(6)}` : "";
+  useEffect(() => {
+    const map = mapRef.current;
+    if (decidePinRef.current) {
+      try { map && map.removeLayer(decidePinRef.current); } catch (_) { /* map already torn down */ }
+      decidePinRef.current = null;
+    }
+    if (!map || !decidePinKey) return undefined;
+    const [lat, lon] = decidePinKey.split("|");
+    const html = `<div data-testid="map-decide-pin" style="`
+      + `width:14px;height:14px;border-radius:${RADIUS.pill}px;transform:translate(-50%,-50%);`
+      + `background:${PAL.accent};border:2px solid ${MAP_CHIP_INK};box-shadow:${MAP_PIN_SHADOW};"></div>`;
+    const marker = L.marker([Number(lat), Number(lon)], {
+      icon: L.divIcon({ className: "", html, iconSize: [0, 0] }),
+      interactive: false, keyboard: false, zIndexOffset: 640,
+    });
+    marker.addTo(map);
+    decidePinRef.current = marker;
+    return undefined;
+  }, [decidePinKey]);
+
+  /* NEW-1 — returning to the map (the `visible` reset a few hundred lines above already clears
+   * the parcel selection and any armed pin) must clear the decide pin too, or the bar comes back
+   * asking about ground from a previous visit. Kept as its own effect rather than folded into
+   * that one so the pin's whole lifecycle reads in one place. */
+  useEffect(() => {
+    if (visible) { setDroppedPin(null); setPinDecideArmed(false); }
+  }, [visible]);
+
+  /* B941152 — Enter fires the decide bar's PRIMARY verb the moment there is ground to decide
+   * about. Selecting parcels is a sequence of map clicks, which leaves nothing sitting in focus
+   * (not the address field, not a button) — so before this, Michael's Enter keystroke had no
+   * listener anywhere to reach, and the toolbar's badge + ✕ were all there was to show for it.
+   * NEW-1 (2026-09-08) — it used to be gated on `mode === "comp"` and hard-wired to the comp
+   * action; it now runs whatever the bar shows as primary (the sticky answer), for either target,
+   * which is the whole point of reading `orderedVerbs[0]` instead of naming an action here.
+   * Scoped OFF whenever a real control has focus (the address search, a rename field, the
+   * ✕/Cancel buttons…) so Enter keeps doing whatever that control already does; it only fires when
+   * nothing in the toolbar has claimed the keystroke, which is exactly the state a map click
+   * leaves you in. */
+  useEffect(() => {
+    if (!decideTarget || !orderedVerbs.length) return undefined;
+    const onKey = (e) => {
+      if (e.key !== "Enter") return;
+      const ae = document.activeElement;
+      const tag = ae && ae.tagName;
+      // NEW-1 (B1012832) — the text-entry half reads the ONE shared authority
+      // (shared/keyboard/keyScope.js) instead of its own hand-rolled INPUT/TEXTAREA/
+      // contentEditable list, so this handler cannot drift from the planner's own definition of
+      // "is the user typing". BUTTON/SELECT stay a local exclusion — this guard is broader than
+      // "typing" (it also yields to a focused control of any kind).
+      if (isTextControl(ae) || PICKER_TAGS.includes(tag) || tag === "BUTTON") return;
+      // B986096-HARDENING-16 — the comp entry sheet (CompEntryGrid) gives every cell real DOM
+      // focus (a roving tabindex, HARDENING-14), and a selected-but-not-editing cell is a `<td>` —
+      // none of INPUT/TEXTAREA/contentEditable/SELECT/BUTTON above, so this handler's own guard
+      // let it straight through. A parcel selected on the map plus the entry sheet open meant an
+      // Enter meant for the grid instead fired an unrelated placement and ate the keystroke.
+      if (ae && ae.closest && ae.closest("[data-comp-entry-panel]")) return;
+      e.preventDefault();
+      runDecideVerb(orderedVerbs[0], decideTarget);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [decideTarget, selected, droppedPin, lastVerb]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   /* B427410 — the `field` style object that used to live here dressed ONE control: the Imagery
    * <select> above the layer list. That control is now a row INSIDE the list (LayerPanel's basemap
@@ -3143,19 +3319,20 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
           <div ref={mapHelpDockRef} data-canvas-dock="map" />
         </div>
 
-        {/* B831781 (NEW-6) — A PERSISTENT MODE NEEDS A VISIBLE ARMED STATE. With Comp mode active
-            and an add-action armed (a raw click is about to either drop a comp pin or pick a
-            parcel to anchor one — placingCompPin / selectMode), the map itself says so: a soft
-            blue ring around the whole viewport (map-edge tint). COMP_ACCENT is the same hue the
-            switch and every comp action already use, so "blue" reads as "comp" everywhere in
-            this cluster — the toolbar's own status text (below) is what NAMES the action; this
-            is what makes it impossible to miss.
+        {/* B831781 (NEW-6) — A PERSISTENT MODE NEEDS A VISIBLE ARMED STATE. With a raw pin armed
+            (the next click on the map marks a point), the map itself says so: a soft blue ring
+            around the whole viewport (map-edge tint) — the toolbar's own status text (below) is
+            what NAMES the action; this is what makes it impossible to miss.
+            NEW-1 (2026-09-08) — was gated on `mode === "comp" && (placingCompPin || selectMode)`.
+            With the mode gone this tracks `placingCompPin` alone: parcel-select has its own
+            established cursor + county-outline treatment and never wore this ring's meaning
+            ("a raw click is about to commit a point"), which is the only state left that needs it.
             Chosen over a cursor-only cue (invisible the instant the pointer leaves the map,
             e.g. while reading the toolbar) or a corner badge (has to be looked away from to
             read) because a full-viewport ring is PERIPHERAL — visible in the same glance as
             wherever the pointer is about to click, wherever on the map that is.
             `pointer-events: none`, so it never steals the click it's warning about. */}
-        {mode === "comp" && (placingCompPin || selectMode) && (
+        {placingCompPin && (
           <div aria-hidden="true" data-testid="map-comp-armed" style={{
             position: "absolute", inset: 0, zIndex: MAP_CHROME_Z.control, pointerEvents: "none",
             boxShadow: `inset 0 0 0 3px ${COMP_ACCENT}, inset 0 0 26px -8px ${COMP_ACCENT}`,
@@ -3244,10 +3421,6 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             ? { top: 8, left: 8, right: 8, transform: "none", maxWidth: "none", minWidth: 0 }
             : { top: MAP_OVERLAY_TOP_PX, left: "50%", transform: "translateX(-50%)", maxWidth: "calc(100% - 540px)", minWidth: 300 }),
         }}>
-          {/* B831776 (NEW-1) — Site/Comp switch, far left, before the search field. Sets what
-              the action buttons to the right offer; the SAME state drives the rail tab below. */}
-          <SiteCompSwitch mode={mode} onChange={setMode} />
-
           {/* B831779 (NEW-4) — the address field is now a live-suggestion combobox; the red "Go"
               pill is gone (see PlaceSearchField.jsx for the full behaviour contract). */}
           <PlaceSearchField
@@ -3260,124 +3433,78 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             onCommit={commitAddressHit}
             onCommitRaw={(text) => { if (!(busy && !selectMode)) goAddress(text); }}
             onDropPinHere={dropPinFromSearch}
-            dropPinLabel={mode === "comp" ? "Drop a comp pin here" : "Start blank here"}
+            dropPinLabel="Drop a pin here"
           />
 
           {/* Divider */}
           <span style={{ width: 1, height: 22, background: PAL.chromeLine, flex: "none", margin: "0 8px" }} />
 
-          {/* Right section — mode + state dependent. B831780 — every label button here is
-              SHRINKABLE (flex: 0 1 auto, a small minWidth, ellipsis) rather than `flex:"none"`:
-              the new switch takes real width away from this section, and at ~900px (one of the
-              widths this cluster is checked at) a fixed-width row here forced Cancel/the primary
-              action UNDER the Layers panel's corner instead of just shortening its own label.
-              Only Cancel and the small ✕ clear button stay fixed-width — short enough to never
-              need it, and always reachable is what matters most for those two. */}
-          {mode === "site" && !selectMode && !placingCompPin && selected.length === 0 && (
-            /* NEW-1 (map "Start blank" consolidation, owner report 2026-08-29) — ONE entry point
-               for starting a plan here, not two of equal weight. "Select parcels" is the PRIMARY
-               action (almost every new plan starts from a real parcel) — filled with the accent,
-               same as any other primary button in this app. "Start blank" is still one click away,
-               but now SECONDARY: a caret on the same control opens it, rather than a second button
-               sitting beside "Select parcels" and competing with it. The row-1 header's separate
-               "Start blank" button (SitePlannerApp.jsx) is gone — this is now the only place on the
-               map that starts a blank plan. Reuses the exact fallback `startBlankHere` already gives
-               the "county service is down" banner — no second implementation. */
-            <div style={{ display: "flex", flex: "0 1 auto", minWidth: 54 }}>
+          {/* Right section — STATE dependent, never mode dependent (NEW-1, 2026-09-08). Four
+              states, in the order the user meets them: AT REST (point at ground: Select parcels ·
+              Draw · Drop a pin) → ARMED (a cancel and a way to switch which kind of ground you are
+              pointing at) → DECIDE (ground in hand, three verbs live at once).
+              B831780 — every label button here is SHRINKABLE (flex: 0 1 auto, a small minWidth,
+              ellipsis) rather than `flex:"none"`: at ~900px (one of the widths this cluster is
+              checked at) a fixed-width row here forced Cancel/the primary action UNDER the Layers
+              panel's corner instead of just shortening its own label. Only Cancel and the small ✕
+              clear button stay fixed-width — short enough to never need it, and always reachable is
+              what matters most for those two. */}
+          {/* ── AT REST — POINT AT GROUND FIRST ──────────────────────────────────────────────
+              NEW-1 (2026-09-08, owner-chosen design). Three ways to point at ground, side by side,
+              with nothing preselected and no question asked yet:
+                • Select parcels — the primary; almost everything here starts from a real lot.
+                • Draw — B831780's "Start blank" (`startBlankHere`), promoted OUT of the caret menu
+                  into a first-class button. It is its own answer (you are drawing a boundary), so
+                  it commits immediately rather than routing through the decide bar.
+                • Drop a pin — a raw point, for ground with no lot under it (or none wanted); the
+                  decide bar then asks what it is.
+              ⛔ This SUPERSEDES B831780's "one entry point, not two of equal weight" caret, and the
+              reversal is deliberate, not an oversight: that rule was about two ways to make the
+              SAME thing (a plan) competing for the same press. These three make different things,
+              and hiding two of them behind a caret is what forced the toolbar to guess with a mode
+              in the first place. The caret and its AnchoredMenu are gone with it. */}
+          {!selectMode && !placingCompPin && !decideTarget && (
+            <>
               <Button
                 variant="primary"
                 onClick={() => setSelectMode(true)}
-                title="Click parcels on the map to select them, then start a plan from the selection"
-                style={{
-                  ...NESTED_ACTION_SIZE, fontWeight: 700,
-                  flex: "1 1 auto", minWidth: 0, overflow: "hidden",
-                  borderTopLeftRadius: NESTED_ACTION_SIZE.borderRadius, borderBottomLeftRadius: NESTED_ACTION_SIZE.borderRadius,
-                  borderTopRightRadius: 0, borderBottomRightRadius: 0,
-                  borderRight: "1px solid var(--on-accent)", boxShadow: "none",
-                }}
+                data-testid="map-toolbar-select-parcels"
+                title="Click parcels on the map to select them, then say what they are"
+                style={{ ...NESTED_ACTION_SIZE, fontWeight: 700, flex: "0 1 auto", minWidth: 44, overflow: "hidden", boxShadow: "none" }}
               >
                 <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Select parcels</span>
               </Button>
+              <span style={{ width: 6, flex: "none" }} />
               <Button
-                variant="primary"
-                ref={startBlankMenuBtnRef}
-                onClick={() => setStartBlankMenuOpen((o) => !o)}
-                title="More ways to start a plan"
-                aria-haspopup="menu" aria-expanded={startBlankMenuOpen}
-                data-testid="map-start-blank-menu-btn"
-                style={{
-                  flex: "none", width: 22, height: NESTED_ACTION_SIZE.height, padding: 0,
-                  borderTopRightRadius: NESTED_ACTION_SIZE.borderRadius, borderBottomRightRadius: NESTED_ACTION_SIZE.borderRadius,
-                  borderTopLeftRadius: 0, borderBottomLeftRadius: 0,
-                  fontSize: FONT_SIZE.micro, boxShadow: "none",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}
+                variant="ghost"
+                onClick={() => startBlankHere()}
+                data-testid="map-toolbar-draw"
+                title="Start a plan with no parcel, where the map is looking — draw the boundary yourself"
+                style={{ ...NESTED_ACTION_SIZE, flex: "0 1 auto", minWidth: 40, overflow: "hidden", color: PAL.chromeInk, background: "var(--chrome-bg-elev)", border: "1px solid var(--chrome-divider)", boxShadow: "none" }}
               >
-                {/* NEW-3 (map-finder split-button audit) — the same trailing caret `controls.jsx`'s
-                    shared `MenuTrigger` draws for every other "opens a menu" trigger in the app
-                    (the row-1 "File ▾" button, the account chip): aria-hidden span, opacity 0.6,
-                    a decorative-glyph size off the FONT_SIZE scale. This control already used the
-                    right CHARACTER (▾, matching MenuTrigger) — only the STRUCTURE drifted (a bare
-                    button-text child sized off the button's own fontSize). Deliberately NOT the ▼
-                    the Imagery & layers toggle uses below: that one is a PERSISTENT DISCLOSURE
-                    (rotates to show expanded/collapsed, like the Sites-panel header and each group's
-                    collapse arrow beside it) — a different affordance from a caret that opens a
-                    transient popover menu, so unifying it here would break its own consistency with
-                    those other two disclosure toggles. */}
-                <span aria-hidden="true" style={{ opacity: 0.6, fontSize: FONT_SIZE.micro }}>▾</span>
+                <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Draw</span>
               </Button>
-            </div>
-          )}
-          {/* B848304 — the mode toggle's old "Comp" segment plus these two buttons said the same
-              thing three times ("Drop a pin" / "Comp from parcel"); collapsed into ONE split
-              button. Primary click uses the LAST-USED anchor (defaulting to "On the map" the
-              first time this session); the caret opens the three named ways to anchor a comp,
-              each a prepositional phrase completing "Place comp / …". */}
-          {mode === "comp" && !selectMode && !placingCompPin && selected.length === 0 && onPlaceComp && (
-            <div style={{ display: "flex", flex: "0 1 auto", minWidth: 54 }}>
+              <span style={{ width: 6, flex: "none" }} />
               <Button
-                variant="primary"
-                onClick={() => armCompAnchor(lastCompAnchorKind || "map")}
-                title={`Click the map to place a comp ${COMP_ANCHOR_PHRASE[lastCompAnchorKind || "map"]}`}
-                data-testid="map-place-comp-btn"
-                style={{
-                  ...NESTED_ACTION_SIZE, fontWeight: 700,
-                  flex: "1 1 auto", minWidth: 0, overflow: "hidden",
-                  background: COMP_ACCENT, border: "none",
-                  borderTopLeftRadius: NESTED_ACTION_SIZE.borderRadius, borderBottomLeftRadius: NESTED_ACTION_SIZE.borderRadius,
-                  borderTopRightRadius: 0, borderBottomRightRadius: 0,
-                  borderRight: `1px solid ${ON_COMP_ACCENT}`, boxShadow: "none",
-                }}
+                variant="ghost"
+                onClick={() => { setPinDecideArmed(true); setPlacingCompPin(true); }}
+                data-testid="map-toolbar-drop-pin"
+                title="Click anywhere on the map to mark a point, then say what it is"
+                style={{ ...NESTED_ACTION_SIZE, flex: "0 1 auto", minWidth: 40, overflow: "hidden", color: PAL.chromeInk, background: "var(--chrome-bg-elev)", border: "1px solid var(--chrome-divider)", boxShadow: "none" }}
               >
-                <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {lastCompAnchorKind ? `Place comp ${COMP_ANCHOR_PHRASE[lastCompAnchorKind]}` : "Place comp"}
-                </span>
+                <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Drop a pin</span>
               </Button>
-              <Button
-                variant="primary"
-                ref={placeCompMenuBtnRef}
-                onClick={() => setPlaceCompMenuOpen((o) => !o)}
-                title="More ways to anchor a comp"
-                aria-haspopup="menu" aria-expanded={placeCompMenuOpen}
-                data-testid="map-place-comp-menu-btn"
-                style={{
-                  flex: "none", width: 22, height: NESTED_ACTION_SIZE.height, padding: 0,
-                  background: COMP_ACCENT, border: "none",
-                  borderTopRightRadius: NESTED_ACTION_SIZE.borderRadius, borderBottomRightRadius: NESTED_ACTION_SIZE.borderRadius,
-                  borderTopLeftRadius: 0, borderBottomLeftRadius: 0,
-                  fontSize: FONT_SIZE.micro, boxShadow: "none",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}
-              >
-                {/* NEW-3 — see the matching caret on the "Select parcels" split button above. */}
-                <span aria-hidden="true" style={{ opacity: 0.6, fontSize: FONT_SIZE.micro }}>▾</span>
-              </Button>
-            </div>
+            </>
           )}
           {placingCompPin && (
             <>
               <span style={{ flex: "1 1 auto", minWidth: 0, color: PAL.chromeMuted, fontSize: 12.5, padding: "0 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                Click the map to place a comp…
+                {/* NEW-1 (2026-09-08) — the two callers want different sentences, because they are
+                    at different points in the same job. Ground-first (`pinDecideArmed`) has not
+                    been asked what it is making yet, so promising a comp here would be the mode
+                    guess this item removed. A comps-panel row armed for its Location IS a comp
+                    already, and its own banner tells the user to expect exactly this wording. */}
+                {pinDecideArmed ? "Click the map to mark a point…" : "Click the map to place a comp…"}
               </span>
               {/* B986096 (NEW-2) — arming a row's Location cell only ever arms PIN mode
                   (CompsPanel's `armRow` calls `onArmMapPin`, never anything parcel-related), which
@@ -3385,13 +3512,18 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                   when `!placingCompPin`) — directly contradicting the entry grid's own banner, which
                   promises the parcel option "stays a real alternative … reached the same way it
                   always was, from the map's own toolbar." A row armed this way had NO reachable path
-                  to a parcel anchor at all. Switching modes here leaves the armed row untouched, so
+                  to a parcel anchor at all. Switching here leaves the armed row untouched, so
                   whichever pick lands still fills it (CompsPanel's pendingAnchor effect keys off
-                  `armedRowId`, not off which mode produced the anchor). */}
-              {mode === "comp" && onPlaceComp && (
+                  `armedRowId`, not off which mode produced the anchor).
+                  ⛔ NEW-1 (2026-09-08) — this used to be gated on `mode === "comp"`. It is now
+                  gated on the pin being armed BY THE COMPS PANEL (`!pinDecideArmed`), which is the
+                  same population B986096 wrote it for and the only one whose banner promises it —
+                  a ground-first pin has no comp to anchor yet, and offering one here would answer
+                  the question the decide bar exists to ask. */}
+              {!pinDecideArmed && onPlaceComp && (
                 <Button
                   variant="ghost"
-                  onClick={() => { setPlacingCompPin(false); setSelectMode(true); setLastCompAnchorKind("parcel"); }}
+                  onClick={() => { setPlacingCompPin(false); setSelectMode(true); }}
                   title="Anchor to a parcel instead of a raw pin"
                   style={{ ...NESTED_ACTION_SIZE, flex: "0 1 auto", minWidth: 44, overflow: "hidden", color: PAL.chromeInk, background: "var(--chrome-bg-elev)", border: "1px solid var(--chrome-divider)", boxShadow: "none" }}
                 >
@@ -3400,7 +3532,8 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               )}
               <Button
                 variant="ghost"
-                onClick={() => setPlacingCompPin(false)}
+                onClick={() => { setPlacingCompPin(false); setPinDecideArmed(false); }}
+                data-testid="map-toolbar-cancel-pin"
                 style={{ ...NESTED_ACTION_SIZE, flex: "none", color: PAL.chromeInk, background: "var(--chrome-bg-elev)", border: "1px solid var(--chrome-divider)", boxShadow: "none" }}
               >
                 Cancel
@@ -3413,13 +3546,17 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                 flex: "1 1 auto", minWidth: 0, color: PAL.chromeMuted, fontSize: 12.5,
                 padding: "0 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               }}>
-                {busy ? "Looking up lot…" : (mode === "comp" ? "Selecting a parcel for a comp…" : "Selecting…")}
+                {/* NEW-1 (2026-09-08) — was "Selecting a parcel for a comp…" under `mode === "comp"`.
+                    Selecting is now just selecting; the decide bar below says what it becomes. */}
+                {busy ? "Looking up lot…" : "Selecting…"}
               </span>
-              {/* Symmetric switch back to a pin — same reasoning as above, the other direction. */}
-              {mode === "comp" && onPlaceComp && (
+              {/* Symmetric switch back to a pin — same reasoning as above, the other direction.
+                  NEW-1 — was gated on `mode === "comp"`; a pin is a plain alternative way to point
+                  at ground now, so it is offered whenever selecting is offered. */}
+              {(
                 <Button
                   variant="ghost"
-                  onClick={() => { setSelectMode(false); setPlacingCompPin(true); setLastCompAnchorKind("map"); }}
+                  onClick={() => { setSelectMode(false); setPinDecideArmed(true); setPlacingCompPin(true); }}
                   title="Drop a pin instead of anchoring to a parcel"
                   style={{ ...NESTED_ACTION_SIZE, flex: "0 1 auto", minWidth: 40, overflow: "hidden", color: PAL.chromeInk, background: "var(--chrome-bg-elev)", border: "1px solid var(--chrome-divider)", boxShadow: "none" }}
                 >
@@ -3435,18 +3572,29 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               </Button>
             </>
           )}
-          {selected.length > 0 && (
+          {/* ── THE DECIDE BAR — ground in hand, now say what it is ─────────────────────────
+              NEW-1 (2026-09-08, owner-chosen design). The count + ✕ are B831776's, unchanged and
+              deliberately NOT rebuilt. What changed is the tail: one action chosen by a mode
+              became THREE VERBS LIVE AT ONCE, so the question is asked here, after the ground is
+              picked, instead of guessed by a toggle before it.
+              The status dot is NEUTRAL on purpose — it used to take its colour from `mode`, which
+              is precisely an answer shown before one has been given. It reports "there is a live
+              selection", nothing more. */}
+          {decideTarget && (
             <>
-              <span style={{ width: 7, height: 7, borderRadius: RADIUS.pill, background: mode === "comp" ? COMP_ACCENT : PAL.accent, flex: "none" }} />
-              <span style={{
+              <span data-testid="map-decide-dot" style={{ width: 7, height: 7, borderRadius: RADIUS.pill, background: PAL.chromeMuted, flex: "none" }} />
+              <span data-testid="map-decide-summary" style={{
                 flex: "1 1 auto", minWidth: 0, color: PAL.chromeInk, fontSize: 12.5, fontWeight: 600,
                 padding: "0 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               }}>
-                {selected.length} parcel{selected.length > 1 ? "s" : ""} · {asm ? `${asm.totalAc.toFixed(2)} AC` : "…"}
+                {decideTarget === "parcels"
+                  ? `${selected.length} parcel${selected.length > 1 ? "s" : ""} · ${asm ? `${asm.totalAc.toFixed(2)} AC` : "…"}`
+                  : "Pin dropped"}
               </span>
               <button
-                onClick={clearSel}
-                title="Clear selection"
+                onClick={() => { if (decideTarget === "parcels") clearSel(); else clearDecidePin(); }}
+                title={decideTarget === "parcels" ? "Clear selection" : "Remove the pin"}
+                data-testid="map-decide-clear"
                 style={{
                   flex: "none", width: 26, height: 26, borderRadius: RADIUS.sm,
                   border: "none", background: "transparent",
@@ -3456,97 +3604,40 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
               >
                 ✕
               </button>
-              {/* B831776 (NEW-1) — one action, chosen by mode: Site mode plans the parcel(s);
-                  Comp mode anchors a comp to the one selected parcel. Never both at once — that
-                  was the old design's own confusion (two unrelated actions on one selection). */}
-              {mode === "site" && (
-                <Button
-                  variant="primary"
-                  onClick={planSelected}
-                  style={{ ...NESTED_ACTION_SIZE, fontWeight: 700, flex: "0 1 auto", minWidth: 44, overflow: "hidden", background: PAL.accent, border: "none", boxShadow: "none" }}
-                >
-                  <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    Plan {selected.length > 1 ? `${selected.length} parcels` : "site"} →
-                  </span>
-                </Button>
-              )}
-              {/* B941152 — this used to require `selected.length === 1`, so a two-plus-parcel
-                  selection (a normal industrial land comp assembled from adjoining lots) had NO
-                  primary action at all: no button to click, and Enter had nothing to reach either.
-                  Any non-empty selection now gets the same one action, worded like the Site-mode
-                  "Plan N parcels →" button beside it. */}
-              {mode === "comp" && onPlaceComp && (
-                <Button
-                  variant="primary"
-                  onClick={placeCompOnSelectedParcel}
-                  style={{ ...NESTED_ACTION_SIZE, fontWeight: 700, flex: "0 1 auto", minWidth: 44, overflow: "hidden", background: COMP_ACCENT, border: "none", boxShadow: "none" }}
-                >
-                  <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    Comp {selected.length > 1 ? `${selected.length} parcels` : "here"}
-                  </span>
-                </Button>
-              )}
+              {/* B941152 — a two-plus-parcel selection (a normal industrial land comp assembled
+                  from adjoining lots) once had NO action at all, so Enter had nothing to reach
+                  either. Every verb below takes any non-empty selection. */}
+              {orderedVerbs.map((v, i) => (
+                <Fragment key={v.key}>
+                  {i > 0 && <span style={{ width: 6, flex: "none" }} />}
+                  <Button
+                    variant={i === 0 ? "primary" : "ghost"}
+                    onClick={() => runDecideVerb(v, decideTarget)}
+                    title={v.title}
+                    data-testid={`map-decide-verb-${v.key}`}
+                    style={{
+                      ...NESTED_ACTION_SIZE, fontWeight: i === 0 ? 700 : 600,
+                      flex: "0 1 auto", minWidth: 40, overflow: "hidden", boxShadow: "none",
+                      ...(i === 0
+                        ? { background: v.accent, color: v.onAccent, border: "none" }
+                        : { color: PAL.chromeInk, background: "var(--chrome-bg-elev)", border: "1px solid var(--chrome-divider)" }),
+                    }}
+                  >
+                    <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.label}</span>
+                  </Button>
+                </Fragment>
+              ))}
             </>
           )}
           <span style={{ width: 4 }} />
         </div>
 
-        {/* NEW-1 — the "Start blank" secondary option, off the "Select parcels" split button's
-            caret. One item today; a MenuItem list rather than a bare popover so a future secondary
-            option (e.g. a saved-template start) has somewhere to go without another redesign.
-            ⛔ NEW-1/NEW-2 (map-finder split-button audit) — TWO fixes, both measured live on
-            planyr.io: (a) `placement="below-right"`, not "-left" — AnchoredMenu's anchor is this
-            caret button, whose own right edge IS the split control's right edge (it's the trailing
-            flex segment), so "below-right" right-aligns the panel to the CONTROL, not just the
-            caret; "-left" anchored the panel's LEFT edge to the caret's left edge, hanging 178px of
-            it out past the control's right edge over open map with nothing under it. (b) `width`
-            148, not 200 — MenuItem is `width:"100%"`, so the panel width IS the item's width; 200px
-            for one short "Start blank" item was heavier than the thing it hides (matches the
-            148px compact-menu precedent already used elsewhere, e.g. `Ribbon.jsx`'s tool menu). The
-            caret+menu STRUCTURE stays — see B831780/NEW-1 above (do not "fix" this by giving
-            "Start blank" its own co-equal button beside "Select parcels" again; that is the
-            two-buttons-of-equal-weight problem this exact toolbar was already corrected out of). */}
-        <AnchoredMenu open={startBlankMenuOpen} onClose={() => setStartBlankMenuOpen(false)}
-          anchorRef={startBlankMenuBtnRef} placement="below-right" width={148} gap={6}
-          zIndex={MAP_CHROME_Z.panel} panelStyle={menuPanelStyle}>
-          <MenuItem data-testid="map-start-blank-menu-item"
-            title="Start a plan with no parcel, located where the map is looking — draw the boundary yourself"
-            onClick={() => { setStartBlankMenuOpen(false); startBlankHere(); }}>
-            Start blank
-          </MenuItem>
-        </AnchoredMenu>
-
-        {/* B848304 — the "Place comp" split button's caret. Three prepositional phrases, each
-            grammatically completing "Place comp / …" — never rewritten as verbs (that reads as
-            three unrelated commands instead of one action with three ways to anchor it). "On a
-            site plan" always renders, never omitted, even when unreachable: a missing item
-            teaches the user the capability doesn't exist, a disabled one with a reason teaches
-            them how to get it.
-            ⛔ NEW-1 (map-finder split-button audit) — `placement="below-right"`, not "-left"; see
-            the matching fix + explanation on the "Select parcels" menu above (this caret's own
-            right edge is the split control's right edge, same as that one). Width stays 200 —
-            three items, unlike that one's single "Start blank" (NEW-2 doesn't apply here). */}
-        <AnchoredMenu open={placeCompMenuOpen} onClose={() => setPlaceCompMenuOpen(false)}
-          anchorRef={placeCompMenuBtnRef} placement="below-right" width={200} gap={6}
-          zIndex={MAP_CHROME_Z.panel} panelStyle={menuPanelStyle}>
-          <MenuItem data-testid="map-place-comp-menu-item-map"
-            title="Place a comp anywhere you click on the map"
-            onClick={() => { setPlaceCompMenuOpen(false); armCompAnchor("map"); }}>
-            On the map
-          </MenuItem>
-          <MenuItem data-testid="map-place-comp-menu-item-parcel"
-            title="Anchor the comp to a real parcel you select on the map"
-            onClick={() => { setPlaceCompMenuOpen(false); armCompAnchor("parcel"); }}>
-            On a parcel
-          </MenuItem>
-          <MenuItem data-testid="map-place-comp-menu-item-site-plan"
-            aria-disabled={hasSitePlanOverlay ? undefined : "true"}
-            title={hasSitePlanOverlay ? "Anchor the comp to a point on an uploaded site plan" : "Upload a site plan first (Site plans panel below) — then this anchors a comp to it"}
-            style={hasSitePlanOverlay ? undefined : { opacity: 0.45, cursor: "not-allowed" }}
-            onClick={() => { if (!hasSitePlanOverlay) return; setPlaceCompMenuOpen(false); armCompAnchor("site_plan"); }}>
-            On a site plan
-          </MenuItem>
-        </AnchoredMenu>
+        {/* ⛔ NEW-1 (2026-09-08) — TWO AnchoredMenus lived here and are gone with the two split
+            buttons that opened them: the "Select parcels ▾ / Start blank" caret (B831780) and the
+            "Place comp ▾" three-anchor caret (B848304). "Start blank" is now the first-class
+            "Draw" button in the rest-state row above; the comp anchors are Drop a pin → Log a comp,
+            Select parcels → Log a comp, and the site plan card's own "Pin comp here". Nothing was
+            made unreachable — the toolbar stopped hiding it. */}
 
         {/* NEW-2 (B233): address-search parcel info card — drops in under the search pill
             after a "Go". The card itself lives in components/ParcelInfoCard.jsx (NEW-1),
@@ -3561,13 +3652,13 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             cachedAsOfLabel={parcelInfo.cached ? fmtAsOf(parcelInfo.cached.asOf) : ""}
             onDismiss={() => setParcelInfo(null)}
             onPlan={planSelected}
-            // NEW-6 — while the toolbar's Site/Comp toggle reads Comp, this card's primary
-            // action must be the comp action, never the Site-module "Plan this site" (owner
-            // report, screenshot, 2026-09-04: an address search in Comp mode still offered
-            // "Plan this site"). `addParcelHit` always pushes the found parcel into `selected`
-            // before `parcelInfo` is set (a few lines above this component's own mount), so
-            // `selected` already names the exact parcel this card is showing.
-            mode={mode}
+            // NEW-6 → NEW-1 (2026-09-08) — NEW-6 made this card's primary action follow the
+            // Site/Comp toggle so an address search in Comp mode stopped offering "Plan this
+            // site". With the toggle gone the card carries no primary action at all: the parcel a
+            // search finds is already in the map toolbar's decide bar above it (`addParcelHit`
+            // pushes it into `selected` before `parcelInfo` is set), which is where all three
+            // verbs are offered. `onComp` still passes the comp handler through for the same
+            // reason `onPlan` does — this component keeps its contract; nothing renders them.
             onComp={selected.length > 0 ? placeCompOnSelectedParcel : undefined}
             compAccent={COMP_ACCENT}
             // NEW-4 — the unavailable state offers the fallback instead of dead-ending.

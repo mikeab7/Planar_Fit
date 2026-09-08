@@ -243,17 +243,19 @@ const SURFACES = [
     directSelector: LANDING_SEL,
   },
   {
-    // NEW-1 (map-view locked-geometry conversion) — the DEFAULT "Site" mode search bar hides
-    // over half of its own action buttons behind mode/selection state: "Drop a pin" and "Comp
-    // from parcel" render ONLY in Comp mode, and the split "Select parcels ▾" pair's own Cancel
-    // sibling renders only once selectMode is armed. The surface above never saw any of them —
-    // confirmed live: the map landing page's own signature count didn't move after converging
-    // those buttons' geometry, because the crawl never rendered them. Both states below are
-    // reachable with a plain click (no live parcel data, no network) so they cost nothing extra
-    // to cover. The "selected.length > 0" state (Plan N parcels / clear ✕) is NOT covered here —
-    // it needs a real parcel click on the live map, the same real-data wall documented on every
-    // other GIS-dependent live-verify item in this repo.
-    name: "Map landing page (comp mode)", hash: "#/site",
+    /* NEW-1 (map-view locked-geometry conversion) — the toolbar's at-rest row hides over half of
+     * its own action buttons behind state, and the surface above never saw any of them. Both
+     * states below are reachable with a plain click (no live parcel data, no network) so they
+     * cost nothing extra to cover.
+     * ⛔ RENAMED 2026-09-08 (NEW-1, the ground-first toolbar) — this surface was "Map landing page
+     * (comp mode)" and its `prep` clicked the Site/Comp switch, which no longer exists. THE
+     * DECIDE BAR IS THE STATE WORTH INVENTORYING NOW, and it is strictly better coverage than
+     * what it replaces: the old comp-mode state showed ONE action button, this one shows three
+     * verbs at once plus the summary and its ✕. The `selected.length > 0` flavour of the same bar
+     * still needs a real parcel click on the live map (the same real-data wall every other
+     * GIS-dependent live item here documents), but the PIN flavour needs none — which is exactly
+     * why the pin target was worth having. */
+    name: "Map landing page (decide bar)", hash: "#/site",
     // B1038016 (2nd correction) — `mockExternalNetwork` makes `CompsPanel.jsx`'s `reload()`
     // (`fetchAllComps()`, a real Supabase call gating the "＋ New comps"/"⤒ Import (KML)" buttons)
     // settle SUCCESSFULLY and deterministically, in every environment — see that function's own
@@ -262,18 +264,15 @@ const SURFACES = [
     mockNetwork: true,
     prep: async (p) => {
       await clickIf(p, '[title="Collapse layers"]');
-      // B848304 renamed the toggle's aria-label once already; B850016 (NEW-11) renamed it again
-      // to "What an address search creates" (the visible segment text stays "Comp" on purpose;
-      // see MapFinder.jsx's SiteCompSwitch header).
-      // ⛔ B850016 (NEW-11) — this click no longer also flips the left rail to the Comps tab.
-      // Before that fix the centre toggle and the rail tab were ONE coupled state, so clicking
-      // Comp here also swapped the panel below to Comps — that coupling was itself the bug NEW-11
-      // fixed, and this surface's committed signature count/UI-INVENTORY snapshot was measured
-      // WHILE that bug was still live. Post-fix, this state is centre-toggle-Comp with the left
-      // panel legitimately still showing SITES (its own last state, untouched) — the CORRECT
-      // decoupled behavior, not a regression, and it changes what this crawl inventories.
-      await clickIf(p, '[role="tablist"][aria-label="What an address search creates"] button:has-text("Comp")');
-      await p.waitForTimeout(300);
+      // NEW-1 (2026-09-08) — point at ground first, then let the toolbar ask what it is. "Drop a
+      // pin" arms a raw point; one click on the map centre marks it and the decide bar appears.
+      // A raw pin deliberately needs NO parcel service and no network, which is what makes this
+      // state crawlable in this sandbox at all.
+      await clickIf(p, '[data-testid="map-toolbar-drop-pin"]');
+      await p.waitForTimeout(200);
+      const box = await p.locator(".leaflet-container").boundingBox();
+      if (box) await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await p.waitForTimeout(400);
     },
     scope: "body",
     // B (map-view locked-geometry conversion) — also excludes the bottom-left network-status
@@ -290,8 +289,8 @@ const SURFACES = [
     // B1038016 (2nd correction) — `mockExternalNetwork` makes MapFinder.jsx's parcel-layer fetch
     // settle SUCCESSFULLY, so `err` stays unset and the selection-guidance tooltip
     // (`data-testid="select-parcels-tip"`) renders deterministically in every environment — see
-    // that function's own header. Same fix as comp mode above; the two surfaces share the same
-    // network-dependent-rendering root cause.
+    // that function's own header. Same fix as the decide-bar surface above; the two share the
+    // same network-dependent-rendering root cause.
     mockNetwork: true,
     prep: async (p) => {
       await clickIf(p, '[title="Collapse layers"]');
@@ -1689,7 +1688,7 @@ async function run() {
     "  inside already set its own explicit size), so this is zero-risk, targeted, and does not touch",
     "  the global reset the reverted attempt was right to be cautious about.",
     "- **A `fontSize` of `16px` on a plain, unstyled `<div>` shell** (the map landing page's search",
-    "  cluster bar, the Site/Comp switch's own wrapping div, the Sites/Comps rail panel) is the SAME",
+    "  cluster bar, the decide bar's own wrapping div, the Sites/Comps rail panel) is the SAME",
     "  browser root default as the `16px` form above — a container div that sets no `fontSize` of its",
     "  own inherits it, and every visible glyph inside these shells sets its own explicit size. Not a",
     "  form control, but the identical root cause and the identical decision not to chase it here.",
@@ -1712,7 +1711,7 @@ async function run() {
     "  \"pill\" state) and the height spread is genuinely gone too: both corner chips land on the exact",
     "  same `MAP_OVERLAY_CHIP_H_PX` (30px) — verified directly against the real app, not just argued —",
     "  leaving only the search bar's own `MAP_OVERLAY_BAR_H_PX` (42px), a deliberately different number",
-    "  for a compound cluster (a Site/Comp switch, an address combobox, one or two action buttons) that",
+    "  for a compound cluster (an address combobox plus two or three action buttons) that",
     "  needs real room for a text field, not a fourth hand-picked literal. This crawl's default-open",
     "  Sites panel is a legitimate, content-driven state, not the reported defect, and is left showing.",
     "",

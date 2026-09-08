@@ -34,8 +34,7 @@ async function startBlank(page) {
   // Incidental fix, found while verifying B1239328/B1239329 live: the app now boots into a
   // Dashboard landing page (unrelated to this spec) rather than straight into a workspace.
   await openModule(page, "site-planner");
-  await page.getByTestId("map-start-blank-menu-btn").click();
-  await page.getByTestId("map-start-blank-menu-item").click();
+  await page.getByTestId("map-toolbar-draw").click();
   await expect(canvas(page)).toBeVisible();
 }
 

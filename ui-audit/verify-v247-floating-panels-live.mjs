@@ -22,9 +22,9 @@ const log = (ok, msg) => { console.log((ok ? "✓ " : "✗ ") + msg); if (!ok) f
 
 const openBlankPlanner = async (page) => {
   await page.goto(BASE + "#/site-planner", { waitUntil: "load" });
-  // NEW-1 — "Start blank" is the secondary option behind the "Select parcels" split button's caret.
-  await page.getByTestId("map-start-blank-menu-btn").first().click();
-  await page.getByTestId("map-start-blank-menu-item").first().click();
+  // NEW-1 (2026-09-08) — "Start blank" is the map toolbar's first-class "Draw" button now; it
+  // was promoted out of the "Select parcels" caret menu when that toolbar went ground-first.
+  await page.getByTestId("map-toolbar-draw").first().click();
   await page.locator('button[title="Analysis"]').first().waitFor({ state: "visible", timeout: 20000 });
 };
 

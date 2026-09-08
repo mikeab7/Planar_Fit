@@ -14,12 +14,14 @@
  *
  * The shape/overlap questions THIS cluster raises now (does the rail collide with the toolbar or
  * the Layers panel corner at any width, do the switch/rail-tab/checkbox radii converge, does the
- * suggestion combobox behave) are covered by `ui-audit/verify-map-toolbar-rebuild.mjs` — run that
- * instead. This file is kept (rather than deleted) only so a stale reference to it in
+ * suggestion combobox behave) are covered by `ui-audit/verify-map-toolbar-ground-first.mjs` — run
+ * that instead. (It replaced `verify-map-toolbar-rebuild.mjs`, deleted 2026-09-08 with NEW-1's
+ * ground-first toolbar: that harness's first two checks asserted the Site/Comp switch and the rail
+ * tab move together, which is now false BY DESIGN.) This file is kept (rather than deleted) only so a stale reference to it in
  * docs/archive/BACKLOG-DONE.md still resolves to an explanation instead of a 404.
  *
  *   node ui-audit/verify-map-comps-overlap.mjs   — prints this note and exits 0.
  */
 console.log("verify-map-comps-overlap.mjs is RETIRED (B831777/NEW-2) — the Comps corner chip it checked was removed; Comps is now a left-rail tab.");
-console.log("Run ui-audit/verify-map-toolbar-rebuild.mjs instead.");
+console.log("Run ui-audit/verify-map-toolbar-ground-first.mjs instead.");
 process.exitCode = 0;

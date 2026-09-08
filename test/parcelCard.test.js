@@ -133,8 +133,7 @@ describe("ParcelInfoCard — expanding reveals the rest, still bounded (NEW-1)",
 });
 
 describe("ParcelInfoCard — everything the card already did, unchanged (NEW-1)", () => {
-  it("keeps the Plan this site button and the narrow-viewport layout branch", () => {
-    expect(render()).toContain("Plan this site");
+  it("keeps the narrow-viewport layout branch", () => {
     expect(render({ narrow: true })).toContain("z-index:1090");   // phone: full-width, under the search bar
     expect(render({ narrow: false })).toContain("z-index:1001");  // desktop: centered card
   });
@@ -149,36 +148,35 @@ describe("ParcelInfoCard — everything the card already did, unchanged (NEW-1)"
   it("still reads differently for the no-parcel and service-unavailable states", () => {
     const none = render({ info: { status: "none" } });
     expect(none).toContain("No parcel at this point");
-    expect(none).not.toContain("Plan this site");
     expect(render({ info: { status: "unavailable" } })).toContain("Parcel info unavailable");
   });
 });
 
-// NEW-6 (owner report, screenshot, build 9c35724) — with the map's Site/Comp toggle on Comp, an
-// address search still popped this card offering "Plan this site", a SITE-module action, while
-// the toolbar correctly read Comp. The primary action must follow `mode`, not always be Site's.
-describe("ParcelInfoCard — the primary action follows mode (NEW-6)", () => {
-  it("defaults to Plan this site when mode is unset (every existing Site-mode call site)", () => {
-    const html = render();
-    expect(html).toContain("Plan this site");
-    expect(html).not.toContain("Add as comp");
+// NEW-6 → NEW-1 (2026-09-08, the map toolbar goes ground-first). NEW-6 made this card's primary
+// action follow the map's Site/Comp toggle, because with the toggle on Comp an address search
+// still popped this card offering "Plan this site" — a Site-module action. That toggle no longer
+// exists: a search FINDS, the parcel it finds lands in the map toolbar's decide bar above this
+// card, and all three verbs are offered there. So the card carries NO primary action at all,
+// which satisfies NEW-6's rule absolutely rather than conditionally — there is no action here to
+// be wrong. These tests are NEW-6's, inverted: they now prove the actions are gone and stay gone.
+describe("ParcelInfoCard — the card describes ground, it never decides about it (NEW-1)", () => {
+  it("offers no primary action, whatever handlers or mode a caller passes", () => {
+    for (const props of [{}, { mode: "comp", onComp: () => {} }, { mode: "site", onPlan: () => {} }, { mode: "comp", onComp: null }]) {
+      const html = render(props);
+      expect(html).not.toContain("Plan this site");
+      expect(html).not.toContain("Add as comp");
+    }
   });
 
-  it("in comp mode with a comp handler, offers the comp action instead — never Plan this site", () => {
-    const html = render({ mode: "comp", onComp: () => {} });
-    expect(html).toContain("Add as comp");
-    expect(html).not.toContain("Plan this site");
+  it("still shows the parcel facts it exists for", () => {
+    expect(render()).toContain("ACME INDUSTRIAL PARTNERS LP");
   });
 
-  it("in comp mode with no comp handler, offers neither action — just the parcel facts", () => {
-    const html = render({ mode: "comp", onComp: null });
-    expect(html).not.toContain("Plan this site");
-    expect(html).not.toContain("Add as comp");
-    // the facts themselves are still there
-    expect(html).toContain("ACME INDUSTRIAL PARTNERS LP");
-  });
-
-  it("comp mode never leaks into the no-parcel/unavailable states, which have their own copy", () => {
-    expect(render({ info: { status: "none" }, mode: "comp", onComp: () => {} })).not.toContain("Add as comp");
+  it("keeps the OUTAGE way forward, which is a different case — no decide bar is showing there", () => {
+    // status "unavailable" means no parcel was found, so nothing reached the toolbar's decide bar
+    // and this card is the only route onward. `onStartBlank` must survive the removal above.
+    const html = render({ info: { status: "unavailable" }, onStartBlank: () => {} });
+    expect(html).toContain("Parcel info unavailable");
+    expect(html).toContain("parcel-card-start-blank");
   });
 });
