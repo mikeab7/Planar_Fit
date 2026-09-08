@@ -432,7 +432,7 @@ was never clicked" quietly ships broken.
 
 **Result:** ⏳ pending — step 1 is confirmed here (source live-queried from this sandbox, unblocked); the app-level render checks (2-4) need a real browser session against the deployed app and have not been separately confirmed. `Cadence: once` (re-probe on suspicion of drift via `node scripts/build-county-polygons.mjs --fetch`).
 
-### V984944 — B1358128 (×2) / B1361680 / B1361681: deleting a project from the switcher really writes `sites.deleted_at`, on the owner's own two named throwaway projects `Blocker: auth` `Blocker: real-data`
+### V984944 — B1358128 (×2) / B1361680 / B1361681 / B1361683: deleting a project from the switcher really writes `sites.deleted_at`, on the owner's own two named throwaway projects `Blocker: auth` `Blocker: real-data`
 
 **Why this still needs a real pass, and what no longer does.** Most of what was previously deferred to "a live check" is now driven HERE: `ui-audit/verify-signed-in-project-delete.mjs` runs the real app **signed in** against a stubbed Supabase (`ui-audit/lib/stubSupabase.mjs`) and asserts the actual `PATCH /rest/v1/sites … {"deleted_at":…}` goes out — 11/11 green after the fix, 3/10 with zero soft-delete writes before it. `e2e/menu-layer-nesting.spec.js` pins the mechanism in a real browser (4 of its 5 cases go red when the one-line fix is reverted; the "outside click still dismisses" control stays green). What those cannot cover is the real account's own RLS, the real embedded Gantt app over `postMessage`, and the owner's two specific rows.
 
@@ -446,6 +446,7 @@ was never clicked" quietly ships broken.
 5. Hard reload, then open the picker on BOTH routes. **Expect:** neither project is listed on either, and both appear under **Recently deleted** (restorable for 30 days).
 6. **Schedule module** → any real schedule with one linked site (e.g. "Grand Port") → kebab → **Rename** → type a new name → Enter. **Expect:** the inline editor OPENS (it previously opened nothing at all), the row shows the new name immediately, and the name survives a reload.
 7. **The negative control, so a wedged-open menu is caught too:** open the project crumb and click anywhere on the page outside every menu. **Expect:** the dropdown closes normally.
+8. **B1361683, the ordering leg — only if it is convenient, and it is genuinely awkward to stage.** With DevTools set to offline (or a request-blocking rule on `rest/v1/sites`), delete any throwaway project. **Expect:** an honest failure message, and the project is **still listed** — it must not disappear. Restore the network and delete it again normally. This is proven in `test/deleteConfirmedBeforeLocal.test.js` (mutation-proven three ways), so a live pass here is confirmation, not the proof; skip it rather than spend real effort staging it.
 
 **Result:** ⏳ pending — needs a real signed-in browser on production. `Cadence: once`.
 

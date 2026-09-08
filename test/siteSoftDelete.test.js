@@ -179,18 +179,22 @@ describe("mergePulledSites — the deleting client stays armed through a grace w
 describe("saveSite consults the DURABLE tombstone, not just this tab's set (NEW-1 hole 3)", () => {
   beforeEach(() => { makeBrowser().activate(); clearRecentlyDeleted(); setActiveUser(UID); });
 
-  it("a second tab (fresh in-memory set) cannot re-create a durably-deleted site", () => {
+  /* B1361683 — these two now AWAIT `deleteSite`. The local removal deliberately no longer happens
+   * until the server has confirmed it (a rejected write must leave the project visible, or a failed
+   * delete reads as a successful one and survives a reload). The tombstone is still armed
+   * synchronously, before the round trip, which is what these cases are actually about. */
+  it("a second tab (fresh in-memory set) cannot re-create a durably-deleted site", async () => {
     saveSite({ id: "t1", site: "ZZ", els: [bld("a")] });
-    deleteSite("t1");
+    await deleteSite("t1");
     clearRecentlyDeleted();                  // simulate a different tab / a reload: per-tab set is empty
     expect(_readSiteTombs(UID).t1).toBeTruthy();
     saveSite({ id: "t1", site: "ZZ", els: [bld("a")] }); // a late flush from a still-mounted planner
     expect(loadSite("t1")).toBeNull();       // stays deleted
   });
 
-  it("a deliberate re-create still works (clearRecentlyDeleted lifts BOTH tombstones)", () => {
+  it("a deliberate re-create still works (clearRecentlyDeleted lifts BOTH tombstones)", async () => {
     saveSite({ id: "t2", site: "ZZ" });
-    deleteSite("t2");
+    await deleteSite("t2");
     clearRecentlyDeleted("t2");
     saveSite({ id: "t2", site: "ZZ" });
     expect(loadSite("t2")).toBeTruthy();
