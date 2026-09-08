@@ -7,89 +7,89 @@
     "map-landing": {
       "light": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "589db6d7",
-        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "dark": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "589db6d7",
-        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "light--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "dark--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       }
     },
     "site-planner-header": {
       "light": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "589db6d7",
-        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "dark": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "589db6d7",
-        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "light--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "dark--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       }
     },
     "site-planner-left-rail": {
       "light": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "589db6d7",
-        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "dark": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "589db6d7",
-        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "light--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "dark--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       }
     },
     "library": {
       "light": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "589db6d7",
-        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "dark": {
         "approvedAt": "2026-09-08",
-        "approvedCommit": "589db6d7",
-        "note": "B1162016: the global Help/Report button now sizes by pointer capability instead of a fixed 44px — on a desktop (fine pointer) it renders at 30px (CONTROL_H.lg) instead of 44px, which legitimately shrinks the bottom-right corner box on every desktop-viewport surface. Phone baselines are unaffected (coarse pointer keeps the 44px floor). [CI-authored by run 34185028507 on 589db6d7ca5eb84022f48a1302d787f7ccded1aa]"
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "light--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       },
       "dark--phone": {
-        "approvedAt": "2026-09-06",
-        "approvedCommit": "35184a95",
-        "note": "B1258144: removed the project-privacy padlock from the breadcrumb (ProjectBreadcrumb.jsx) per owner request; site-planner-header/site-planner-left-rail baselines updated to reflect its absence"
+        "approvedAt": "2026-09-08",
+        "approvedCommit": "7deb4ca5",
+        "note": "B1321888 + B1162016 integration: the docked Help/Report control now also renders at the correct pointer-driven size (30px on a fine/mouse pointer at desktop, still 44px on touch/phone) instead of the prior 44px-always baseline, since this branch merged PR #1531's pointer-capability sizing feature. Phone baselines are unaffected (touch pointer keeps the 44px floor). [CI-authored by run 34189243526 on 7deb4ca5efd53dbe9e49087c68d4ffb596eda080]"
       }
     }
   }

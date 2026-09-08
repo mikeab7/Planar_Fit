@@ -149,6 +149,7 @@ import PanelChrome from "../../shared/ui/PanelChrome.jsx";
 import FloatingPanel from "../../shared/ui/FloatingPanel.jsx";
 import { clampToBounds, initialFloatPos, reconcileForNarrow, shouldInspectorTakeDock, dockAfterRelinquish, FLOAT_MIN_WIDTH, FLOAT_SIZE } from "../../shared/ui/floatingPanel.js";
 import { safeAreaInsets } from "../../shared/ui/safeAreaInsets.js";
+import { registerChromeDock } from "../../shared/ui/chromeDock.js";
 import { publishBottomSheetHeight } from "../../shared/ui/bottomSheetTracker.js";
 import { isPhoneSheetMode, heightForSnap, resolveDragSnap, keyboardInsetPx, clampSheetHeightForKeyboard, selectionCoverDeltaPx } from "./lib/propertiesSheet.js";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
@@ -1905,6 +1906,20 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   const [mobileSections, setMobileSections] = useState(false); // NEW-1 (B917072) — left section rail (Land/Analysis/Yield/…) summoned as an overlay (narrow only)
   const [narrowProps, setNarrowProps] = useState(false); // B656: phone-only — the ✎ Properties pill opened the companion overlay
   const [propsCollapsed, setPropsCollapsed] = useState(false); // B656: companion header fold
+
+  /* NEW-B# (owner, 2026-09-07) — "the help/report button ... should be on the map when it is on
+   * the site plan or the map" — a dock anchor stacked beside the canvas's own zoom stack
+   * (shared/ui/chromeDock.js), so the global control renders as a genuine furniture item INSIDE
+   * this pane (via portal) instead of floating as separate `position:fixed` app chrome. Sits at
+   * the SAME `bottom: zoomBottom` baseline, offset left by the stack's own known column width
+   * (`zb.width` below, 30px) plus a gap — deliberately not measured via ref/ResizeObserver: doing
+   * so would touch the zoom stack's own JSX line and shift where this file's existing
+   * `boxShadow: rgba(...)` on that line sits, tripping `design-drift-audit.mjs`'s ceiling on a
+   * merely-moved (not new) offender. Registers once per mount; `chromeDock.activeChromeDock()`
+   * skips this dock for free while the pane is `display:none` (SitePlannerApp's map/plan
+   * keep-alive), so no visibility gating is needed here. */
+  const helpDockRef = useRef(null);
+  useEffect(() => registerChromeDock("planner", helpDockRef.current), []);
   /* NEW-1 — THE CLICK CONTRACT, and the state separation that makes it hold.
    *
    * B750 established the rule (single click SELECTS, double click OPENS Properties) but implemented
@@ -23957,11 +23972,12 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
             // it was with four buttons.
             const zoomBottom = narrow ? 100 + FAB_RESERVE_PX : 100;
             return (
-              // data-canvas-corner: read by the shared help/report control (shared/ui/
-              // cornerClearance.js) so it can clear this stack when — and only when — it
-              // genuinely reaches the true viewport corner (narrow width; on desktop the
-              // docked tool rail insets this pane away from that corner, so the measured
-              // rect naturally stops overlapping and this stack is ignored for free).
+              <>
+              {/* data-canvas-corner: read by the shared help/report control (shared/ui/
+                  cornerClearance.js) so it can clear this stack when — and only when — it
+                  genuinely reaches the true viewport corner (narrow width; on desktop the
+                  docked tool rail insets this pane away from that corner, so the measured
+                  rect naturally stops overlapping and this stack is ignored for free). */}
               <div data-export="skip" data-canvas-corner="zoom-stack" style={{ position: "absolute", right: 14, bottom: zoomBottom, display: "flex", flexDirection: "column", borderRadius: 9, overflow: "hidden", boxShadow: "0 4px 14px rgba(0,0,0,0.18)", zIndex: MAP_CHROME_Z.control }}>
                 <button className="gbtn" aria-label="Zoom in" title="Zoom in" style={{ ...zb, borderRadius: 0 }} onClick={() => zoomBy(1.25)}>＋</button>
                 <button className="gbtn" aria-label="Zoom out" title="Zoom out" style={{ ...zb, borderTop: "none", borderRadius: 0 }} onClick={() => zoomBy(1 / 1.25)}>－</button>
@@ -23973,6 +23989,20 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
                     to fold into one. See that file's own B1231280/B1231281 header note for the
                     capture-at-open mechanics and the one-press-vs-two tradeoff this removal makes. */}
               </div>
+              {/* NEW-B# (owner, 2026-09-07) — dock anchor for the global Help/Report control
+                  (shared/ui/chromeDock.js). Sits on the SAME `bottom: zoomBottom` row as the zoom
+                  stack, offset left by its known column width (`zb.width`, 30) plus an 8px gap —
+                  the zoom stack's own `data-canvas-corner="zoom-stack"` div is left untouched by
+                  this addition on purpose (see the header note above). HelpReportControl portals
+                  its own 44×44 button in here on its own terms (never shrunk to this stack's 30px
+                  zb rows, which would breach the deliberate B1176976 tap-target minimum) — it
+                  becomes a genuine furniture item INSIDE this pane instead of separate
+                  `position:fixed` app chrome. `data-export="skip"` so it never rides a PDF/PNG
+                  export clone (PDF-PARITY: it isn't part of the plan). */}
+              <div data-export="skip" data-canvas-dock-slot="planner" style={{ position: "absolute", right: 14 + zb.width + 8, bottom: zoomBottom, zIndex: MAP_CHROME_Z.control }}>
+                <div ref={helpDockRef} data-canvas-dock="planner" />
+              </div>
+              </>
             );
           })()}
 
