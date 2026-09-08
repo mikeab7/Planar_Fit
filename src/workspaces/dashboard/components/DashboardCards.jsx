@@ -140,22 +140,6 @@ export function GoingQuietCard({ rows, onOpenProject }) {
   );
 }
 
-/* ── Comps ─────────────────────────────────────────────────────────────────────────────────── */
-export function CompsSummaryCard({ counts }) {
-  if (!counts || !counts.total) return <div style={EMPTY}>No comps recorded yet.</div>;
-  return (
-    <div>
-      <div style={HEADLINE}>{counts.total}</div>
-      <div style={{ ...MUTED, marginBottom: 8 }}>comps recorded</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", fontSize: 12, color: "var(--text-secondary)" }}>
-        {counts.land > 0 && <span>Land {counts.land}</span>}
-        {counts.building_sale > 0 && <span>Building sale {counts.building_sale}</span>}
-        {counts.lease > 0 && <span>Lease {counts.lease}</span>}
-      </div>
-    </div>
-  );
-}
-
 /* ── Schedule health ──────────────────────────────────────────────────────────────────────── */
 export function ScheduleHealthCard({ rows, onOpenSchedule }) {
   if (!rows.length) return <div style={EMPTY}>No schedules yet.</div>;

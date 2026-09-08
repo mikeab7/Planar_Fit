@@ -499,7 +499,16 @@ export async function pushSiteToCloud(id) {
   if (!activeUid()) return { ok: true, skipped: true };
   const m = loadSite(id);
   if (!m) return { ok: false, error: "missing" };
-  return cloudUpsert(activeUid(), m);
+  const r = await cloudUpsert(activeUid(), m);
+  // NEW-1 (2026-09-08) — refresh the Dashboard's cached plan thumbnail on every REAL save (never
+  // on a skipped/no-op push — cloudUpsertCore returns skipped:true when nothing actually changed).
+  // Fire-and-forget: a thumbnail is a rendering convenience, never user data, so it must not add
+  // latency to — or ever fail — an ordinary save. Dynamically imported so this stays off
+  // storage.js's own dependency graph until a save actually happens.
+  if (r && r.ok && !r.skipped) {
+    import("./siteThumbnail.js").then(({ refreshSiteThumbnailFromModel }) => refreshSiteThumbnailFromModel(m)).catch(() => {});
+  }
+  return r;
 }
 
 /* B1165441 (NEW-2/NEW-3, adversarial review of B1156864/PR 1424) — "Nothing in the app ever
@@ -1180,6 +1189,20 @@ export function scheduleLinkOf(groupId) {
 // next pull — never report a false "deleted"). Logged out, every plan resolves ok (nothing
 // server-side to remove). An empty/unknown group is a no-op success.
 export function deleteSiteGroup(groupId) {
+  /* ⛔ LOUD-FAILURE, B1358128 — A MISSING GROUP ID IS A CALLER DEFECT, NOT A CLEAN NO-OP, and
+   * conflating the two is what let a broken project delete look like a successful one for weeks.
+   * `deleteSiteGroup(undefined)` used to fall straight through: `loadPlansOfGroup(undefined)`
+   * matches nothing, the empty-cache fallback below then refuses to ask the cloud (there is no
+   * group to ask about), and the whole call resolved `{ ok: true, removed: 0 }` — no network, no
+   * error, nothing thrown. Its caller (the switcher's confirmation, whose target had been erased
+   * mid-gesture) treated that as "deleted", moved the notes out, dropped the project from this
+   * device's cache and routed the user home, while `public.sites.deleted_at` was never written.
+   * `removed: 0` is a legitimate answer for a REAL id that names nothing; it is never the right
+   * answer for no id at all. */
+  if (!groupId) {
+    reportClientEvent("delete-no-group-id", "deleteSiteGroup was called with no project id", {});
+    return Promise.resolve({ ok: false, removed: 0, error: "No project was named, so nothing was deleted." });
+  }
   const plans = loadPlansOfGroup(groupId);
   // ⛔ B1303824 (OWNER-BLOCKING, 2026-09-07) — an empty local plan list is NOT proof there is
   // nothing to delete. A project can be shown in the switcher (the light summary reader, or a

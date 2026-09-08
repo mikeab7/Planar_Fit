@@ -67,11 +67,26 @@ export function duplicateKey(group) {
  *
  *  ⛔ IT NEVER GUESSES A PROJECT. An orphan's project is exactly the fact that was lost, and
  *  inventing a plausible one is the defect NEW-1 exists to make impossible. "Not in a
- *  project" is a real place with a name, not a holding pen. */
-export function unreachableNotes(tree) {
+ *  project" is a real place with a name, not a holding pen.
+ *
+ *  ⛔ "NO NODE ANYWHERE" IS NOT ALWAYS "LOST" (NEW-1, the notes-reconciler-stale-index fix).
+ *  A body can also have no node because it was DELIBERATELY DELETED and the bin ENTRY that
+ *  used to hold it went missing — an interrupted 30-day purge (see `purgePages`'s cloud call,
+ *  which is fire-and-forget) leaves exactly this shape: `deleted_at` set on the server, no
+ *  live node, no bin entry anywhere. Recovering that to LIVE is not a recovery — it silently
+ *  un-deletes a page the user (or a prior session) already asked to remove, and it is what
+ *  produced a real false "these two notes are copies" finding: the resurrected zombie and the
+ *  still-live original really do read as near-identical, because they used to be the same
+ *  cleanup. `binned` (from `notesStore.knownBinnedPages()`, a `pageId → deletedAt` Map) lets
+ *  the caller tell the two cases apart: an entry the map knows about carries `deletedAt` on the
+ *  way out, and the caller (`Notes.jsx`) routes it back into the BIN instead of onto the live
+ *  page list — see `adoptDeletedOrphans` in `notesModel.js`. Nothing here decides that; this
+ *  function only reports what it can see. */
+export function unreachableNotes(tree, { binned } = {}) {
   const known = new Set();
   walkPages(tree, (pg) => { known.add(pg.id); });
   for (const e of trashEntries(tree)) for (const id of e.pageIds || []) known.add(id);
+  const binnedAt = binned instanceof Map ? binned : new Map();
   const out = [];
   for (const id of listStoredPageIds()) {
     if (known.has(id)) continue;
@@ -82,6 +97,7 @@ export function unreachableNotes(tree) {
      * to look up and nothing honest to invent — so the first line of what they wrote stands in
      * for it, and the size says how much is there. `createdAt` is decodable from the id (it is
      * `Date.now()` in base 36) and is the one date that survived the node. */
+    const deletedAt = binnedAt.get(id);
     out.push({
       pageId: id,
       text,
@@ -90,6 +106,7 @@ export function unreachableNotes(tree) {
       chars: text.length,
       createdAt: createdAtFromId(id),
       titleLost: true,
+      ...(Number.isFinite(deletedAt) ? { deletedAt } : {}),
     });
   }
   return out;

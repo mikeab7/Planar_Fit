@@ -27,7 +27,7 @@ import AppHeader, { useNarrow } from "../../shared/ui/AppHeader.jsx";
 import { notesSaveState } from "./lib/notesSaveState.js";
 import NotesTree from "./components/NotesTree.jsx";
 import {
-  addPage, adoptUnreachable, allPageIds, ancestorIds, commitTitle, copyPageWithin, deleteNode, displayTitle, emptyTree, expiredTrashIds, findPage,
+  addPage, adoptDeletedOrphans, adoptUnreachable, allPageIds, ancestorIds, commitTitle, copyPageWithin, deleteNode, displayTitle, emptyTree, expiredTrashIds, findPage,
   firstPageId, migrate, movePage, pagesInScope, purgeTrashEntry, recentPages, renameNode, restoreNode,
   setPageProject, setPageOrgScope, subpagesPhrase, subtreePageIds, touchPage, trashEntries, trashPageIds,
   NO_PROJECT_LABEL, ORG_GROUP_LABEL, SCOPE_ALL, SCOPE_ORG, SCOPE_PROJECT,
@@ -39,7 +39,7 @@ import { isQuickOpenChord, quickOpenResults, rankQuickOpen } from "./lib/notesQu
 import { groupTasksByProject } from "./lib/notesTasks.js";
 import { listProjects, warmProjects, onProjectsChanged, ensureProjectExists } from "../../shared/projects/projects.js";
 import {
-  clearNotesStorageError, collectOpenTasks, markPagesBinned, markPagesRestored, notesConflictFor, notesConflictLine,
+  clearNotesStorageError, collectOpenTasks, knownBinnedPages, markPagesBinned, markPagesRestored, notesConflictFor, notesConflictLine,
   notesScopeLabel, notesStorageLine, onNotesConflict, onNotesStorageError, onNotesSyncState,
   collectBinFacts, ignoreDuplicate, onNotesPagesChanged, purgePages, readIgnoredDuplicates, readNoteFiles,
   readNoteImages, readPage, readTreeRaw,
@@ -638,7 +638,9 @@ export default function Notes({
             liveProjectIds: projectList.state === "ready" ? projects.map((p) => p.id) : null,
             ignored: readIgnoredDuplicates(),
           }),
-          unreachable: scan.unreachableNotes(tree),
+          // `binned` lets the scan tell a genuinely lost page from one whose bin entry went
+          // missing after it was deliberately deleted — see unreachableNotes's own header.
+          unreachable: scan.unreachableNotes(tree, { binned: knownBinnedPages() }),
         });
       } catch (_) {
         // A scanner that could not load leaves the last finding on screen rather than
@@ -1080,18 +1082,45 @@ export default function Notes({
    * keeps each page's own ID, so this re-attaches the existing body rather than copying it.
    *
    * ⛔ A REFUSED WRITE IS NOT A RECOVERY. If persisting fails, the note stays in
-   * `unreachable` and the bar says the browser refused — never a silent "all better". */
+   * `unreachable` and the bar says the browser refused — never a silent "all better".
+   *
+   * ⛔ AND A BINNED BODY NEVER TAKES THIS PATH (NEW-1, the notes-reconciler-stale-index fix).
+   * `unreachable` entries carrying `deletedAt` are pages the server already considers
+   * deleted — recovering them to LIVE would un-delete them, which is exactly what produced an
+   * unproven "these two notes are copies" finding against a page that was still being actively
+   * edited. Those go through `adoptDeletedOrphans` instead: back into the BIN if their 30-day
+   * window has not passed (an ordinary race — see that function's header), or straight to
+   * completing the purge that was interrupted if it has. Neither path shows a banner; both are
+   * finishing something the user already decided, not reporting something new. */
   useEffect(() => {
     if (!integrity.unreachable.length) return;
     const base = treeRef.current || tree;
-    const r = adoptUnreachable(base, integrity.unreachable);
-    if (!r.adopted.length) return;
-    const byId = new Map(integrity.unreachable.map((o) => [o.pageId, o]));
-    persistTree(r.tree);
-    setRecovered((prev) => [
-      ...prev,
-      ...r.adopted.map((a) => ({ ...a, ...(byId.get(a.pageId) || {}) })),
-    ]);
+    const live = integrity.unreachable.filter((o) => !Number.isFinite(o.deletedAt));
+    const deleted = integrity.unreachable.filter((o) => Number.isFinite(o.deletedAt));
+
+    let nextTree = base;
+    let adopted = [];
+    if (live.length) {
+      const r = adoptUnreachable(nextTree, live);
+      nextTree = r.tree;
+      adopted = r.adopted;
+    }
+    let purgeIds = [];
+    if (deleted.length) {
+      const r2 = adoptDeletedOrphans(nextTree, deleted);
+      nextTree = r2.tree;
+      purgeIds = r2.purge;
+    }
+    if (nextTree === base) return;
+    persistTree(nextTree);
+    if (adopted.length) {
+      const byId = new Map(live.map((o) => [o.pageId, o]));
+      setRecovered((prev) => [
+        ...prev,
+        ...adopted.map((a) => ({ ...a, ...(byId.get(a.pageId) || {}) })),
+      ]);
+    }
+    if (purgeIds.length) purgePages(purgeIds).catch(() => {});
     setIntegrity((st) => ({ ...st, unreachable: [] }));
   }, [integrity.unreachable, tree, persistTree]);
 
@@ -1131,8 +1160,12 @@ export default function Notes({
     // NEW-2 (B1202176 ×2 / B1160480) — see handleAddPage's note.
     if (pid) ensureProjectExists(pid).catch(() => {});
     setRecovered((prev) => prev.filter((r) => r.pageId !== pageId));
-    const where = pid == null ? NO_PROJECT_LABEL : (projects.find((p) => p.id === pid)?.name || "that project");
-    setExportNote(`Filed under ${where}. You can rename it from the row's menu — its original name was lost with its entry.`);
+    // ⛔ NO-PROJECT GETS ITS OWN SENTENCE, NEVER "Filed under <NO_PROJECT_LABEL>" (NEW-1, the
+    // banner-wording fix's audit of every project-name interpolation in this module —
+    // NO_PROJECT_LABEL is already a full phrase, "Not in a project", so it cannot be dropped
+    // into "under <X>" without producing a phrase inside a phrase).
+    const filedLine = pid == null ? "Kept unfiled." : `Filed under ${projects.find((p) => p.id === pid)?.name || "that project"}.`;
+    setExportNote(`${filedLine} You can rename it from the row's menu — its original name was lost with its entry.`);
   }, [persistTree, projects, treeNow]);
 
   /** …and the other honest answer: they did not want it. Bins it like any other note, with

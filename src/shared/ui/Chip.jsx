@@ -1,9 +1,10 @@
 import RowInfo from "./RowInfo.jsx";
 
-/* Chip (FINAL UI SPEC — Yield panel + Pond inspector) — a compact one-line status chip
- * (≤6 words) that condenses a formerly-inline sentence: a tone-colored pill carries the
- * short label, and a ⓘ opens a real popover (RowInfo — the same "Basis" popover SourceTag
- * uses) holding the FULL original text, so nothing is lost — the detail just moves one
+/* Chip (FINAL UI SPEC — Yield panel + Pond inspector; promoted to shared/ui, NEW-COMPS-CARD, from
+ * site-planner/components/Chip.jsx where it started as a single-workspace component) — a compact
+ * one-line status chip (≤6 words) that condenses a formerly-inline sentence: a tone-colored pill
+ * carries the short label, and a ⓘ opens a real popover (RowInfo — the same "Basis" popover
+ * SourceTag uses) holding the FULL original text, so nothing is lost — the detail just moves one
  * hover/click away and stays keyboard-reachable.
  *
  * tone "amber" = a watch-out (the warn token + a ⚠ glyph, so color is never the only

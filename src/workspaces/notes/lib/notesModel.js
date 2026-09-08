@@ -670,6 +670,67 @@ export function adoptUnreachable(tree, orphans = [], { at = Date.now() } = {}) {
  * use above that point. Kept tiny and local rather than hoisting the bin section up here. */
 const trashOfSafe = (tree) => (Array.isArray(tree?.trash) ? tree.trash : []);
 
+/**
+ * `adoptUnreachable`'s twin for a body whose SERVER row says it is BINNED (NEW-1, the
+ * notes-reconciler-stale-index fix). See `unreachableNotes`'s header in `notesScan.js` for the
+ * mechanism this closes: an interrupted 30-day purge can leave `deleted_at` set on the server
+ * with no bin entry anywhere in the tree, and the OLD behaviour — treat any node-less body as
+ * "lost, put it back on the live page list" — silently un-deletes a page somebody already
+ * asked to remove.
+ *
+ * The right answer depends on how long ago the row was binned, which is exactly what
+ * `deletedAt` (from `notesStore.knownBinnedPages()`) carries:
+ *   • STILL WITHIN its 30-day window → this is most likely an ordinary race (this device's own
+ *     bin-entry push simply has not landed yet, or another device's has not), not a stuck
+ *     delete. Give it back a normal, visible bin entry — `deletedAt` unchanged, so it expires
+ *     exactly when the original delete said it would, and a genuine race resolves itself the
+ *     next time trees merge (two bin entries naming the same page id are harmless: purging
+ *     either one tombstones the id, and the other is pruned to nothing on the next merge).
+ *   • ALREADY PAST its window → the delete was already due to finish and never did. There is
+ *     nothing left to show for it, so this reports the id for the caller to purge outright
+ *     (`purge`), completing the cascade the interruption left hanging, and tombstones it here
+ *     so a stale copy elsewhere cannot bring it back as a union.
+ *
+ * ⛔ SAME GUESSES-NOTHING DISCIPLINE AS `adoptUnreachable`: no project (that fact is gone with
+ * the node either way), no invented title — `recoveredTitle` names it from its own first line,
+ * same as a live recovery. This is data-safety plumbing, not a place to introduce a new way to
+ * name a page.
+ */
+export function adoptDeletedOrphans(tree, orphans = [], { at = Date.now(), days = TRASH_RETENTION_DAYS } = {}) {
+  const list = (orphans || []).filter((o) => o?.pageId && Number.isFinite(o.deletedAt));
+  if (!list.length) return { tree, binned: [], purge: [] };
+  const known = new Set(allPageIds(tree));
+  for (const e of trashOfSafe(tree)) for (const id of e?.pageIds || []) known.add(id);
+  // A page already tombstoned (a prior run of this same function purged it) is done, not
+  // pending — without this, a repeat scan would report the same id for `purge` forever.
+  for (const id of tombstoneIds(tree)) known.add(id);
+  const fresh = list.filter((o) => !known.has(o.pageId));
+  if (!fresh.length) return { tree, binned: [], purge: [] };
+
+  let next = clone(tree || emptyTree());
+  if (!Array.isArray(next.trash)) next.trash = [];
+  const cutoff = at - days * 86400000;
+  const binned = [];
+  const purge = [];
+  for (const o of fresh) {
+    if (o.deletedAt < cutoff) { purge.push(o.pageId); continue; }
+    const node = makePage({
+      id: o.pageId,
+      title: recoveredTitle(o.firstLine || o.preview),
+      at,
+      createdAt: Number.isFinite(o.createdAt) ? o.createdAt : o.deletedAt,
+      projectId: null,
+    });
+    next.trash.push({
+      id: newId("tr"), kind: "page", node, parentId: null, index: 0,
+      projectId: null, title: node.title, deletedAt: o.deletedAt, pageIds: [o.pageId],
+    });
+    binned.push({ pageId: node.id, title: node.title });
+  }
+  if (purge.length) next = withTombstones(next, purge, { at });
+  return { tree: next, binned, purge };
+}
+
 /** `pageId → projectId` for every LIVE page, at every depth — the one answer to "which
  *  project does this page belong to?" asked of a whole tree at once. The duplicate detector
  *  and the copy invariant both read it, so neither has to re-derive the derivation rule. */

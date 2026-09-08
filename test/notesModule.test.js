@@ -887,6 +887,23 @@ describe("cloud sync rides the SAME one seam", () => {
     expect(code("Notes.jsx")).toMatch(/await import\("\.\/lib\/notesScan\.js"\)/);
   });
 
+  /* ⛔ RED-PROOF (NEW-1, the notes-reconciler-stale-index fix): THE DESTRUCTIVE "Keep only…"
+   * BUTTONS MAY ONLY RENDER FOR A PROVEN (byte-identical) MATCH. A near-duplicate — the exact
+   * shape a similarity score alone produces — must get an informational notice with no
+   * one-click bin action, never the same buttons a proven match gets. This source-guard fails
+   * on the pre-fix banner, which rendered the "Keep only…" row for `first` unconditionally. */
+  it("THE DUPLICATE BAR'S DESTRUCTIVE BUTTONS ARE GATED ON A PROVEN (identical) MATCH", () => {
+    const banner = code("components/IntegrityBanner.jsx");
+    expect(banner, "the one-click bin buttons render only for a byte-identical pair")
+      .toMatch(/first\s*&&\s*first\.identical\s*\?/);
+    const provenBlock = banner.slice(banner.indexOf("first && first.identical"), banner.indexOf('data-testid="notes-dupe-actions-unconfirmed"'));
+    expect(provenBlock, "…and that block is the one holding the destructive per-page buttons")
+      .toMatch(/onKeepOne/);
+    const unconfirmedBlock = banner.slice(banner.indexOf('data-testid="notes-dupe-actions-unconfirmed"'));
+    expect(unconfirmedBlock, "the unconfirmed branch never offers a per-page bin button")
+      .not.toMatch(/onKeepOne/);
+  });
+
   it("THE ORPHAN SWEEP WILL NOT DESTROY A BODY THAT STILL HAS WORDS IN IT", () => {
     const store = code("lib/notesStore.js");
     const fn = store.slice(store.indexOf("export function sweepOrphans"));

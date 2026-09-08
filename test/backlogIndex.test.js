@@ -1,4 +1,4 @@
-/* BACKLOG.md tag-legend guard (B638; narrowed by NEW-1/B<PENDING>, 2026-09-08). Fails CI if an
+/* BACKLOG.md tag-legend guard (B638; narrowed by NEW-1/B1358128, 2026-09-08). Fails CI if an
  * Open/Verify item uses a `#tag` not in the legend. This used to ALSO require the committed
  * repo-root BACKLOG_OPEN.md to byte-match a fresh parse of BACKLOG.md on every PR — dropped
  * because that meant every PR touching BACKLOG.md (nearly every PR) also had to regenerate and

@@ -2820,7 +2820,12 @@ export default function NoteEditor({
                     data-testid="note-project-badge"
                     data-project-id={projectLabel.projectId ?? ""}
                     data-resolved={projectLabel.resolved ? "1" : "0"}
-                    title={`This note is filed in ${projectLabel.name}`}
+                    // ⛔ THE NO-PROJECT CASE GETS ITS OWN SENTENCE (NEW-1, the banner-wording
+                    // fix's audit of every project-name interpolation in this module) —
+                    // projectLabel.name is "Not in a project" there, and "filed in Not in a
+                    // project" is a phrase inside a phrase. Org scope is unaffected: its label
+                    // ("Organization") reads fine in the same slot.
+                    title={projectLabel.projectId == null && !projectLabel.org ? "This note has no project" : `This note is filed in ${projectLabel.name}`}
                     style={{
                       flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
                       whiteSpace: "nowrap", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em",

@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { detentionVerdict } from "../src/workspaces/site-planner/lib/pondVerdict.js";
 
 const src = readFileSync(fileURLToPath(new URL("../src/workspaces/site-planner/SitePlanner.jsx", import.meta.url)), "utf8");
-const chip = readFileSync(fileURLToPath(new URL("../src/workspaces/site-planner/components/Chip.jsx", import.meta.url)), "utf8");
+const chip = readFileSync(fileURLToPath(new URL("../src/shared/ui/Chip.jsx", import.meta.url)), "utf8");
 
 describe("I1 — every engineering criterion is pre-filled with a computed estimate (never a blank)", () => {
   it("the screening-defaults are computed for the panel", () => {

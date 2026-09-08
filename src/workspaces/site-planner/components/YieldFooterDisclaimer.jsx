@@ -1,4 +1,4 @@
-import RowInfo from "./RowInfo.jsx";
+import RowInfo from "../../../shared/ui/RowInfo.jsx";
 
 /* YieldFooterDisclaimer (B895) — the ONE persistent screening disclaimer for the whole
  * Yield panel, replacing the ~7 inline "screening only — confirm with your engineer /
