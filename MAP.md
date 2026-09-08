@@ -1475,3 +1475,5 @@ server/
     db/
   uploads/
 ```
+
+<!-- zz-claude-test: touch-guard verification, will be deleted -->
