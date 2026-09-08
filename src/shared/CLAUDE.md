@@ -289,9 +289,12 @@ into every consumer. Root rules in `/CLAUDE.md`; deep detail in `/docs/REFERENCE
   SF-weights each NNN/gross group when every comp in it has a size, falling back to the previous
   unweighted mean, explicitly flagged, when any comp in the group is missing it (never silently
   blends the two). `db/comps_lease_free_rent.sql` — adds `lease_free_rent_months` (B832385); once
-  free rent exists, a comp's derived total is FACE rent only — `compFieldRows` labels it
-  `"Total annual rent (face)"` rather than computing an effective/net-of-abatement figure, which
-  the owner hasn't asked for. `db/comps_party_fields.sql` — adds `comp_party_provider` /
+  free rent exists, a comp's derived total is FACE rent only — never an effective/net-of-abatement
+  figure, which the owner hasn't asked for. `leaseTotalAnnualRent` computes it; ⛔ NEW-2 (owner
+  chat, 2026-09-08) removed its own row from `compFieldRows`' comp detail list (Rate, Leased SF and
+  Net effective already carry the deal) — still read directly by `CompsPanel.jsx`'s `CompForm`, the
+  live "$…/yr total (face)" preview under the Rate field while entering a lease comp.
+  `db/comps_party_fields.sql` — adds `comp_party_provider` /
   `comp_party_acquirer` (B832390): ONE shared axis across all three comp types (never six
   per-type columns), labeled per type by `lib/comps.js`'s `partyLabels(compType)` — lease =
   Owner/Developer + Tenant, land = Seller + Buyer, building sale = Seller + Buyer/User.

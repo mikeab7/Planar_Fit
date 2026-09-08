@@ -91,7 +91,9 @@ export default function FloatingPanel({ title, pos, onMove, onDock, onClose, bou
         background: "var(--surface-overlay)", border: "1px solid var(--planner-border)",
         borderRadius: 12, overflow: "hidden",
         boxShadow: "0 16px 44px rgba(28,25,20,0.22), 0 3px 10px rgba(28,25,20,0.1)",
-        backdropFilter: "saturate(180%) blur(8px)", WebkitBackdropFilter: "saturate(180%) blur(8px)",
+        // NEW-1 (owner chat, 2026-09-08) — `--surface-overlay` is now fully opaque; the blur that
+        // paired with its old translucency goes with it (a blur behind an opaque surface does
+        // nothing but cost a compositing pass).
       }}>
       <PanelChrome title={title} floating canFloat onDock={onDock} onClose={onClose} onToggle={onDock} onDragStart={startDrag} data-testid={testId ? `${testId}-chrome` : undefined} />
       <div data-wheelscroll="1" style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", padding: "12px 13px 18px" }}>

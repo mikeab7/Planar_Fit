@@ -18,7 +18,8 @@
  * MODULE-SCOPE-COMPONENTS: every component here is defined at module scope.
  */
 import { useEffect, useRef, useState } from "react";
-import { Button, Field } from "../../ui/controls.jsx";
+import { Button, Field, MenuItem } from "../../ui/controls.jsx";
+import AnchoredMenu from "../../ui/AnchoredMenu.jsx";
 import {
   COMP_TYPES, LEASE_PERIODS, LEASE_EXPENSE_BASES, isCompType, partyLabels,
   landPricePerSf, buildingPricePerSf, leaseTotalAnnualRent, compFieldRows, compHeadline,
@@ -159,6 +160,16 @@ function NumField({ value, onChange, placeholder, style }) {
   );
 }
 
+// NEW-4 (owner chat, 2026-09-08) — the comp detail header's three-dot menu trigger; drawn (not
+// the `⋯` text glyph) for the same reason every other per-row kebab in this app is.
+function KebabIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ flex: "none", display: "block" }}>
+      <circle cx="12" cy="5" r="1.9" /><circle cx="12" cy="12" r="1.9" /><circle cx="12" cy="19" r="1.9" />
+    </svg>
+  );
+}
+
 function TypeChip({ type }) {
   return (
     <span style={{
@@ -279,6 +290,12 @@ export function CompDetail({ comp, canEdit, onEdit, onDelete, onBack, overlaysBy
   // another one) never carries an armed confirm forward.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   useEffect(() => { setConfirmingDelete(false); }, [comp.id]);
+  // NEW-4 (owner chat, 2026-09-08) — Edit/Delete move off the body and into a three-dot menu on
+  // the header row with the comp name, via the app's own AnchoredMenu (opaque by default since
+  // B1263075). Delete keeps the exact confirmation it already had — `confirmingDelete` still
+  // gates a plain inline "Delete this comp? Confirm/Cancel" row, just triggered from the menu now.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuAnchorRef = useRef(null);
   return (
     <div style={{ padding: "10px 14px 14px" }}>
       {/* Two distinct things, spaced as such (NEW-4) — a real flex gap, with wrap so a long
@@ -288,7 +305,25 @@ export function CompDetail({ comp, canEdit, onEdit, onDelete, onBack, overlaysBy
         <button onClick={onBack} style={{ border: "none", background: "none", color: "var(--text-secondary)", fontSize: 12, cursor: "pointer", padding: 0 }}>&larr; All comps</button>
         <TypeChip type={comp.compType} />
       </div>
-      {comp.title && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 6 }}>{comp.title}</div>}
+      {(comp.title || canEdit) && (
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginTop: 6 }}>
+          {comp.title ? <div style={{ fontSize: 15, fontWeight: 700, minWidth: 0 }}>{comp.title}</div> : <span />}
+          {canEdit && (
+            <div style={{ position: "relative", flex: "none" }}>
+              <button ref={menuAnchorRef} onClick={() => setMenuOpen((v) => !v)} aria-label="More actions" title="More actions" style={{
+                border: "none", background: "none", padding: "2px 3px", cursor: "pointer", color: "var(--text-secondary)",
+                borderRadius: 6, display: "grid", placeItems: "center", lineHeight: 0,
+              }}>
+                <KebabIcon />
+              </button>
+              <AnchoredMenu open={menuOpen} onClose={() => setMenuOpen(false)} anchorRef={menuAnchorRef} placement="below-right" width={150}>
+                <MenuItem onClick={() => { setMenuOpen(false); onEdit(comp); }}>Edit</MenuItem>
+                <MenuItem onClick={() => { setMenuOpen(false); setConfirmingDelete(true); }} style={{ color: "var(--danger-text)" }}>Delete</MenuItem>
+              </AnchoredMenu>
+            </div>
+          )}
+        </div>
+      )}
       {/* B1165441 (NEW-2/NEW-3) — "attach and say so": a save that just auto-matched this comp to
           an EXISTING site (never a brand-new one — that's obviously new) surfaces which site and
           how, so a wrong guess is something the owner can see and fix via the Site field below
@@ -317,20 +352,11 @@ export function CompDetail({ comp, canEdit, onEdit, onDelete, onBack, overlaysBy
         ))}
       </div>
       <SourceBrochureLink comp={comp} overlaysById={overlaysById} onOpenBrochure={onOpenBrochure} />
-      {canEdit && (
+      {canEdit && confirmingDelete && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-          {confirmingDelete ? (
-            <>
-              <span style={{ fontSize: 12, color: "var(--danger-text)" }}>Delete this comp?</span>
-              <Button size="sm" variant="danger" onClick={() => onDelete(comp)}>Confirm</Button>
-              <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)}>Cancel</Button>
-            </>
-          ) : (
-            <>
-              <Button size="sm" onClick={() => onEdit(comp)}>Edit</Button>
-              <Button size="sm" variant="danger" onClick={() => setConfirmingDelete(true)}>Delete</Button>
-            </>
-          )}
+          <span style={{ fontSize: 12, color: "var(--danger-text)" }}>Delete this comp?</span>
+          <Button size="sm" variant="danger" onClick={() => onDelete(comp)}>Confirm</Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)}>Cancel</Button>
         </div>
       )}
       {!canEdit && <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 10 }}>Entered by a teammate — only they can edit or remove this comp.</div>}
@@ -366,8 +392,11 @@ export function CompForm({ draft, setDraft, teams, projects, trackedSites, party
         </select>
       </Field>
       {/* NEW-5 (owner decision, 2026-09-02) — no longer required to save; the native date input's
-          own picker already offers a "Today" shortcut in every browser that supports type=date. */}
-      <Field label="Executed date" stacked>
+          own picker already offers a "Today" shortcut in every browser that supports type=date.
+          NEW-3 (owner chat, 2026-09-08) — relabeled "Executed" (was "Executed date"), matching
+          the detail view's row label exactly, so the two surfaces never again disagree on the
+          name for this field. */}
+      <Field label="Executed" stacked>
         <input type="date" value={draft.compDate} onChange={set("compDate")} style={inputStyle} />
       </Field>
       {draft.compType === "lease" && (
