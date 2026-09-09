@@ -7,23 +7,23 @@
     "map-landing": {
       "light": {
         "approvedAt": "2026-09-09",
-        "approvedCommit": "bc9f975b",
-        "note": "B1424624: Sites-panel filter input now shows its full placeholder and the sort select shows its full option text (Largest/A–Z/Recent) instead of clipping — the intended visible change. The wide reported bounding box also includes one unrelated stray anti-aliased pixel on the header Sign-in button's corner (light theme only), confirmed by a local branch-vs-main diff isolating the real change from browser-revision noise. [CI-authored by run 34403054448 on bc9f975b1b1ddc625b99a8ccb2e54b3e4efc1f90]"
+        "approvedCommit": "2ffc913d",
+        "note": "B1434240: round the Leaflet scale bar and the cursor coordinate chip to the app's --radius-md map-chip scale, matching the zoom stack and locate control"
       },
       "dark": {
         "approvedAt": "2026-09-09",
-        "approvedCommit": "bc9f975b",
-        "note": "B1424624: Sites-panel filter input now shows its full placeholder and the sort select shows its full option text (Largest/A–Z/Recent) instead of clipping — the intended visible change. The wide reported bounding box also includes one unrelated stray anti-aliased pixel on the header Sign-in button's corner (light theme only), confirmed by a local branch-vs-main diff isolating the real change from browser-revision noise. [CI-authored by run 34403054448 on bc9f975b1b1ddc625b99a8ccb2e54b3e4efc1f90]"
+        "approvedCommit": "2ffc913d",
+        "note": "B1434240: round the Leaflet scale bar and the cursor coordinate chip to the app's --radius-md map-chip scale, matching the zoom stack and locate control"
       },
       "light--phone": {
         "approvedAt": "2026-09-09",
-        "approvedCommit": "bc9f975b",
-        "note": "B1424624: Sites-panel filter input now shows its full placeholder and the sort select shows its full option text (Largest/A–Z/Recent) instead of clipping — the intended visible change. The wide reported bounding box also includes one unrelated stray anti-aliased pixel on the header Sign-in button's corner (light theme only), confirmed by a local branch-vs-main diff isolating the real change from browser-revision noise. [CI-authored by run 34403054448 on bc9f975b1b1ddc625b99a8ccb2e54b3e4efc1f90]"
+        "approvedCommit": "2ffc913d",
+        "note": "B1434240: round the Leaflet scale bar and the cursor coordinate chip to the app's --radius-md map-chip scale, matching the zoom stack and locate control"
       },
       "dark--phone": {
         "approvedAt": "2026-09-09",
-        "approvedCommit": "bc9f975b",
-        "note": "B1424624: Sites-panel filter input now shows its full placeholder and the sort select shows its full option text (Largest/A–Z/Recent) instead of clipping — the intended visible change. The wide reported bounding box also includes one unrelated stray anti-aliased pixel on the header Sign-in button's corner (light theme only), confirmed by a local branch-vs-main diff isolating the real change from browser-revision noise. [CI-authored by run 34403054448 on bc9f975b1b1ddc625b99a8ccb2e54b3e4efc1f90]"
+        "approvedCommit": "2ffc913d",
+        "note": "B1434240: round the Leaflet scale bar and the cursor coordinate chip to the app's --radius-md map-chip scale, matching the zoom stack and locate control"
       }
     },
     "site-planner-header": {

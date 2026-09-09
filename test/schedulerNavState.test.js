@@ -19,7 +19,6 @@ import { fileURLToPath } from "node:url";
 import {
   sanitizeProjects, parseNavState, deriveCurrentProject, findBySiteId, findAllBySiteId,
   needsScheduleCarryIn, dashboardNavActions, isPickShowing, isGridMismatched, newProjectAction,
-  scheduleCrumbLabel, labelMultiScheduleRows,
 } from "../src/workspaces/scheduler/lib/navState.js";
 
 const WELL_FORMED = [{ id: 1, name: "Goose Creek" }, { id: 3, name: "Grand Port Logistics" }];
@@ -394,20 +393,29 @@ describe("Scheduler.jsx — the ROUTE outranks the embed's section", () => {
     expect(block).toMatch(/visibility:\s*\(showEmptyState \|\| gridMismatched\)\s*\?\s*"hidden"\s*:\s*"visible"/);
   });
 
-  it("a routed project names the breadcrumb even while the embed reports its Dashboard", () => {
-    const i = SRC.indexOf("let currentProject;");
-    const block = SRC.slice(i, i + 420);
-    // The routed-project branch must come FIRST; `section === "reports"` may only answer for a
-    // route with no project (which is what pressing Dashboard leaves behind).
-    expect(block.indexOf("if (projectId != null)")).toBeLessThan(block.indexOf('section === "reports"'));
+  // B1435888 — SUPERSEDES the old "routed project names the breadcrumb even while the embed
+  // reports its Dashboard" test. `currentProject` no longer reconciles against the embed's
+  // transient `activeId`/`section` at all — it is a plain route-derived value, exactly like every
+  // other workspace's project crumb, because the SCHEDULE (which does track activeId/section) is
+  // now a separate crumb (`ScheduleCrumb`, planSlot). See the "the PROJECT crumb" test below.
+  it("the PROJECT crumb is derived purely from the route (projectId/routedSiteName) — no branch on activeId or section", () => {
+    const i = SRC.indexOf("const currentProject = projectId != null && routedSiteName");
+    expect(i, "currentProject must be the plain route-derived ternary").toBeGreaterThan(-1);
   });
 
-  // "+ New schedule" must OPEN THE DIALOG, never post a create straight into the iframe. Also
-  // red-proof: on main this block reads `post(action.type === "create-linked" ? … )` and creates.
-  it('onNewProject opens the New-schedule dialog rather than creating a schedule', () => {
-    const i = SRC.indexOf("onNewProject={() => setNewSchedulePrompt(");
-    expect(i, '"+ New" must route through setNewSchedulePrompt').toBeGreaterThan(-1);
-    const block = SRC.slice(i, i + 200);
+  // "+ New project" (the PROJECT crumb) must create a genuine new SITE project — the same action
+  // every other workspace's breadcrumb offers — never a schedule.
+  it('the PROJECT crumb\'s "+ New project" passes straight through to the real project-creation handler', () => {
+    expect(SRC).toMatch(/onNewProject=\{onNewProject\}/);
+  });
+
+  // "+ New schedule" (the SCHEDULE crumb) must OPEN THE DIALOG, never post a create straight into
+  // the iframe. Also red-proof: on main this block reads `post(action.type === "create-linked" ? …
+  // )` and creates.
+  it('the SCHEDULE crumb\'s "+ New schedule" opens the dialog rather than creating a schedule', () => {
+    const i = SRC.indexOf("onCreate={() => setNewSchedulePrompt(");
+    expect(i, '"+ New schedule" must route through setNewSchedulePrompt').toBeGreaterThan(-1);
+    const block = SRC.slice(i, i + 220);
     expect(block).toMatch(/newProjectAction\(\{ projectId, routedSiteName \}\)/);
     // The create post must NOT be reachable from this handler — the dialog owns it now.
     expect(block).not.toMatch(/planar:nav-create-linked/);
@@ -424,35 +432,18 @@ describe("Scheduler.jsx — the ROUTE outranks the embed's section", () => {
     expect(SRC.slice(Math.max(0, i - 400), i)).toMatch(/ownerKind/);
   });
 
-  // NEW-2/B1080546 — Duplicate is reachable from the shell breadcrumb (the in-iframe project list
-  // it used to depend on is hidden whenever the app runs inside the Planyr shell).
-  //
-  // ⛔ B1112448/NEW-1 — THIS ASSERTION ALONE WAS PROVEN INADEQUATE (2026-09-03): it stayed green
-  // for the entire time the Duplicate row was 100% DEAD in production, because a source regex
-  // against Scheduler.jsx cannot see what happens to the prop one layer up, in AppHeader.jsx.
-  // AppHeader.jsx destructured only `onRenameProject`/`onDeleteProject` and forwarded only those
-  // two into <ProjectBreadcrumb>, so ProjectBreadcrumb's own `canDuplicate = !!onDuplicateProject`
-  // was always false no matter what this line posts. Measured live on planyr.io: the switcher
-  // kebab menu read `["Rename","Delete"]`, `[data-testid="project-duplicate"]` absent from the
-  // DOM. Kept here (Scheduler.jsx really must still post the right message), but it is NOT the
-  // guard against a repeat of this class of bug — that is `e2e/scheduler-duplicate-menu.spec.js`,
-  // which mounts the REAL Scheduler → AppHeader → ProjectBreadcrumb chain in a real browser and
-  // asserts the menu item actually renders. Red-proofed there by reverting AppHeader.jsx's forward.
-  it("onDuplicateProject is wired to the embedded app's nav-duplicate bridge", () => {
-    expect(SRC).toMatch(/onDuplicateProject=\{\(id\) => post\(\{ type: "planar:nav-duplicate", id \}\)\}/);
-  });
-
-  // The other half of the chain this spec CAN see without a browser: AppHeader.jsx must actually
-  // receive and forward the prop. This does not replace the e2e render test above (a source guard
-  // proves the code SAYS the right thing, not that the DOM ends up right — the exact gap that let
-  // the bug ship), but it fails fast in the Node-only suite on a repeat of the identical mistake.
-  it("AppHeader.jsx destructures onDuplicateProject and forwards it into <ProjectBreadcrumb>", () => {
-    const headerSrc = readFileSync(fileURLToPath(new URL("../src/shared/ui/AppHeader.jsx", import.meta.url)), "utf8");
-    expect(headerSrc).toMatch(/^\s*onDuplicateProject,\s*$/m);
-    const i = headerSrc.indexOf("<ProjectBreadcrumb");
-    expect(i).toBeGreaterThan(-1);
-    const block = headerSrc.slice(i, headerSrc.indexOf("/>", i));
-    expect(block).toMatch(/onDuplicateProject=\{onDuplicateProject\}/);
+  // NEW-2/B1080546, RELOCATED by B1435888 — Duplicate is reachable from the SCHEDULE crumb's own
+  // row now (ScheduleCrumb → ScheduleOwnerList), not the project crumb's kebab. It moved because
+  // the project crumb became a genuine, uncontrolled site-project switcher with no schedule id to
+  // resolve — see ScheduleOwnerList.jsx's own header on why the old kebab location would have
+  // posted the wrong kind of id had it stayed. The browser-driven proof is
+  // `e2e/scheduler-duplicate-menu.spec.js`, which mounts the real Scheduler chain and asserts the
+  // Duplicate icon actually renders on the row and posts on click.
+  it("onDuplicate on the SCHEDULE crumb is wired to the embedded app's nav-duplicate bridge", () => {
+    const i = SRC.indexOf("<ScheduleCrumb");
+    expect(i, "<ScheduleCrumb> must be rendered as the breadcrumb's planSlot").toBeGreaterThan(-1);
+    const block = SRC.slice(i, SRC.indexOf("/>", i) + 2);
+    expect(block).toMatch(/onDuplicate=\{\(id\) => post\(\{ type: "planar:nav-duplicate", id \}\)\}/);
   });
 });
 
@@ -490,18 +481,20 @@ describe("resolveControlledId — the shared resolution selectSchedule delegates
   });
 });
 
-/* B1112450/NEW-3 — the breadcrumb must name the ACTIVE schedule once a site has more than one,
- * never always the first-linked (the same "crumb says one thing, grid shows another" ambiguity
- * B851 exists to prevent). A site with exactly one linked schedule is unaffected. */
-describe("the breadcrumb's currentProject follows the ACTIVE schedule on a multi-schedule site", () => {
+/* SUPERSEDED (B1435888) — B1112450/NEW-3 made `currentProject` follow the ACTIVE schedule on a
+ * multi-schedule site, so the ONE breadcrumb named whichever schedule was really on screen. That
+ * mechanism (`activeLinkedSchedule`/`linkedSchedules`) is gone along with the combined crumb it
+ * fed: the SCHEDULE crumb now receives `activeId` directly and resolves its own displayed name
+ * from it (see ScheduleCrumb.jsx), independently of the project crumb — which never needs to know
+ * which schedule is active at all. */
+describe("the SCHEDULE crumb (not currentProject) tracks the ACTIVE schedule on a multi-schedule site", () => {
   const SRC = readFileSync(fileURLToPath(new URL("../src/workspaces/scheduler/Scheduler.jsx", import.meta.url)), "utf8");
-  it("computes activeLinkedSchedule from the full linked set, preferring activeId, and feeds it to currentProject", () => {
-    const i = SRC.indexOf("const linkedSchedules = findAllBySiteId(projects, projectId);");
+  it("<ScheduleCrumb> is handed activeId and the full bridged schedule list directly, not a pre-resolved single schedule", () => {
+    const i = SRC.indexOf("<ScheduleCrumb");
     expect(i).toBeGreaterThan(-1);
-    const block = SRC.slice(i, i + 260);
-    expect(block).toMatch(/linkedSchedules\.length > 1/);
-    expect(block).toMatch(/linkedSchedules\.find\(\(p\) => p\.id === activeId\)/);
-    expect(SRC).toMatch(/currentProject = activeLinkedSchedule \|\| \(routedSiteName \? \{ id: projectId, name: routedSiteName \} : null\);/);
+    const block = SRC.slice(i, SRC.indexOf("/>", i) + 2);
+    expect(block).toMatch(/schedules=\{projects\}/);
+    expect(block).toMatch(/activeId=\{activeId\}/);
   });
 });
 
@@ -680,71 +673,9 @@ describe("Scheduler.jsx — the shell invalidates its nav belief on EVERY iframe
   });
 });
 
-// B1404352 — owner click-test: switching Goose Creek to its "TAS Land Sale" schedule made the
-// crumb read "TAS Land Sale" with no sign it's Goose Creek's project at all.
-describe("scheduleCrumbLabel — the crumb reads project THEN schedule", () => {
-  it("combines a differently-named schedule with its project", () => {
-    expect(scheduleCrumbLabel("Goose Creek", "TAS Land Sale")).toBe("Goose Creek / TAS Land Sale");
-  });
-
-  it("collapses to the bare name when the schedule is still just named after its project", () => {
-    expect(scheduleCrumbLabel("Grand Port", "Grand Port")).toBe("Grand Port");
-  });
-
-  it("ignores a difference that's whitespace-only", () => {
-    expect(scheduleCrumbLabel("Grand Port", "  Grand Port  ")).toBe("Grand Port");
-  });
-
-  it("falls back to whichever half is present when the other is missing", () => {
-    expect(scheduleCrumbLabel(null, "Pursuits")).toBe("Pursuits");
-    expect(scheduleCrumbLabel("Goose Creek", null)).toBe("Goose Creek");
-    expect(scheduleCrumbLabel("Goose Creek", "")).toBe("Goose Creek");
-  });
-
-  it("returns an empty string rather than throwing when both are missing", () => {
-    expect(scheduleCrumbLabel(null, null)).toBe("");
-  });
-});
-
-describe("labelMultiScheduleRows — disambiguate ONLY a project's own multi-schedule rows", () => {
-  it("leaves a single-schedule project's row exactly as it was — the common case", () => {
-    const rows = [{ id: 2, name: "Grand Port", linkedSiteId: "grp-2", linkedSiteName: "Grand Port" }];
-    expect(labelMultiScheduleRows(rows)).toEqual(rows);
-  });
-
-  it("leaves an org-owned / unlinked schedule untouched", () => {
-    const rows = [{ id: 5, name: "Pursuits" }];
-    expect(labelMultiScheduleRows(rows)).toEqual(rows);
-  });
-
-  it("relabels every row of a project with 2+ linked schedules — the Goose Creek repro shape", () => {
-    const rows = [
-      { id: 1, name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
-      { id: 22, name: "TAS Land Sale", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
-      { id: 2, name: "Grand Port", linkedSiteId: "grp-2", linkedSiteName: "Grand Port" },
-    ];
-    const out = labelMultiScheduleRows(rows);
-    expect(out.find((p) => p.id === 1).name).toBe("Goose Creek");
-    expect(out.find((p) => p.id === 22).name).toBe("Goose Creek / TAS Land Sale");
-    // The single-schedule sibling project is untouched — same object, not just an equal one.
-    expect(out.find((p) => p.id === 2)).toBe(rows[2]);
-  });
-
-  it("is null-safe and array-safe", () => {
-    expect(labelMultiScheduleRows(null)).toBe(null);
-    expect(labelMultiScheduleRows(undefined)).toBe(undefined);
-    expect(labelMultiScheduleRows([null, undefined])).toEqual([null, undefined]);
-  });
-
-  it("resolveCurrentName (the crumb's own name lookup) picks up the relabeled row by id", async () => {
-    // Reproduces the exact mechanism this fix depends on: resolveCurrentName prefers whatever
-    // name the LIST carries for a matching id over currentProject's own .name, so relabeling the
-    // row here — not reassigning currentProject.name — is what actually reaches the crumb.
-    const { resolveCurrentName } = await import("../src/shared/projects/projectModel.js");
-    const rows = labelMultiScheduleRows([
-      { id: 1, name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
-      { id: 22, name: "TAS Land Sale", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
-    ]);
-    expect(resolveCurrentName({ id: 22, name: "TAS Land Sale" }, rows)).toBe("Goose Creek / TAS Land Sale");
-  });
-});
+// SUPERSEDED (B1435888) — the `scheduleCrumbLabel` / `labelMultiScheduleRows` tests that used to
+// sit here are gone along with the functions themselves (see navState.js's own SUPERSEDED note).
+// B1404352's combined-crumb fix ("Goose Creek / TAS Land Sale" in one label) is replaced outright
+// by two independent breadcrumb crumbs — see test/schedulerNavState.test.js's own updated Scheduler.jsx
+// source guards above, and e2e/schedule-ownership.spec.js's "B1435888" describe block for the
+// browser-driven proof.

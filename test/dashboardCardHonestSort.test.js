@@ -47,31 +47,29 @@ describe("NeedsAttentionCard — bulk-stamp honesty renders", () => {
   });
 });
 
-describe("PursuitsCard — all-undated honesty renders", () => {
-  const NOW = Date.parse("2026-09-09T12:00:00Z");
+// B1342848 (owner instruction, 2026-09-09: "remove the deal date from pursuits") — the card no
+// longer has a "Next" column, a contractual-date sort, or a "no deal dates set yet" banner (all
+// removed; see pursuitsList.js's header). This replaces the old "all-undated honesty" suite.
+describe("PursuitsCard — no deal-date column or sort", () => {
   const base = { role: "pursuit", status: "pursuit" };
-  // Mirrors the owner's real portfolio: every pursuit has all three contractual-date fields null.
   const projects = [
     { ...base, groupId: "1", name: "Goose Creek", county: "harris" },
     { ...base, groupId: "2", name: "Bain", county: "fortbend" },
     { ...base, groupId: "3", name: "Tsakiris", county: "waller" },
   ];
-  const rows = pursuitsTable(projects, {}, { nowMs: NOW });
-
-  it("shows the honest 'no deal dates' banner when every row is undated", () => {
-    const html = renderToStaticMarkup(createElement(PursuitsCard, { rows, yieldBySite: {} }));
-    expect(html).toMatch(/No deal dates set yet — sorted alphabetically\./);
-  });
+  const rows = pursuitsTable(projects, {});
 
   it("orders alphabetically, not by fetch/insertion order", () => {
     expect(rows.map((r) => r.name)).toEqual(["Bain", "Goose Creek", "Tsakiris"]);
   });
 
-  it("omits the banner once at least one pursuit has a real contractual date", () => {
-    const datedProjects = [...projects];
-    datedProjects[0] = { ...datedProjects[0], loiDate: "2026-09-20" };
-    const datedRows = pursuitsTable(datedProjects, {}, { nowMs: NOW });
-    const html = renderToStaticMarkup(createElement(PursuitsCard, { rows: datedRows, yieldBySite: {} }));
-    expect(html).not.toMatch(/No deal dates set yet/);
+  it("renders exactly three columns (Pursuit / Yield / Quiet for) with no Next/date column", () => {
+    const html = renderToStaticMarkup(createElement(PursuitsCard, { rows, yieldBySite: {} }));
+    expect(html).toMatch(/>Pursuit</);
+    expect(html).toMatch(/>Yield</);
+    expect(html).toMatch(/>Quiet for</);
+    expect(html).not.toMatch(/>Next</);
+    expect(html).not.toMatch(/Nothing scheduled/);
+    expect(html).not.toMatch(/No deal dates/);
   });
 });
