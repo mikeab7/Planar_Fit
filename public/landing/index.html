@@ -223,16 +223,6 @@ footer .wrap { display: flex; align-items: flex-end; justify-content: space-betw
 .footer-legal { display: block; margin-top: 4px; }
 .footer-legal a { color: inherit; text-decoration: none; }
 .footer-legal a:hover, .footer-legal a:focus-visible { color: var(--ink); }
-.cursor-hint {
-  display: none;
-  margin-top: 4px;
-  color: var(--ink-2);
-  opacity: 1;
-  transition: opacity .6s ease;
-}
-@media (pointer: fine) { .cursor-hint { display: inline-block; } }
-.cursor-hint.faded { opacity: 0; }
-@media (prefers-reduced-motion: reduce) { .cursor-hint { transition: none; } }
 
 /* ============ NARROW / SHORT — allowed to scroll ============ */
 @media (max-width: 640px) {
@@ -304,7 +294,6 @@ footer .wrap { display: flex; align-items: flex-end; justify-content: space-betw
       <nav class="footer-legal" aria-label="Legal">
         <a href="/privacy/">Privacy</a><span aria-hidden="true"> · </span><a href="/terms/">Terms</a><span aria-hidden="true"> · </span><a href="mailto:michael@planyr.io">Contact</a>
       </nav>
-      <span class="cursor-hint" id="cursorHint">Move your cursor</span>
     </div>
   </div>
 </footer>
@@ -313,18 +302,6 @@ footer .wrap { display: flex; align-items: flex-end; justify-content: space-betw
 /* eslint-disable */
 (function () {
   "use strict";
-
-  /* ------------------------------------------------------------------------------------------
-     Cursor hint: shown only on a fine pointer (the CSS handles that), faded out permanently the
-     first time the pointer actually moves. Reduced-motion gets an instant hide, no transition.
-     ------------------------------------------------------------------------------------------ */
-  try {
-    var hint = document.getElementById("cursorHint");
-    if (hint) {
-      var fadeHint = function () { hint.classList.add("faded"); window.removeEventListener("pointermove", fadeHint); };
-      window.addEventListener("pointermove", fadeHint, { passive: true });
-    }
-  } catch (e) {}
 
   /* ------------------------------------------------------------------------------------------
      ANIMATED TOPOGRAPHIC CONTOUR BACKGROUND — a live marching-squares contour trace over a 3D

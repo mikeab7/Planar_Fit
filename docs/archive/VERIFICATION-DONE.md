@@ -1,3 +1,79 @@
+### V1045104 — B1437584: Nebraska's real statewide parcel source (`gis.ne.gov/Enterprise/.../StatewideParcelsExternal`) genuinely covers the whole state ✅ **PASSED 2026-09-09 — measured live against production endpoints from the owner's own browser (gis.ne.gov is blocked from this sandbox's egress allowlist)**
+
+**Why this needed a real pass, and who ran it.** `gis.ne.gov` — both the retracted `/Agency/` host and the corrected `/Enterprise/` one — sits behind this build environment's egress allowlist (a `CONNECT tunnel failed, response 403`, confirmed directly this session), the same wall every other state `.gov` GIS host in `docs/STATEWIDE-PARCELS.md` sits behind. This is a `GIS endpoint behavior` LIVE-VERIFY class by name (`/CLAUDE.md`) — it cannot be confirmed from this sandbox. The owner ran the check himself, mid-session, from his own real browser, and reported the measured facts directly into this conversation; recorded here verbatim, the same standing this file already gives Hawaii/Maryland/Virginia/West Virginia/Rhode Island's owner-measured rows.
+
+**What was measured.**
+1. **Metadata**: 188ms response, `esriGeometryPolygon`, capabilities `Query,Extract`, `maxRecordCount` 2000.
+2. **Feature count**: 1,154,898 (the retracted `TaxParcelsDED` layer was 75,394 — a >15× difference, consistent with one covering the whole state and the other a 4-county metro cluster).
+3. **Fields**: `State_PID`, `Parcel_ID`, `Situs_Address`, `Ph_Full_Address`, `Legal_Description`, `Twn`, `Sect`, `Rng`, `Acres_Deeded`, `GIS_Acres`, `Subdivision`, `County_ID`.
+4. **Five point probes spread across the state, each returning a real parcel with a DISTINCT county** — the direct test of the defect this replaces (a query at Omaha against the old layer returned zero):
+   - Omaha (41.2565, -95.9345) → 945ms, `Parcel_ID` 0957321002, "244 S 15 ST", `County_ID` 055 (Douglas).
+   - Scottsbluff, far western panhandle (41.8666, -103.6672) → 157ms, "19 E 15TH ST", `County_ID` 157 (Scotts Bluff).
+   - Norfolk, north (42.0286, -97.4170) → 923ms, `County_ID` 119 (Madison).
+   - McCook, southwest (40.2019, -100.6254) → 283ms, "410 EAST B STREET", `County_ID` 145 (Red Willow).
+   - Lincoln (40.8136, -96.7026) → 1100ms, "701 O ST LINCOLN NE 68508", `County_ID` 109 (Lancaster).
+
+Five points spanning the panhandle to the eastern border and north to south, each answering with a real parcel in a DIFFERENT county, is exactly the shape of evidence that would have caught the retracted layer's defect (a query at Omaha, inside its claimed "statewide" coverage, returned zero) — and none of these five behave that way against the new layer.
+
+**One residual, honestly recorded, not a blocker.** A whole-layer `returnExtentOnly` request against this layer timed out at 12s (this specific op is slow on this specific layer — consistent with this session's own finding, in the sibling `B1437586`/`V1045105`, that some statewide ArcGIS services answer certain operations far slower than their feature count would predict). So there is no independently-converted layer extent on record for this source, the way there is for Florida/Tennessee/California — the five-point spread is the coverage evidence, and it is sufficient: it directly answers the question the extent-conversion check exists to answer (does this source's coverage match its claim), with real point-level ground truth rather than an inferred rectangle.
+
+**Result:** ✅ fully passed, nothing pending — archived directly (a one-off live check that fully passes with nothing pending moves straight here rather than sitting in `VERIFICATION.md`'s `## 🔲 Needs verification`).
+
+### V1045105 — B1437586: Florida/Tennessee/Ohio's statewide parcel queries measured directly against production and found to exceed the app's own 8-second hang-guard budget ✅ **PASSED 2026-09-09 — Claude, direct network measurement against the real production ArcGIS endpoints (all three hosts are reachable from this sandbox)**
+
+**Why this could be run here, not deferred.** Unlike most state `.gov` GIS hosts, Florida's (`services9.arcgis.com`), Tennessee's (`services1.arcgis.com`) and Ohio's (`services2.arcgis.com`) statewide parcel layers are hosted on Esri's own `*.arcgis.com` SaaS infrastructure, which this sandbox's egress allowlist reaches directly — so this is a genuine, non-simulated live measurement against the real production sources the app is actually wired to, not a mock standing in for one.
+
+**Method and result, in full detail on the backlog item (B1437586) — summarized here:**
+1. An unbudgeted `curl`-level ~7-mile envelope-intersect/attributes-only query timed out at 40s against Florida (0 bytes received) and took 21.1s to return zero features against Tennessee; the identical shape against California (13.1M features — more than Florida) answered in 1.75s with real data.
+2. Under the shipped instrument's own 8-second budget (`ENVELOPE_QUERY_BUDGET_MS`, mirroring the app's real `PARCEL_FETCH_TIMEOUT_MS`), re-run three times across this session: Florida hit the abort boundary every time (8000–8002ms); Ohio did too (8000–8001ms, a finding beyond what the dispatch named); Tennessee answered inside budget (2.5–4.2s) but returned **zero features every time** at a point (Nashville) its own declared extent claims to cover.
+3. Confirmed, by reading the app's actual source, that no runtime code change was needed: all three sources render through the ordinary vector display path already covered by `MapFinder.jsx`'s `DISPLAY_LOAD_TIMEOUT_MS` (8000ms) hang-guard and the click-lookup path's own `PARCEL_FETCH_TIMEOUT_MS` `AbortController` — both pre-existing, both already proven (B1427664) to degrade honestly rather than hang.
+4. `node ui-audit/probe-statewide-parcels.mjs` re-run twice in full (with and without the AGOL pass) this session, both times reproducing exactly these three flags and no others among the 29 wired states.
+5. `test/statewideCoverage.test.js`'s timing describe block (part of the 21 tests, all passing) replays each of these three measured shapes — fast/in-budget, aborted-at-budget, and slow-but-technically-successful-and-empty — as fixtures, so a future regression in the instrument itself would be caught without needing to re-hit the live endpoints.
+
+**Result:** ✅ fully passed, nothing pending — archived directly (a diagnostic live measurement that fully passes with nothing pending moves straight here rather than sitting in `VERIFICATION.md`'s `## 🔲 Needs verification`).
+### V1041281 — B1433761: the 404 page renders in the shared dark brand, keeps its copy and destination, and all four marketing pages stay money-silent ✅ **PASSED 2026-09-09 — Claude, headless Chromium against a real built app (signed out, no external GIS, no real data — ATTEMPT-BEFORE-YOU-PARK)**
+
+**Why this could be run here, not deferred.** A restyle of a static, unauthenticated utility page (`public/404.html`) plus a CI-guard extension — no auth, no external GIS host, no real saved project. None of the five named `Blocker:` classes apply, so this is Claude-doable per ATTEMPT-BEFORE-YOU-PARK and must not be filed as needing a human pass.
+
+**Method.** `npm run build` → `npx vite preview --port 4173` serving the real `dist/` output → Playwright/Chromium (the project's own pinned browser at `/opt/pw-browsers`) driving real page loads and a real click — never a DOM probe alone, per this surface's own history of false alarms from programmatic scroll/measurement (DRIVER-SCROLL-IS-NOT-APP-SCROLL). One genuine wrinkle, found and worked around rather than glossed: `navigator.webdriver` is `true` under Playwright by default, and `index.html`'s own front-door redirect deliberately exempts automation ("never redirect automated browsers") so e2e/ui-audit tooling can drive the app directly — a plain automated click from a fresh profile therefore boots straight into the app instead of following the real-visitor path, which is a false alarm from the instrument, not a defect. Neutralized with the same technique `ui-audit/verify-frontdoor.mjs` already uses (`Object.defineProperty(navigator, "webdriver", { get: () => false })` via `addInitScript`) so the click reproduces exactly what a brand-new human visitor's browser does.
+
+**Checks run, all passed:**
+1. **The page renders on the shared dark brand ground** — `getComputedStyle(document.body).backgroundColor` reads `rgb(13, 17, 22)` (`#0D1116`), with the same thin masthead + "planyr" wordmark `/landing/`, `/privacy/` and `/terms/` already carry.
+2. **The copy is verbatim** — the h1 reads exactly "That page isn't here" and the body still carries the "Planyr may have just been updated in the background" line, unchanged from the pre-restyle page.
+3. **The action is unchanged and works for a brand-new visitor**: the button reads "Go to Planyr" and points at `/`; a real click, from a fresh (empty-localStorage) profile with the webdriver exemption neutralized (see Method), lands on `http://localhost:4173/landing/` — the real marketing landing page (confirmed both by URL and by the presence of its own hero `<h1>`) — not a loop back to another 404, not a blank screen.
+4. **No horizontal scroll at phone width** (390×844).
+5. **A grep of the actual built `dist/` output** for the full banned cost/pricing word and phrase list, across all four marketing pages (`dist/landing/index.html`, `dist/privacy/index.html`, `dist/terms/index.html`, `dist/404.html`) — **zero matches**. `test/landingLegibility.test.js`'s `describe.each` money-silence suite now runs the same check against `public/404.html`'s source too (17/17 tests passing).
+6. **B1384 legibility contract holds**: the page has no JavaScript at all (nothing to disable), no animation (nothing to reduce), and a source sweep of its one `<style>` block found no rule hiding text with `opacity:0` or `visibility:hidden`.
+7. Full suite: `npm run lint` — 0 errors (32 pre-existing warnings, unchanged baseline); `npm run build` clean.
+
+**Result:** ✅ fully passed, nothing pending — archived directly per this file's own rule 3.
+
+### V1041280 — B1433760: the landing footer no longer instructs a visitor to move their cursor, the contour still responds to it, and nothing shifted ✅ **PASSED 2026-09-09 — Claude, headless Chromium against a real built app (signed out, no external GIS, no real data — ATTEMPT-BEFORE-YOU-PARK)**
+
+**Why this could be run here, not deferred.** A footer element removal on an already-signed-out marketing page — no auth, no external GIS host, no real saved project. Claude-doable per ATTEMPT-BEFORE-YOU-PARK.
+
+**Method.** Same build/preview/Playwright method as V1041281 (this session, same build).
+
+**Checks run, all passed, at all three named widths (1600×521, 1440×900, 390×844):**
+1. **The `.cursor-hint` element is gone** — neither `#cursorHint` nor any `.cursor-hint` node exists in the DOM at any width (including the fine-pointer desktop widths where it used to render).
+2. **No horizontal scroll** at any of the three widths.
+3. **No leftover gap where the hint used to sit** — measured the real box geometry of `.footer-right`, `.copyright`, and `.footer-legal`: the gap between the copyright line and the legal-links nav is a normal ~4px line gap (not the ~20px+ a stranded blank line would leave), and the `.footer-right` container's own bottom edge sits flush with the legal nav's bottom edge (no trailing blank space below it) at all three widths.
+4. **The contour still responds to the cursor** — a real `page.mouse.move` sequence (not a synthetic event) produced a different canvas frame afterward (`toDataURL()` before vs. after differs), confirming the bump/tint interaction the cursor hint used to announce is untouched.
+5. Full suite: `npm run lint` — 0 errors; `npm run build` clean; `test/landingLegibility.test.js` 17/17 passing (its `DECORATIVE` selector list and header comment were updated to drop the now-nonexistent `.cursor-hint` references).
+
+**Result:** ✅ fully passed, nothing pending — archived directly per this file's own rule 3.
+
+### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back ✅ **PASSED 2026-09-09 — owner's own signed-in account, real note**
+
+**Why this needed its own real pass.** The sandbox measurements were complete and green on a seeded page, but the report was made on the owner's own Goose Creek → Platting note — whose real content (a long title, a metadata line, real body text, several boxes at once, a window he sized himself) is what the growth budget is computed against. Zoom-/data-density-dependent rendering is a mandatory LIVE-VERIFY class.
+
+**What was confirmed, on his own note, measured rather than eyeballed:**
+1. **Right.** The page grew right 478 → 641 with the LEFT edge pinned (VIEWPORT-STABLE — existing content did not move).
+2. **Left.** The page's own left edge moved x705 w641 → x700 w646 while the mat scrolled ~5px to compensate — the reachable-left-margin mechanism (round 2 of this item) holding on his real note, not just the sandbox fixture.
+3. **Down.** The page grew h396 → h537 with the TOP pinned.
+4. **Up.** The page grew h537 → h561 with the top moving y115 → y91, and `scrollTop` moving 0 → 24 — **exactly cancelling the shift**, so existing content did not visibly move under the reader. This is the specific compensation mechanism that round 2 of #1581 shipped dead (a guard that passed while the mechanism behind it was dead — `docs/NOTES-CARRY-FORWARD.md` §1.16) — confirmed alive and working on his real account.
+
+**Result:** ✅ PASSED. All four directions grow correctly, pinned/compensated exactly as designed, on the owner's own real note. See B1273296 (`docs/archive/BACKLOG-DONE.md`) for the fix itself. (V993809, the sibling item from the same pair, stays open — see `VERIFICATION.md` — it covers a distinct claim, "something can be placed and kept level with the title," which needed its own correction before it could pass; see B1433856.)
 ### V981248 — B1344528: the landing footer's new privacy/terms links and mailto work, both new pages render fully with JS off and under reduced motion, and the single-screen landing layout is unchanged ✅ **PASSED 2026-09-09 — Claude, headless Chromium against a real built app (signed out, no external GIS, no real data — ATTEMPT-BEFORE-YOU-PARK)**
 
 **Why this could be run here, not deferred.** Two brand-new static pages plus a footer edit on an already-signed-out marketing page — no auth, no external GIS host, no real saved project. None of the five named `Blocker:` classes (`auth`/`live-GIS`/`real-data`/`print-engine`/`live-deploy`) apply, so this is Claude-doable per ATTEMPT-BEFORE-YOU-PARK and must not be filed as needing a human pass.
