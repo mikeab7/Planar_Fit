@@ -166,6 +166,8 @@ was never clicked" quietly ships broken.
 
 ### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back `Blocker: real-data`
 
+> ⛔ **UPDATED 2026-09-08 (round 3).** He ran the steps below on the shipped build himself and it FAILED on the left — the page had no grey margin left of it once anything had grown, so there was nothing to press in and nowhere to drag to. Two further defects were found underneath (a compensation that had never fired; a gutter change scrolling the page sideways on every load). The steps are unchanged and now also cover the gutter: **at step 2, first check there is visibly grey to the LEFT of the page before trying to press in it.**
+
 **Why this needs its own real pass.** Everything below is measured here on a seeded page in a headless browser, and it all passes — but the report was made on his own Goose Creek → Platting note, whose real content (a long title, a metadata line, real body text, several boxes at once, a window he sized himself) is what the growth budget is computed against. Zoom-/data-density-dependent rendering is a mandatory LIVE-VERIFY class, and a seeded fixture is exactly the thing that can make a real defect unreachable.
 
 **What was verified here (this session, real headless Chromium, real mouse, logged out).**

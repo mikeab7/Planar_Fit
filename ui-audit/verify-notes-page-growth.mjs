@@ -92,6 +92,7 @@ async function measureCase(doc, { viewport = { width: 1191, height: 900 }, theme
       allAnchorsInsideSheet: allInside,
       sheetWidth: sheetRect ? Math.round(sheetRect.width) : null,
       matAlignItems: mat ? getComputedStyle(mat).alignItems : null,
+      leftGutter: (sheetRect && mat) ? Math.round(sheetRect.left - mat.getBoundingClientRect().left) : null,
       matScrollWidth: mat?.scrollWidth ?? null,
       matClientWidth: mat?.clientWidth ?? null,
       storedAnchors: stored,
@@ -209,11 +210,16 @@ for (const [name, doc] of Object.entries(cases)) {
    * owner found by hand. So: centre while it FITS, left-align only once it genuinely outgrows the
    * pane, and keep a real gutter either way. The gutter is asserted by
    * `verify-notes-left-margin-reachable`, which starts every case from an already-grown page. */
+  /* ⛔ THE PROPERTY IS THE GUTTER, NOT THE ALIGNMENT KEYWORD. Three different alignment rules have
+   * now stood here (centre-until-grown, centre-while-it-fits, always-left-with-a-pinned-gutter),
+   * and each was written down as `alignItems === "..."`, which is an implementation detail that
+   * says nothing about whether the page is usable. What both defects actually came down to is
+   * whether there is grey to the LEFT of the page — at zero there is nothing to place a note in
+   * and nowhere to drag one to. So that is what is asserted, and it survives the next rule too. */
   if (state.sheetWidth > NATURAL_SHEET_WIDTH) {
-    const fits = state.sheetWidth + 144 <= state.matClientWidth;   // 144 = the gutter, both sides
-    ok(`${name} — grown: left-aligned once it outgrows the pane, centred while it still fits`,
-      state.matAlignItems === (fits ? "center" : "flex-start"),
-      `sheet ${state.sheetWidth}px in a ${state.matClientWidth}px pane → ${fits ? "fits, expect centre" : "overflows, expect flex-start"}, align=${state.matAlignItems}`);
+    ok(`${name} — grown, and the page still has a usable margin beside it`,
+      state.leftGutter >= 40,
+      `left gutter ${state.leftGutter}px · sheet ${state.sheetWidth}px in a ${state.matClientWidth}px pane`);
   }
 }
 

@@ -105,6 +105,26 @@ Two more found since, each worth its own line because each returned a confident 
    note, and a count that was 1 before and 1 after may be a different box entirely. Click away onto
    the page, or count identities rather than nodes.
 
+13. **A GUARD CAN PASS WHILE THE MECHANISM BEHIND IT IS DEAD (2026-09-08, and this one shipped).**
+   A VIEWPORT-STABLE compensation read `dom.offsetLeft` to detect a layout shift. That value is
+   ALWAYS 0 for the editor body — its offsetParent is a wrapper inside the sheet, not the scroller
+   — so the delta was always 0 and the effect never once ran. Its harness was green because every
+   case pointed at it had the sheet centred and growing rightward, where there is no shift to
+   compensate. **Point a new guard at the one scene it exists for, and prove it RED there**, or it
+   is measuring nothing. Measured tell: the sheet's padding went 40px → 236px while the watched
+   value read 0 both times.
+14. **A SCROLL DEFECT IS INVISIBLE ON A PAGE THAT CANNOT SCROLL (2026-09-08).** Two sections
+   asserting "the view does not move" stayed green on a build that moved the view 362px, because
+   their fixtures were short enough to fit. Only a note long enough for the pane to scroll, already
+   scrolled, caught it. Any harness asserting scroll invariance needs a VACUITY GUARD that fails if
+   there was no scroll available to lose.
+15. **A HARNESS EDIT IS CODE AND CAN BE THE BUG (2026-09-08).** Adapting a suite to a changed model
+   (a press no longer creates a note; the first keystroke does) meant adding a committing keystroke
+   after every press — and one of those presses was the double-click-to-select-a-WORD case, where
+   the keystroke typed over the very selection being asserted. The harness then correctly reported
+   a defect that existed only in itself. **Diff failure IDENTITIES against a baseline build, never
+   counts**: that is what separated three real regressions from twelve pre-existing ones here.
+
 See also `ui-audit/TRAPS.md`, and the named rules **FOREGROUND-OR-VOID** (a background tab cannot
 be measured — not its clock, not its pixels) and **COUNT-EVERY-KIND**.
 
@@ -178,6 +198,16 @@ position**.
 ---
 
 ## 5 · The recurring bug families — suspect these first
+
+-1. **⛔ A FIX THAT MOVES A DEFECT RATHER THAN REMOVING IT — AND THE TELL IS THAT THE SAME LINE HAS
+   NOW CARRIED THREE RULES (added 2026-09-08).** The sheet's horizontal alignment went: centre until
+   anything grows, then flush left (killed a 48px jump, made the left gutter ZERO so half the
+   feature became unreachable) → centre while it fits (restored the gutter, brought the jump back,
+   measured at 48px by the owner's own acceptance harness) → pin the left edge where centring would
+   put an ungrown page and grow only rightward (both, because the left edge stopped being a function
+   of the width). **When a fix's justification is the defect the previous fix caused, you are
+   trading, not fixing.** Look for the formulation where the two properties stop competing — here,
+   making the quantity that was moving independent of the quantity that was changing.
 
 0. **⛔ A RULE SHIPPED ON SOME OF ITS EDGES AND CLAMPED ON THE REST (added 2026-09-08,
    NOTES-FREE-PLACEMENT).** The page-grows-to-fit feature grew RIGHT and DOWN and floored LEFT and

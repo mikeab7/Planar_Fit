@@ -321,9 +321,19 @@ console.log("=".repeat(100));
   await page.context().close();
 }
 
-/* ═══ 8. NEW-3 — AN EMPTY NOTE IS NOT DESTROYED IN SILENCE ════════════════════════════════ */
+/* ═══ 8. SUPERSEDED — A PRESS NO LONGER CREATES ANYTHING TO DESTROY ═══════════════════════ */
+/* ⛔ THIS SECTION USED TO ASSERT NEW-3: that discarding an abandoned empty note SAID SO, with an
+ * Undo. That shipped, the owner saw it, and he reversed his own instruction (NEW-9): the toast
+ * reads wrong because nothing should have been created in the first place. Under NEW-8 a press
+ * arms a caret and creates nothing, so there is no empty note, nothing to discard, and nothing to
+ * announce — and the assertions that stood here would now be asserting the defect.
+ * They are not merely deleted: the whole model is asserted, harder, in
+ * `ui-audit/verify-notes-pending-caret.mjs`, which starts from his own words and checks the
+ * document is BYTE-IDENTICAL after a press you type nothing into, that no notice appears, and
+ * that the view never moves. What is kept here is the one line that connects the two files, so a
+ * reader of this harness is not left wondering where the case went. */
 console.log("\n" + "=".repeat(100));
-console.log("8. AN ABANDONED EMPTY NOTE — discarded, but visibly and undoably");
+console.log("8. (superseded by NEW-8/NEW-9 — see verify-notes-pending-caret.mjs)");
 console.log("=".repeat(100));
 {
   const page = await openPage(docWith([]));
@@ -332,27 +342,36 @@ console.log("=".repeat(100));
     return { x: Math.round(s.right + 60), y: Math.round(s.top + 420) };
   });
   await page.mouse.click(spot.x, spot.y);
-  await pacedWait(page, 350);
-  const made = await page.evaluate(() => document.querySelectorAll(".planyr-anchor").length);
-  ok("the gesture creates a note", made === 1, `${made} on the page`);
-  await page.mouse.click(spot.x + 40, spot.y + 220);
-  await pacedWait(page, 500);
-  const notice = await page.evaluate(() => {
-    const el = document.querySelector('[data-testid="note-anchor-discarded"]');
-    return { shown: !!el, text: el?.innerText?.replace(/\s+/g, " ").trim() || "" };
-  });
-  ok("⛔ discarding it SAYS SO — it does not vanish in silence", notice.shown, notice.text);
-  await page.click('[data-testid="note-anchor-discarded-undo"]').catch(() => {});
   await pacedWait(page, 400);
-  const restored = await page.evaluate(() => {
-    const els = [...document.querySelectorAll(".planyr-anchor")];
-    return { n: els.length, left: els[0] ? Math.round(parseFloat(els[0].style.left)) : null };
-  });
-  ok("…and Undo puts it back", restored.n >= 1, `${restored.n} on the page, at left ${restored.left}`);
+  const armed = await page.evaluate(() => ({
+    caret: !!document.querySelector('[data-testid="note-pending-caret"]'),
+    notes: document.querySelectorAll(".planyr-anchor").length,
+    notice: !!document.querySelector('[data-testid="note-anchor-discarded"]'),
+  }));
+  ok("a press arms a caret and creates NOTHING (NEW-8)",
+    armed.caret && armed.notes === 0, `caret ${armed.caret} · ${armed.notes} note(s)`);
+  ok("⛔ …and there is no discard notice anywhere, because there is nothing to discard (NEW-9)",
+    !armed.notice, String(armed.notice));
   await page.keyboard.type("kept");
   await pacedWait(page, 900);
-  const kept = await stored(page);
-  ok("…and it survives once something is typed in it", kept.length === 1, `${kept.length} stored`);
+  const after = await stored(page);
+  ok("…and the first keystroke is what makes the note", after.length === 1, `${after.length} stored`);
+  /* ⛔ AND THE BYTE CLAIM IS PROVEN, NOT GESTURED AT. A first draft of this line was written as an
+   * expression that could not evaluate to false — a check that cannot fail is worse than no check,
+   * because it reads as coverage. This one re-arms on a fresh point, abandons it, and compares the
+   * stored document to what it was before the press. */
+  const armedAgain = await page.evaluate(() => {
+    const s = document.querySelector('[data-testid="note-sheet"]').getBoundingClientRect();
+    return { x: Math.round(s.right + 90), y: Math.round(s.top + 560) };
+  });
+  const beforeAbandon = await page.evaluate((k) => localStorage.getItem(k) || "", PAGE_KEY);
+  await page.mouse.click(armedAgain.x, armedAgain.y);
+  await pacedWait(page, 350);
+  await page.keyboard.press("Escape");
+  await pacedWait(page, 800);
+  ok("⛔ …while a press typed into nothing leaves the document BYTE-IDENTICAL",
+    (await page.evaluate((k) => localStorage.getItem(k) || "", PAGE_KEY)) === beforeAbandon,
+    `${beforeAbandon.length} bytes, unchanged`);
   await page.context().close();
 }
 
