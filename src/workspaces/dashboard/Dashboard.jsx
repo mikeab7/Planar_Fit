@@ -73,6 +73,18 @@ import { pursuitsTable, quietDaysByGroupFromRows } from "./lib/pursuitsList.js";
 import { buildSinceLastHereFeed } from "./lib/sinceLastHereFeed.js";
 import { spanWords } from "./lib/dashboardDates.js";
 
+// B-going-quiet-card-height — cards whose content is a short text/number list (no chart, map, or
+// thumbnail grid measuring its own box) shrink to content instead of stretching to fill their
+// reserved grid tile — see DashboardCard's own `sizeToContent` header. Left off for recentPlans
+// (its thumbnail grid measures its own box to choose a layout), compsSummary (its peer scale bar
+// is laid out against the card's available room) and locationsMap (a real Leaflet map needs a
+// defined height to render into). Applied only once `dataReady` (below) — every card still shows
+// the SAME stable, full-height skeleton while loading, so this never touches the "every card
+// swaps to real content in one synchronized paint" guarantee CardSkeleton's own header describes.
+const SIZE_TO_CONTENT_CARDS = new Set([
+  "jumpBackIn", "pipelineStatus", "needsAttention", "pursuitsTable", "scheduleHealth", "goingQuiet", "sinceLastHere",
+]);
+
 const SAVE_DEBOUNCE_MS = 900;
 const ROW_HEIGHT_PX = 32;
 const GRID_MARGIN_PX = 14;
@@ -360,6 +372,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         headerRight={entry.key === "sinceLastHere" ? sinceLastHere?.headerSpan : null}
         customizing={customizing}
         showDragHandle={!isNarrow}
+        sizeToContent={dataReady && SIZE_TO_CONTENT_CARDS.has(entry.key)}
         onRemove={() => setLayout((l) => removeCard(l, entry.key))}
       >
         {render()}
