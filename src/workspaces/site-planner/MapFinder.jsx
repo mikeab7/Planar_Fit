@@ -2707,10 +2707,28 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       delete displaysRef.current[key]; delete displaySrcRef.current[key];
       return;
     }
+    // NEW-1 (parcel opacity race) — OWNERSHIP OF A SHARED LAYER MUST NOT DECIDE WHETHER IT IS
+    // DESTROYED. `key` is "owner" here only because its addDisplay call happened to be the first
+    // to reach this URL (an accident of async resolve order, e.g. `waller` racing `txgio_statewide`
+    // — both point at the same statewide TxGIO layer). Tearing the Leaflet layer down while an
+    // ALIAS still needs it (txgio_statewide covers the whole state, Waller only its own county)
+    // orphans that layer's own in-flight /export image forever at opacity 0 — esri-leaflet adds
+    // the request's image straight to the map, bypassing the layer's tracked reference, and its
+    // own onRemove cleanup only ever knew about that tracked reference. Measured live via
+    // ui-audit/verify-parcel-outline-opacity.mjs: Waller's Drive snapshot loading (which swaps
+    // Waller onto its own vector layer via showSnapshotDisplay → removeDisplay('waller')) while
+    // the shared statewide raster layer's /export was still in flight left a fully-loaded,
+    // correctly-positioned image stuck invisible for the rest of the session. So: only actually
+    // tear the layer down when NO other key still references it; otherwise hand ownership to one
+    // of the remaining aliases and leave the layer running for them.
+    const survivor = Object.keys(displaysRef.current).find((k) => k !== key && displaysRef.current[k] === fl);
+    if (survivor) {
+      delete displaysRef.current[key]; delete displaySrcRef.current[key];
+      displaySrcRef.current[survivor] = { url: displaySrcRef.current[survivor].url, owner: survivor };
+      return;
+    }
     try { map && map.removeLayer(fl); } catch (_) {}
-    Object.keys(displaysRef.current).forEach((k) => {
-      if (displaysRef.current[k] === fl) { delete displaysRef.current[k]; delete displaySrcRef.current[k]; }
-    });
+    delete displaysRef.current[key]; delete displaySrcRef.current[key];
   };
 
   // B629 — the Phase-1 client-loaded (whole-county) snapshot counties. Chambers + Waller ride the
