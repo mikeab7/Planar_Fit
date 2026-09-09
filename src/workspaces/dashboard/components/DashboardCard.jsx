@@ -16,7 +16,7 @@
  * row is byte-identical to before this was added — this is an extension point, not a per-card
  * special case.
  *
- * `sizeToContent` (B-going-quiet-card-height) — a card whose content is a short list (rows of
+ * `sizeToContent` (B1426608) — a card whose content is a short list (rows of
  * text, no chart/map/thumbnail grid) shrinks to its own content height instead of stretching to
  * fill the grid tile react-grid-layout reserved for it, so one quiet row doesn't sit above a
  * couple hundred pixels of bare white. `maxHeight: "100%"` still caps it at the tile's reserved

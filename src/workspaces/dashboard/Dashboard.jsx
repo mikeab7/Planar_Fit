@@ -73,7 +73,7 @@ import { pursuitsTable, quietDaysByGroupFromRows } from "./lib/pursuitsList.js";
 import { buildSinceLastHereFeed } from "./lib/sinceLastHereFeed.js";
 import { spanWords } from "./lib/dashboardDates.js";
 
-// B-going-quiet-card-height — cards whose content is a short text/number list (no chart, map, or
+// B1426608 — cards whose content is a short text/number list (no chart, map, or
 // thumbnail grid measuring its own box) shrink to content instead of stretching to fill their
 // reserved grid tile — see DashboardCard's own `sizeToContent` header. Left off for recentPlans
 // (its thumbnail grid measures its own box to choose a layout), compsSummary (its peer scale bar

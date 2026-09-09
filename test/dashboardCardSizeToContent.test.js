@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import DashboardCard from "../src/workspaces/dashboard/components/DashboardCard.jsx";
 
-// B-going-quiet-card-height — the "Going quiet" card (and its list-shaped siblings) used to
+// B1426608 — the "Going quiet" card (and its list-shaped siblings) used to
 // stretch to fill its reserved grid tile no matter how little it had to show, so a single row
 // sat above ~200px of bare card surface. The fix: DashboardCard's `sizeToContent` prop lets the
 // card's own rendered height follow its content, capped (never exceeding) the tile react-grid-
