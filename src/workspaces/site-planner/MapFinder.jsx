@@ -202,12 +202,24 @@ const PLACE_NAMES_DEFAULT_OPACITY = 0.85;
 const SEARCH_BAR_CLEARANCE_PX = 58;
 
 // B1424624 — the Sites-panel filter row's floor for the "Filter by name…" input, so the sort
-// <select> beside it (whose own longest option, "Recently touched," used to be `flex:"none"`
-// and simply claimed the row) shrinks and ellipsizes first instead of squeezing the input's
-// placeholder down to an unreadable fragment ("Filter by n"). Sized to the input's own measured
-// need at this panel's fixed 232px width (12px Inter placeholder text ≈ 91px + the input's own
-// 16px of horizontal padding), rounded up with a little slack.
+// <select> beside it (whose own longest option used to be `flex:"none"` and simply claimed the
+// row) shrinks first instead of squeezing the input's placeholder down to an unreadable fragment
+// ("Filter by n"). Sized to the input's own measured need at this panel's fixed 232px width (12px
+// Inter placeholder text ≈ 91px + the input's own 16px of horizontal padding), rounded up.
+//
+// ⛔ SORT_SELECT_MIN_PX BELOW IS THE OTHER HALF, AND BOTH TOGETHER ARE THE REASON NEITHER OPTION
+// LABEL WAS SHORTENED FOR NOTHING. Measured live: the select's CLOSED box sizes off its WIDEST
+// option in the list (Chromium's own convention for a native <select>, not this app's choice),
+// so the old "Largest first" (13 chars) governed the box even while "Recently touched" (17
+// chars, the account's DEFAULT sort) was the one actually showing — shortening only one of the
+// two never helps, the other still sets a box too narrow for FILTER_MIN_PX to leave any room in.
+// With both shortened ("Largest first" → "Largest", "Recently touched" → "Recent") AND a real
+// floor under each control, this fixed 210px-wide row (232 panel − 16px padding − 6px gap) fits
+// BOTH controls' full text with a few px to spare — measured on every one of the three options,
+// not assumed from one. The two floors must stay in this proportion; growing one eats the other's
+// margin directly, since together they already consume nearly the row's whole budget.
 const FILTER_MIN_PX = 112;
+const SORT_SELECT_MIN_PX = 96;
 
 // NEW-4 — how long the "location is blocked" notice stays up before it auto-dismisses. Still
 // dismissible by hand at any time. The message itself is one short sentence (reads as two lines
@@ -3424,6 +3436,13 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // exists, so it now gets a real floor (`NAME_MIN_PX`) it is never squeezed below; the flags
   // move into their own shrinkable group (`rowFlagGroupStyle`) that yields ALL of the negative
   // space first and ellipsizes its own text before the name gives up a single pixel.
+  // ⛔ THE NAME'S OWN flex-grow STAYS 0 — `"0 1 auto"`, never `"1 1 auto"`. A first pass here gave
+  // the name flex-grow too, on the reasoning that it should "win the space"; live visual-regression
+  // caught the real effect: with nothing to squeeze, the name grew to fill the row's slack and
+  // pushed the (unshrunk) flags away from it, widening the gap between the name text and its own
+  // flags on every ordinary row — a real, visible layout shift the fix never asked for. Growth was
+  // never the bug; only the SHRINK floor was missing. Flex-grow 0 keeps every already-correct
+  // resting-state row byte-identical; the floor only ever engages once shrinking is truly forced.
   const NAME_MIN_PX = 64;
   const rowFlagGroupStyle = { display: "flex", alignItems: "center", gap: 6, flex: "0 1 auto", minWidth: 0, overflow: "hidden" };
   // The Pinned section (below) mixes every status under one header, so IT still needs a
@@ -3483,7 +3502,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             style={{ flex: 1, minWidth: 0, boxSizing: "border-box", fontSize: 12, fontWeight: 600, color: PAL.ink, fontFamily: "inherit", padding: "1px 4px", border: `1px solid ${PAL.accent}`, borderRadius: RADIUS.sm, outline: "none", background: "var(--surface-raised)" }} />
         ) : (
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-            <span style={{ flex: "1 1 auto", minWidth: NAME_MIN_PX, fontSize: 12, fontWeight: 600, color: PAL.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: t.struck ? "line-through" : "none" }}>
+            <span style={{ flex: "0 1 auto", minWidth: NAME_MIN_PX, fontSize: 12, fontWeight: 600, color: PAL.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: t.struck ? "line-through" : "none" }}>
               {s.site || s.name || "Untitled site"}
             </span>
             {/* B1424624 — both flags share ONE shrinkable group so they give up space (and, if
@@ -4082,12 +4101,12 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                 verbatim: "that's not really a good way to filter it… there's literally just
                 nothing there." Collapsing a group IS the filter now (below). */}
             {/* B1424624 — the SAME squeeze as the row's name column, one flex row up: the sort
-                <select>'s longest option ("Recently touched") was `flex:"none"` (refuses to
-                shrink), so on this 232px-wide panel it alone claimed most of the row and the
-                filter input — what the owner actually types into — was left with a few px, and
-                its placeholder read as "Filter by n". `FILTER_MIN_PX` is the floor the input is
-                never squeezed below (enough to show its full placeholder); the select now shrinks
-                first and ellipsizes its own closed-box text before the input gives up a pixel. */}
+                <select>'s longest option was `flex:"none"` (refuses to shrink), so on this
+                232px-wide panel it alone claimed most of the row and the filter input — what the
+                owner actually types into — was left with a few px, reading "Filter by n". See
+                `FILTER_MIN_PX`/`SORT_SELECT_MIN_PX` above for the floors and why both option
+                labels needed shortening too. Shrink stays enabled on the select as a defensive
+                backstop for a narrower case than this fixed panel ever actually presents. */}
             <div style={{ display: "flex", gap: 6, padding: "0 8px 8px" }}>
               <input value={nameFilter} onChange={(e) => setNameFilter(e.target.value)} placeholder="Filter by name…" aria-label="Filter sites by name"
                 style={{ flex: "1 1 auto", minWidth: FILTER_MIN_PX, boxSizing: "border-box", padding: "5px 8px", fontSize: 12, border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.sm, color: PAL.ink, background: "var(--surface-raised)", fontFamily: "inherit", outline: "none" }} />
@@ -4098,10 +4117,10 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                   inside that padding, so the wider box costs nothing but 2px of breathing room. */}
               <select value={sitesPanelPrefs.sort} onChange={(e) => setSitesSort(e.target.value)} aria-label="Sort sites within each group"
                 title="Sort — applies within each group, not across groups"
-                style={{ flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", boxSizing: "border-box", padding: "5px 8px", fontSize: FONT_SIZE.control, border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.sm, color: PAL.ink, background: "var(--surface-raised)", fontFamily: "inherit", outline: "none" }}>
-                <option value="largest">Largest first</option>
+                style={{ flex: "0 1 auto", minWidth: SORT_SELECT_MIN_PX, overflow: "hidden", textOverflow: "ellipsis", boxSizing: "border-box", padding: "5px 8px", fontSize: FONT_SIZE.control, border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.sm, color: PAL.ink, background: "var(--surface-raised)", fontFamily: "inherit", outline: "none" }}>
+                <option value="largest">Largest</option>
                 <option value="az">A–Z</option>
-                <option value="recent">Recently touched</option>
+                <option value="recent">Recent</option>
               </select>
             </div>
             {/* B855953/B855954 (NEW-2/NEW-3) — the Pinned section (fixed, never reorderable) sits
