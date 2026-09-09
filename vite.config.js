@@ -247,6 +247,28 @@ export default defineConfig(({ command }) => ({
         });
       },
     },
+    // The /privacy/ and /terms/ pages (B1344528) are standalone documents, same model as
+    // /landing/ — self-contained HTML, no vendored assets. Same dev-server intercept for the
+    // same reason: Vite's SPA fallback would otherwise serve the main app index.html for a
+    // bare directory request. Production (Cloudflare Pages) serves each as a real static file
+    // from dist/<name>/, so no preview/prod config is needed.
+    {
+      name: "serve-legal-pages-standalone",
+      configureServer(server) {
+        for (const name of ["privacy", "terms"]) {
+          const file = path.resolve(`public/${name}/index.html`);
+          server.middlewares.use(`/${name}`, (req, res, next) => {
+            const url = req.url ?? "";
+            if (url === "/" || url === "" || url === "/index.html") {
+              res.setHeader("Content-Type", "text/html; charset=utf-8");
+              res.end(fs.readFileSync(file));
+              return;
+            }
+            next();
+          });
+        }
+      },
+    },
   ],
   server: {
     host: true,

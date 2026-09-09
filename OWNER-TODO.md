@@ -5,7 +5,19 @@
 > step; tick/remove it once he's done it. This is the **owner's** plate only. Browser click-throughs and
 > signed-in spot-checks are the Claude cohort's job (`VERIFICATION.md`), **never** Michael's — do NOT list those here.
 
-_Last updated: 2026-09-08._
+_Last updated: 2026-09-09._
+
+## 📄 Two quick calls on the new Privacy/Terms pages (B1344528)
+
+> **Short version: I built the two pages behind your landing page's new footer links — Privacy and
+> Terms — reading straight from the code so every claim in them matches what the software actually
+> does. Two small things in Terms need your say, not mine:**
+> - [ ] **Contact address** — there's no dedicated address like `support@planyr.io` set up anywhere,
+>       so both pages point people to your own `michael@planyr.io`. Fine to leave as-is, or tell me
+>       if you'd rather set up a separate one later — it's a one-line swap either way.
+> - [ ] **Which state's law governs the Terms** — I put "the State of Texas" since that's where the
+>       business is framed throughout, but that's my guess, not something you told me. Confirm Texas
+>       is right, or name a different state.
 
 ## 🧹 Three leftover test branches on GitHub need deleting (B1327088)
 
