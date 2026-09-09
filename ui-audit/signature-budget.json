@@ -15,6 +15,15 @@
   },
   "exemptions": [
     {
+      "id": "B1401952-no-location-flag",
+      "date": "2026-09-09",
+      "surfaces": [
+        "Map landing page (decide bar)"
+      ],
+      "count": 1,
+      "reason": "Owner report — the Dashboard Locations map card's 'N projects' location(s) need fixing' link used to land on the Site Planner's plain, unfiltered project list with nothing marking which projects it meant. The Sites panel row now carries a small 'no location' flag next to any site with no origin (src/workspaces/site-planner/MapFinder.jsx's `rowFlagBadgeStyle`), the same standing-fact badge shape the existing 'no boundary' flag already uses on this same row (identical radius/height/padding/fontSize AND color — one shared style object, not a bespoke variant) — but that sibling flag's own precondition (a site with a boundary field but no drawn boundary) is never true in this crawl's fixture, so it has never itself been measured as a signature on this surface, and this is the first member of that shared shape this particular crawl has ever counted here. A code fix cannot remove this signature without either dropping the flag the owner's report asked for, or resizing it to coincidentally match an unrelated control already on the surface, which would be the wrong reason to change either one."
+    },
+    {
       "id": "B842864-global-help-report-control",
       "date": "2026-09-05",
       "surfaces": [

@@ -317,6 +317,21 @@ export default function Shell() {
     setCompIntent({ compId, token: Date.now() });
     navigate({ module: "site-planner", projectId: null, cross: false, org: false });
   };
+  // LOCATIONS-MAP-CARD FIX (owner report, 2026-09-09) — the Dashboard map card's "N projects'
+  // location(s) need fixing" line used to just call `onNavigate` directly with no intent, landing
+  // on the Site Planner's plain, unfiltered project list — indistinguishable from clicking the
+  // Site Planner tab itself, which is what made it read as a dead link even though it did
+  // navigate. Same shape as openCompInSitePlanner above (a "which project" question that isn't
+  // scoped to one project): stash a token-stamped intent, then MapFinder's own effect (on
+  // `locationIntent` arriving) opens the Sites tab and narrows the list to exactly the projects
+  // missing a location, so the destination actually answers "which ones, and let me fix them" —
+  // there is no dedicated "missing locations" page today, so this is the closest existing surface,
+  // made to actually show the answer rather than just landing on it.
+  const [locationIntent, setLocationIntent] = useState(null);
+  const openMissingLocationsInSitePlanner = () => {
+    setLocationIntent({ token: Date.now() });
+    navigate({ module: "site-planner", projectId: null, cross: false, org: false });
+  };
   // B1366384 — the Dashboard's "Since you were last here" card clicking through to the exact
   // note a row describes. Same shape as openReviewInDocReview/openTaskInScheduler above: Notes
   // isn't kept alive alongside the Dashboard, so the requested page is stashed here (token-stamped
@@ -723,6 +738,7 @@ export default function Shell() {
                     docIntent={docIntent}
                     scheduleTaskIntent={scheduleTaskIntent}
                     compIntent={compIntent}
+                    locationIntent={locationIntent}
                     noteIntent={noteIntent}
                     onGoDashboard={goDashboard}
                     onNewProject={newProject}
@@ -793,6 +809,7 @@ export default function Shell() {
                   onOpenReviewInDocReview={openReviewInDocReview}
                   onOpenTaskInScheduler={openTaskInScheduler}
                   onOpenCompInSitePlanner={openCompInSitePlanner}
+                  onOpenMissingLocationsInSitePlanner={openMissingLocationsInSitePlanner}
                   onOpenNoteInNotes={openNoteInNotes}
                 />
               </Suspense>

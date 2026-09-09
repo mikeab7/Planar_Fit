@@ -99,6 +99,9 @@ export default function App({
   // repeat click on the same comp re-fires) because the Dashboard unmounts before this component
   // does; consumed below into the existing `focusCompId` state MapFinder already reads.
   compIntent = null,
+  // LOCATIONS-MAP-CARD FIX — a one-shot "show me what's missing a location" request from the
+  // Dashboard's Locations map card. Same shape as compIntent above.
+  locationIntent = null,
 } = {}) {
   // (County is no longer a top-level pick — the map auto-resolves a clicked
   // parcel's county (B11), and the planner reads its county from the saved site.)
@@ -657,6 +660,17 @@ export default function App({
   const onPlaceComp = (anchor) => setPendingCompAnchor(anchor);
   const onCompClick = (id) => setFocusCompId(id);
 
+  // LOCATIONS-MAP-CARD FIX — same shape as the compIntent pair above: `focusMissingLocations` is
+  // a token MapFinder's own effect reacts to (open the Sites tab, filter to what's missing a
+  // location), not a specific id — there's no one project to name, it's "whichever ones".
+  const [focusMissingLocations, setFocusMissingLocations] = useState(null);
+  const appliedLocationIntentRef = useRef(null);
+  useEffect(() => {
+    if (!locationIntent || locationIntent.token === appliedLocationIntentRef.current) return;
+    appliedLocationIntentRef.current = locationIntent.token;
+    setFocusMissingLocations(locationIntent.token);
+  }, [locationIntent]);
+
   // Open a whole project (site group) from the header breadcrumb switcher (B191):
   // resume its active plan if one's open, else its newest. Switching plans changes
   // `activeSiteId`, which remounts/flushes the previous planner (B193 persist-on-switch).
@@ -1141,6 +1155,7 @@ export default function App({
             focusCompId={focusCompId}
             onCompFocusHandled={() => setFocusCompId(null)}
             onCompsChange={setComps}
+            focusMissingLocations={focusMissingLocations}
           />
         </div>
       </div>
