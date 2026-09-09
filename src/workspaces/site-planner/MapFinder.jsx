@@ -95,7 +95,7 @@ import { findAttr, situsAddress, siteNameFromParcel, tidyAddressLabel } from "./
  * still contains a chunk that fails to load, per LOUD-FAILURE. */
 const ParcelInfoCard = lazy(() => import("./components/ParcelInfoCard.jsx"));
 import { PanelErrorBoundary } from "./components/LazyPanel.jsx";
-import { makeParcelDisplayLayer, makeSnapshotLayer, PARCEL_MINZOOM, ADD_CURSOR, REMOVE_CURSOR } from "./lib/parcelDisplay.js";
+import { makeParcelDisplayLayer, makeSnapshotLayer, parcelDisplayIsImageOnly, PARCEL_MINZOOM, ADD_CURSOR, REMOVE_CURSOR } from "./lib/parcelDisplay.js";
 import { responseWasTruncated, featureCountOf, parcelTruncationNotice } from "./lib/parcelTruncation.js";
 import { siteBoundaryInfo, siteDrawParcels } from "./lib/siteBoundary.js";
 import { geocodeAddress } from "./lib/geocode.js";
@@ -682,6 +682,26 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     if (!sourceNoticeStillPlausible(notice)) return;
     setErr(message);
     sourceNoticeRef.current = { ...notice, message };
+  };
+  /* B1427664 — the SAME {county}/{state} shape `sourceNoticeStillPlausible` already knows how to
+   * judge, for a display layer key: a real county checks its own bbox, the statewide composite
+   * checks state membership. One derivation so the "outlines are still loading" signal below is
+   * judged relevant to the current view by the exact same rule as the outage banner (NEW-1,
+   * B1164656) — otherwise this notice would be able to reintroduce that same Texarkana-shaped bug
+   * for itself (a slow FAR-AWAY county's own layer keeping the tip lit long after the user panned
+   * away from it, since every configured county's layer loads at once in select mode).
+   *
+   * ⛔ Decided from the KEY'S OWN URL, never from `STATEWIDE_KEYS.includes(key)` — `addDisplay`'s
+   * URL-dedupe (NEW-2(a)) means the county key that actually OWNS a shared composite's Leaflet
+   * layer (and therefore the one `markDisplaySlow` records) is very often a real-county key parked
+   * on it (Waller, on the TxGIO composite) rather than the pseudo-county `txgio_statewide` key
+   * itself — `STATEWIDE_KEYS.includes("waller")` is false, so that reading silently judged
+   * plausibility against WALLER'S OWN bbox (nowhere near the view this layer is actually covering)
+   * and the notice could never arm. Asking the URL directly is the same rule NEW-2(b) already
+   * established for the hang-guard exemption itself: the policy follows the ENDPOINT, not the key. */
+  const displayNoticeShape = (key) => {
+    const url = (displaySrcRef.current[key] && displaySrcRef.current[key].url) || layerUrlsRef.current[key];
+    return isStatewideLayerUrl(url) ? { state: COUNTIES_MAP[key] && COUNTIES_MAP[key].state } : { county: key };
   };
   /* NEW-4 — a county outage used to produce a banner and nothing else: the owner was left on a map
    * that would not give him a lot, with no indication that he could proceed anyway. When a source
@@ -1775,6 +1795,18 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
         setErr("");
         sourceNoticeRef.current = null;
       }
+      // B1427664 — the same reconsideration, for the "outlines are still loading" tip: a slow
+      // FAR-AWAY county's own layer must not keep the tip lit once the user has panned away from
+      // it (the identical Texarkana-shaped trap the outage banner above already guards against).
+      setSlowDisplayKeys((prev) => {
+        if (!prev.size) return prev;
+        let changed = false;
+        const next = new Set();
+        prev.forEach((k) => {
+          if (sourceNoticeStillPlausible(displayNoticeShape(k))) next.add(k); else changed = true;
+        });
+        return changed ? next : prev;
+      });
     };
     onMove();
     // NEW-1 — seed the zoom too, not just the centre. `zoom` starts null and only `zoomend`
@@ -2410,6 +2442,32 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // SEE and what you can SELECT the same source — the B137 rule).
   const DISPLAY_LOAD_TIMEOUT_MS = 8000;
 
+  /* B1427664 — NEW-1: while a display layer's outline request is genuinely SLOW but hasn't yet
+   * hit `DISPLAY_LOAD_TIMEOUT_MS` (or, for the statewide composite, may NEVER hit a timeout at
+   * all — see below), the map used to say nothing: no outlines drawn, no banner, no hint that a
+   * click already works. Reported live around Texarkana (Bowie County, which has no CAD of its
+   * own — the statewide TxGIO composite is its ONLY source): "the outlines didn't show up, but I
+   * can still click them... so maybe it's just a loading issue." It is: the click path's identify
+   * is a single fast point query (`identifyParcelEager`), while the display's own query draws the
+   * whole viewport — slower by nature, and for the statewide layer specifically, the hang-guard
+   * deliberately never pulls it (it's the universal fallback), so a slow statewide host can leave
+   * the map blank indefinitely with zero feedback. Rather than making clicks wait for the slower
+   * half (explicitly the wrong fix — selection working early is the good half), say so: once a
+   * layer's request has been outstanding this long with no draw yet, `slowDisplayKeys` names it,
+   * and the select-mode tip below swaps in a line that tells the truth about what's happening.
+   * Two seconds is enough to clear a normal load (a live host answers in ~2s per the hang-guard's
+   * own comment above) without flickering on every ordinary pan. */
+  const SLOW_DISPLAY_NOTICE_MS = 2500;
+  const [slowDisplayKeys, setSlowDisplayKeys] = useState(() => new Set());
+  const markDisplaySlow = (key, slow) => {
+    setSlowDisplayKeys((prev) => {
+      if (prev.has(key) === slow) return prev; // no-op — never a fresh Set (and a render) for nothing
+      const next = new Set(prev);
+      if (slow) next.add(key); else next.delete(key);
+      return next;
+    });
+  };
+
   /* B1164656 (NEW-1/NEW-2) — swap a county's on-map display to its Drive PARCEL SNAPSHOT (B629),
    * replacing whatever's there now. The one entry point `addDisplay`'s always-preferred branch AND
    * `markDown`'s outage fallback below both call, so "the map is showing the cache" has exactly one
@@ -2481,7 +2539,16 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     // highlight). What you SEE stays == what you can SELECT (the B137 rule): the click
     // path (queryAtPoint) has the matching /query→/identify fallback.
     const fl = makeParcelDisplayLayer(url);
-    fl.addTo(map);
+    // B1427664 — NEW-3: `fl.addTo(map)` is deferred to the END of this function, after every
+    // listener below is wired. `onAdd` (fired synchronously inside `addTo`) is what actually
+    // KICKS OFF this layer's first request — a vector FeatureLayer's own metadata fetch fires
+    // "requeststart" synchronously inside `onAdd` (esri-leaflet's `Service._request`), and a raster
+    // layer's `onAdd` synchronously fires "loading" the same way — so a listener attached AFTER
+    // `addTo` misses that very first event and only catches a SECOND cycle, which never comes
+    // unless the map is panned again. Measured live in this item's own headless harness: with
+    // `addTo` first (the shape every branch below used to share), the "still loading" notice never
+    // armed at all for a view that was never touched again after entering select mode — exactly
+    // the reported case (fly to a site, turn on Select, do nothing else).
     displaysRef.current[key] = fl;
     displaySrcRef.current[key] = { url: src, owner: key };
     /* NEW-3 — a truncated parcel draw must never look like a complete one. ArcGIS answers a
@@ -2499,24 +2566,57 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     // would leave the user with nothing to see OR click. Only a real county layer gets
     // the hang-guard below.
     if (statewide) {
+      // B1427664 — NEW-2: `makeParcelDisplayLayer` draws a query-disabled composite (TxGIO today;
+      // any future state whose /query is also disabled) as an esri-leaflet RASTER layer
+      // (`EL.dynamicMapLayer` with `f:"image"`) instead of the vector `FeatureLayer` every queryable
+      // CAD uses — and esri-leaflet's raster layer has a COMPLETELY DIFFERENT event vocabulary:
+      // "loading" → "load"/"error", never "requeststart"/"requestsuccess"/"requesterror" (verified
+      // against esri-leaflet's own source: RasterLayer's `f:"image"` branch calls `_renderImage`
+      // directly, bypassing the Service-based request entirely, so the FeatureLayer-shaped events
+      // this handler used to listen for COULD NEVER FIRE). That means the existing statewide outage
+      // banner below was already dead code before this item — silently, since nothing here ever
+      // reported "no listener call = no problem". Ask which lifecycle THIS layer actually has,
+      // rather than assuming every statewide composite is drawn the same way (a future state whose
+      // /query works fine still gets the ordinary vector FeatureLayer and its real event names).
+      const imageMode = parcelDisplayIsImageOnly(src);
+      // NEW-1: this layer is NEVER pulled on a hiccup (see above), so it has no hang-guard at all
+      // and can otherwise sit silently slow forever. `everDrew` only gates the "still loading"
+      // notice below — it never affects the layer itself.
+      let everDrew = false;
+      let slowTimer = null;
+      const clearSlowTimer = () => { if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; } };
+      const armSlow = () => {
+        if (everDrew || slowTimer) return;
+        slowTimer = setTimeout(() => {
+          slowTimer = null;
+          if (displaysRef.current[key] === fl && sourceNoticeStillPlausible(displayNoticeShape(key))) markDisplaySlow(key, true);
+        }, SLOW_DISPLAY_NOTICE_MS);
+      };
+      const onDrew = () => { everDrew = true; clearSlowTimer(); markDisplaySlow(key, false); };
       // B1164656 (NEW-2) — a per-county Drive PARCEL SNAPSHOT (B629) already fell back and is
       // showing its own cached outlines (see markDown below); blaming "statewide" outlines for the
       // outage on top of that both misnames the source ON SCREEN and, if it fires after the cache
       // banner, silently overwrites the correct message with a less accurate one.
-      fl.on("requesterror", () => {
+      const onFail = () => {
+        clearSlowTimer(); markDisplaySlow(key, false);
         if (CLIENT_SNAPSHOT_COUNTIES.some((c) => downDisplaysRef.current.has(c) && getSnapshot(c))) return;
         // NEW-1 — the composite is scoped to one STATE (txgio_statewide → TX, co_statewide → CO);
         // don't say "statewide" is slow while the view has since moved to the other one.
         setSourceNotice({ state: COUNTIES_MAP[key] && COUNTIES_MAP[key].state }, "Statewide parcel outlines are slow right now — clicking a lot still adds it.");
-      });
+      };
+      if (imageMode) { fl.on("loading", armSlow); fl.on("load", onDrew); fl.on("error", onFail); }
+      else { fl.on("requeststart", armSlow); fl.on("load", onDrew); fl.on("requesterror", onFail); }
+      fl.addTo(map); // NEW-3 — listeners are wired above; only now does the first request fire
       return;
     }
 
     let settled = false; // health of this county layer's first real draw, decided once
     let timer = null;
+    let slowTimer = null; // B1427664 — the shorter "still loading" notice timer, independent of the hang-guard above
     const stopTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const clearSlowTimer = () => { if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; } };
     const markDown = () => {
-      if (settled) return; settled = true; stopTimer();
+      if (settled) return; settled = true; stopTimer(); clearSlowTimer(); markDisplaySlow(key, false);
       // A real county's outline request hung/errored → pull the dead layer (so the map
       // stops spinning), record the host as failing so CLICKS skip it too, and rely on
       // the TxGIO statewide outlines for this area (keep what you SEE == what you can
@@ -2549,9 +2649,20 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     // Arm the hang-timer only once a request to the host is actually in flight, so we
     // never false-flag a county just because we're zoomed out below the outline zoom
     // (no request made). A live host fires 'load' well within the window.
-    fl.on("requeststart", () => { if (!settled && !timer) timer = setTimeout(markDown, DISPLAY_LOAD_TIMEOUT_MS); });
-    fl.on("load", () => { if (!settled) { settled = true; stopTimer(); } }); // drew fine — healthy
+    fl.on("requeststart", () => {
+      if (!settled && !timer) timer = setTimeout(markDown, DISPLAY_LOAD_TIMEOUT_MS);
+      // B1427664 — a much shorter "still loading" notice, well inside the 8s hang-guard: a real
+      // CAD host that's merely slow (not yet hung) drew nothing and said nothing for up to 8s.
+      if (!settled && !slowTimer) {
+        slowTimer = setTimeout(() => {
+          slowTimer = null;
+          if (displaysRef.current[key] === fl && sourceNoticeStillPlausible(displayNoticeShape(key))) markDisplaySlow(key, true);
+        }, SLOW_DISPLAY_NOTICE_MS);
+      }
+    });
+    fl.on("load", () => { if (!settled) { settled = true; stopTimer(); clearSlowTimer(); markDisplaySlow(key, false); } }); // drew fine — healthy
     fl.on("requesterror", markDown);
+    fl.addTo(map); // NEW-3 — listeners are wired above; only now does the first request fire
   };
   const clearDisplays = () => {
     const map = mapRef.current;
@@ -2563,6 +2674,9 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     });
     displaysRef.current = {};
     displaySrcRef.current = {};
+    // B1427664 — every layer is gone, so nothing is "still loading" until select mode reopens
+    // them fresh; leaving stale keys here would light the tip immediately on re-entry.
+    setSlowDisplayKeys((prev) => (prev.size ? new Set() : prev));
   };
   const removeDisplay = (key) => {
     const map = mapRef.current;
@@ -4540,9 +4654,16 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             <div data-testid="select-parcels-tip" style={{ background: "var(--surface-overlay)", border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.lg, padding: "6px 11px", fontSize: FONT_SIZE.control, color: PAL.ink, lineHeight: 1.4, pointerEvents: "none" }}>
               {/* NEW-5 (B849588) — "Click a lot on the map" is the same phrase the Site Planner's
                   empty state and its Parcel tools ▾ menu use for this same job (get a parcel from
-                  county records), so it reads as one door with one name across all three surfaces. */}
+                  county records), so it reads as one door with one name across all three surfaces.
+                  B1427664 — a THIRD line, between the other two: past the outline zoom but the
+                  outlines for what's on screen genuinely haven't drawn yet (a slow host, most often
+                  the statewide layer, which is never pulled on a hiccup and so never times out on
+                  its own). Says so plainly instead of leaving a blank map that reads as "no data
+                  here" while a click already works. */}
               {zoom != null && zoom < PARCEL_MINZOOM
                 ? "Click any lot on the map to add it (＋) — it works even before the purple outlines appear. Zoom in a little to see the lines."
+                : slowDisplayKeys.size > 0
+                ? "Parcel outlines are still loading here — clicking a lot already adds it (＋). Hover an added lot and click to remove it (−)."
                 : "Click a lot on the map to add it (＋). Hover an added lot and click to remove it (−). Add several, then Plan."}
             </div>
           </FloatingNotice>
