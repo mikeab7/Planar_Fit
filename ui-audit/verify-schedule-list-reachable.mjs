@@ -23,6 +23,20 @@
  * rebuild again) reports the "Schedules" button ABSENT while a schedule is loaded — i.e. this
  * harness goes RED on the reported defect, not just green-by-construction.
  *
+ * ⛔ B1397568 (NEW-1, 2026-09-09) — CHECKS 6-10 are the follow-on: the owner used exactly the
+ * panel CHECK 1 proves is reachable (he switched schedules successfully with it), then searched
+ * the page for "new schedule" / "create schedule" / "add schedule" / "+ new" / "link an existing"
+ * and matched NONE of them. The create dialog itself already worked from a loaded project — CHECK
+ * 5 below proves that, unchanged — but only via the breadcrumb's generic "＋ New project" row, a
+ * DIFFERENT menu with a label that gives no hint it creates a schedule. CHECKS 6-10 prove the fix:
+ * a clearly-labelled "New schedule" row now lives INSIDE the Schedules panel itself
+ * (ScheduleOwnerList, via the new optional `onCreate` prop), reusing the exact same
+ * NewScheduleModal/validateNewSchedule path — same blank-name-on-collision rule, same
+ * required-name-and-owner gate — so nothing about WHAT gets created changed, only where the
+ * control to reach it lives. Run each of CHECKS 6-10 against the pre-fix commit the same way (a
+ * `git stash`) and `[data-testid="schedule-owner-create"]` resolves to zero elements — the row did
+ * not exist there before this fix.
+ *
  * Run:  npm run build && npx vite preview --port 4174   (then)
  *       BASE_URL=http://localhost:4174/ node ui-audit/verify-schedule-list-reachable.mjs
  */
@@ -121,6 +135,13 @@ async function newCtx(browser, { initialActiveId = "1", viewport = { width: 1400
 
 const switcherBtn = (page) => page.locator('[data-testid="schedule-switcher-btn"]').first();
 const ownerList = (page) => page.locator('[data-testid="schedule-owner-list"]').first();
+// The stub's `window.__cmds` lives in the /sequence/ IFRAME's own window, not the top-level
+// page's — read it via the iframe element's contentWindow (same-origin, so this is a plain
+// property read, no postMessage round trip needed).
+const readCmds = (page) => page.evaluate(() => {
+  const ifr = document.querySelector("iframe");
+  return ifr && ifr.contentWindow ? (ifr.contentWindow.__cmds || []) : [];
+});
 
 async function check1_loadedGridReachable(browser) {
   console.log("\nCHECK 1 — Goose Creek (a schedule IS loaded): the Schedules button exists and its dropdown carries all three groups");
@@ -176,6 +197,12 @@ async function check2_emptyStateUnregressed(browser) {
 
   const btnPresent = await switcherBtn(page).count().then((n) => n > 0).catch(() => false);
   ok(btnPresent, "the header 'Schedules' button ALSO exists here (consistent entry point in both states)");
+
+  // B1397568 — the empty state's own inline ScheduleOwnerList (below LinkSchedulePanel) must NOT
+  // also grow a "New schedule" row: LinkSchedulePanel already owns Create/Link here, and a second
+  // create control on the one surface that already had a clear one would be a redundant control.
+  const inlineCreateRow = await page.locator('[data-testid="schedule-owner-create"]').count().catch(() => -1);
+  ok(inlineCreateRow === 0, `the empty state's inline list carries NO create row of its own — LinkSchedulePanel's "Create schedule"/"Link an existing schedule" stay the only ones here (found ${inlineCreateRow})`);
   await ctx.close();
 }
 
@@ -232,8 +259,143 @@ async function check4_phoneWidth(browser) {
     await page.waitForTimeout(250);
     const listVisible = await ownerList(page).count().then((n) => n > 0).catch(() => false);
     ok(listVisible, "the dropdown opens on the phone-width header too");
+    const createVisible = await page.locator('[data-testid="schedule-owner-create"]').count().then((n) => n > 0).catch(() => false);
+    ok(createVisible, "'New schedule' is reachable in that same dropdown at phone width");
   }
   await page.screenshot({ path: new URL("./screens/schedule-list-reachable-phone.png", import.meta.url).pathname });
+  await ctx.close();
+}
+
+async function check6_createFromLoadedProjectViaPanel(browser) {
+  console.log("\nCHECK 6 — '+ New schedule' now lives IN the Schedules panel itself (Goose Creek, 5 schedules already loaded) — the round trip");
+  const ctx = await newCtx(browser, { initialActiveId: "1" });
+  const page = await ctx.newPage();
+  await assertMeasurable(page, "verify-schedule-list-reachable");
+  await page.goto(`${BASE}#/project/${GOOSE_CREEK_GID}/schedule`, { waitUntil: "load" });
+  await page.waitForTimeout(1200);
+
+  await switcherBtn(page).click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  const createRow = page.locator('[data-testid="schedule-owner-create"]');
+  const createPresent = await createRow.count().then((n) => n > 0).catch(() => false);
+  ok(createPresent, "a 'New schedule' row is present INSIDE the Schedules panel dropdown (THE gap this fix closes — pre-fix this did not exist here)");
+  ok((await createRow.innerText().catch(() => "")).toLowerCase().includes("new schedule"), "its visible text reads 'New schedule' — matches the term the owner actually searched for and found zero matches on");
+  if (!createPresent) { await ctx.close(); return; }
+
+  await createRow.click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  const modalVisible = await page.locator('[data-testid="new-schedule-modal"]').count().then((n) => n > 0).catch(() => false);
+  ok(modalVisible, "clicking it opens the New-schedule dialog");
+
+  const nameVal = await page.locator('[data-testid="new-schedule-name"]').inputValue().catch(() => null);
+  ok(nameVal === "", `the name box starts BLANK, never auto-filled "Goose Creek (6)" — that auto-naming is what produced the three empty duplicates (got ${JSON.stringify(nameVal)})`);
+
+  const ownerVal = await page.locator('[data-testid="new-schedule-owner"]').inputValue().catch(() => null);
+  ok(ownerVal === GOOSE_CREEK_GID, `the owner is pre-selected to the project standing in the panel (got ${JSON.stringify(ownerVal)})`);
+
+  const createBtn = page.locator('[data-testid="new-schedule-create"]');
+  ok(await createBtn.isDisabled().catch(() => false), "Create is disabled while the name is empty — a name is required, never silently defaulted");
+
+  await page.fill('[data-testid="new-schedule-name"]', "Land Sale 2");
+  await createBtn.click({ timeout: 6000 });
+  await page.waitForTimeout(300);
+
+  const modalGone = await page.locator('[data-testid="new-schedule-modal"]').count().then((n) => n === 0).catch(() => false);
+  ok(modalGone, "the dialog closes after a successful create");
+  const cmds = await readCmds(page);
+  ok(cmds.some((c) => c.startsWith("planar:nav-create-linked") && c.includes(`site:${GOOSE_CREEK_GID}`)), `a create command was bridged to the embedded app carrying the routed project as owner (cmds: ${JSON.stringify(cmds)})`);
+
+  await ctx.close();
+}
+
+async function check7_oneScheduleProject(browser) {
+  console.log("\nCHECK 7 — a project with exactly ONE schedule (Grand Port) also gets a create row, owner pre-filled, name blank");
+  const ctx = await newCtx(browser, { initialActiveId: "3" }); // id "3" = Grand Port
+  const page = await ctx.newPage();
+  await assertMeasurable(page, "verify-schedule-list-reachable");
+  await page.goto(`${BASE}#/project/${GRAND_PORT_GID}/schedule`, { waitUntil: "load" });
+  await page.waitForTimeout(1200);
+
+  await switcherBtn(page).click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  const createRow = page.locator('[data-testid="schedule-owner-create"]');
+  const createPresent = await createRow.count().then((n) => n > 0).catch(() => false);
+  ok(createPresent, "the create row is present for a project with only ONE schedule too");
+  if (!createPresent) { await ctx.close(); return; }
+  await createRow.click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  const ownerVal = await page.locator('[data-testid="new-schedule-owner"]').inputValue().catch(() => null);
+  ok(ownerVal === GRAND_PORT_GID, `owner pre-selected to Grand Port (got ${JSON.stringify(ownerVal)})`);
+  const nameVal = await page.locator('[data-testid="new-schedule-name"]').inputValue().catch(() => null);
+  ok(nameVal === "", `name starts blank — a schedule already named "Grand Port" exists under this owner, so the pre-fix auto-name would have collided (got ${JSON.stringify(nameVal)})`);
+  await ctx.close();
+}
+
+async function check8_organizationOwnedCreate(browser) {
+  console.log("\nCHECK 8 — creating an ORGANIZATION-owned schedule from the panel");
+  const ctx = await newCtx(browser, { initialActiveId: "1" });
+  const page = await ctx.newPage();
+  await assertMeasurable(page, "verify-schedule-list-reachable");
+  await page.goto(`${BASE}#/project/${GOOSE_CREEK_GID}/schedule`, { waitUntil: "load" });
+  await page.waitForTimeout(1200);
+
+  await switcherBtn(page).click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  await page.locator('[data-testid="schedule-owner-create"]').click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  await page.selectOption('[data-testid="new-schedule-owner"]', "__org__");
+  await page.fill('[data-testid="new-schedule-name"]', "Company Retreat Plan");
+  await page.locator('[data-testid="new-schedule-create"]').click({ timeout: 6000 });
+  await page.waitForTimeout(300);
+
+  const cmds = await readCmds(page);
+  const created = cmds.find((c) => c.startsWith("planar:nav-create-linked"));
+  ok(!!created, `a create command was bridged (cmds: ${JSON.stringify(cmds)})`);
+  ok(!!created && !created.includes(":site:"), `the Organization-owned create carries NO siteId (got ${JSON.stringify(created)})`);
+  await ctx.close();
+}
+
+async function check9_nameCollisionWarns(browser) {
+  console.log("\nCHECK 9 — a name colliding with an existing schedule under the SAME owner warns, but never blocks");
+  const ctx = await newCtx(browser, { initialActiveId: "1" });
+  const page = await ctx.newPage();
+  await assertMeasurable(page, "verify-schedule-list-reachable");
+  await page.goto(`${BASE}#/project/${GOOSE_CREEK_GID}/schedule`, { waitUntil: "load" });
+  await page.waitForTimeout(1200);
+
+  await switcherBtn(page).click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  await page.locator('[data-testid="schedule-owner-create"]').click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  await page.fill('[data-testid="new-schedule-name"]', "TAS Land Sale");
+  await page.waitForTimeout(150);
+  const warningVisible = await page.locator('[data-testid="new-schedule-warning"]').count().then((n) => n > 0).catch(() => false);
+  ok(warningVisible, "a same-owner name collision shows a warning");
+  const createDisabled = await page.locator('[data-testid="new-schedule-create"]').isDisabled().catch(() => true);
+  ok(!createDisabled, "the collision warning does NOT block Create — he's allowed to name two schedules the same thing if he means to");
+  await ctx.close();
+}
+
+async function check10_cancelCreatesNothing(browser) {
+  console.log("\nCHECK 10 — cancelling the dialog creates nothing");
+  const ctx = await newCtx(browser, { initialActiveId: "1" });
+  const page = await ctx.newPage();
+  await assertMeasurable(page, "verify-schedule-list-reachable");
+  await page.goto(`${BASE}#/project/${GOOSE_CREEK_GID}/schedule`, { waitUntil: "load" });
+  await page.waitForTimeout(1200);
+
+  await switcherBtn(page).click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  await page.locator('[data-testid="schedule-owner-create"]').click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  await page.fill('[data-testid="new-schedule-name"]', "Should never be created");
+  const cmdsBefore = (await readCmds(page)).length;
+  await page.locator('button:has-text("Cancel")').first().click({ timeout: 6000 });
+  await page.waitForTimeout(250);
+  const modalGone = await page.locator('[data-testid="new-schedule-modal"]').count().then((n) => n === 0).catch(() => false);
+  ok(modalGone, "Cancel closes the dialog");
+  const cmdsAfter = (await readCmds(page)).length;
+  ok(cmdsAfter === cmdsBefore, `Cancel posted no bridged command at all — nothing was created (before ${cmdsBefore}, after ${cmdsAfter})`);
   await ctx.close();
 }
 
@@ -268,7 +430,12 @@ await check2_emptyStateUnregressed(browser);
 await check3_splitAndGanttViews(browser);
 await check4_phoneWidth(browser);
 await check5_createSecondScheduleFromLoadedProject(browser);
+await check6_createFromLoadedProjectViaPanel(browser);
+await check7_oneScheduleProject(browser);
+await check8_organizationOwnedCreate(browser);
+await check9_nameCollisionWarns(browser);
+await check10_cancelCreatesNothing(browser);
 await browser.close();
 
-console.log("\n" + (fails === 0 ? "✅ PASS — the schedule list is reachable whenever the Schedule tab is open, not only when the project has none" : `❌ FAIL — ${fails} assertion(s)`));
+console.log("\n" + (fails === 0 ? "✅ PASS — the schedule list is reachable whenever the Schedule tab is open, not only when the project has none, and '+ New schedule' is reachable from the Schedules panel itself for a project already carrying schedules" : `❌ FAIL — ${fails} assertion(s)`));
 process.exit(fails === 0 ? 0 : 1);

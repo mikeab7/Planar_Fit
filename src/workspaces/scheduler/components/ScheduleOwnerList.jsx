@@ -26,6 +26,24 @@
  * project with no schedule yet — unchanged), and the header's "Schedules" button/dropdown
  * (`ScheduleSwitcher` in ScheduleToolbar.jsx — new, covers every other case, incl. Grid/Split/
  * Gantt and the phone-width header's horizontal-scroll toolbar).
+ *
+ * ⛔ B1397568 — "＋ New schedule" IS NOW A ROW IN THIS LIST, when `onCreate` is passed in. The
+ * create dialog (NewScheduleModal) already worked from a project that already has a schedule —
+ * it was reachable via the breadcrumb's generic "＋ New project" row, confirmed live by
+ * B1396192's own AUDIT-FIRST note. What the owner actually reported missing was a control HE
+ * COULD FIND from the panel he was already using: he opened this exact list (the header's
+ * "Schedules" dropdown), switched schedules successfully, and then searched the page for "new
+ * schedule" / "create schedule" / "add schedule" / "+ new" / "link an existing" and matched
+ * NONE of them — because the real control says "New project" (a generic, per-workspace label
+ * that gives no hint it creates a SCHEDULE) and sits in a different menu (the project
+ * breadcrumb) than the one he was looking at. So this is a discoverability fix, not a second
+ * creation mechanism: the row below calls the SAME `onCreate` the caller already wires to
+ * `newProjectAction`/`NewScheduleModal`, just reachable from the list that actually answers
+ * "what schedules exist here" instead of a separately-named menu. Deliberately NOT passed from
+ * Scheduler.jsx's own empty-state call site — that surface already has its own "Create
+ * schedule" / "Link an existing schedule" buttons (LinkSchedulePanel) immediately above this
+ * list, and a second create row there would be a redundant control for the one case that
+ * already had a clear one.
  */
 import { useMemo } from "react";
 import { RADIUS } from "../../../shared/ui/radius.js";
@@ -52,6 +70,10 @@ const rowBase = {
 const emptyNote = {
   fontSize: FONT_SIZE.control, color: "var(--text-secondary)",
   padding: `${SPACE.sm}px ${SPACE.md}px`, lineHeight: 1.45,
+};
+const divider = { height: 1, background: "var(--border-default)", margin: `${SPACE.xs}px 0` };
+const createRow = {
+  ...rowBase, fontWeight: 700, color: ACCENT,
 };
 
 function Group({ title, schedules, activeId, onSelect, emptyText }) {
@@ -90,6 +112,10 @@ function Group({ title, schedules, activeId, onSelect, emptyText }) {
 
 export default function ScheduleOwnerList({
   schedules = [], activeId = null, siteId = null, siteName = null, onSelect,
+  // Optional — the header dropdown (ScheduleSwitcher) passes this; Scheduler.jsx's empty-state
+  // call site does not (that surface already offers Create/Link via LinkSchedulePanel). See this
+  // file's own header, B1397568.
+  onCreate,
 }) {
   const { here, org, elsewhere } = useMemo(() => partitionSchedules(schedules, siteId), [schedules, siteId]);
   return (
@@ -105,6 +131,21 @@ export default function ScheduleOwnerList({
       )}
       <Group title={ORG_OWNER_LABEL} schedules={org} activeId={activeId} onSelect={onSelect} />
       <Group title="Other projects" schedules={elsewhere} activeId={activeId} onSelect={onSelect} />
+      {onCreate && (
+        <>
+          <div style={divider} />
+          <button
+            type="button"
+            data-testid="schedule-owner-create"
+            title="New schedule — create another schedule for this project or the Organization"
+            onClick={onCreate}
+            style={createRow}
+          >
+            <span style={{ fontSize: 14, lineHeight: 1 }}>＋</span>
+            <span>New schedule</span>
+          </button>
+        </>
+      )}
     </div>
   );
 }

@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ScheduleCenter } from "../src/workspaces/scheduler/components/ScheduleToolbar.jsx";
+import ScheduleOwnerList from "../src/workspaces/scheduler/components/ScheduleOwnerList.jsx";
 
 const TOOLBAR = {
   ready: true, settled: true, view: "grid", section: "projects", isMobile: false,
@@ -59,6 +60,48 @@ describe("ScheduleCenter — the 'Schedules' switcher mounts regardless of sched
     const dashboard = renderToStaticMarkup(createElement(ScheduleCenter, { toolbar: { ...TOOLBAR, section: "reports" }, post: () => {} }));
     expect(notReady).not.toContain("schedule-switcher-btn");
     expect(dashboard).not.toContain("schedule-switcher-btn");
+  });
+});
+
+describe("B1397568 — 'New schedule' is a row IN ScheduleOwnerList, reachable from the Schedules panel", () => {
+  it("renders NO create row when `onCreate` is omitted — matches every existing caller, incl. Scheduler.jsx's empty-state call site", () => {
+    const html = renderToStaticMarkup(createElement(ScheduleOwnerList, {
+      schedules: [{ id: "1", name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" }],
+      activeId: "1", siteId: "gc", siteName: "Goose Creek",
+    }));
+    expect(html).not.toContain("schedule-owner-create");
+  });
+
+  it("renders a 'New schedule' row when `onCreate` IS passed, regardless of how many schedules already exist", () => {
+    const schedules = [
+      { id: "1", name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
+      { id: "19", name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
+      { id: "20", name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
+      { id: "21", name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
+      { id: "22", name: "TAS Land Sale", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
+    ];
+    const html = renderToStaticMarkup(createElement(ScheduleOwnerList, {
+      schedules, activeId: "1", siteId: "gc", siteName: "Goose Creek", onCreate: () => {},
+    }));
+    expect(html).toContain('data-testid="schedule-owner-create"');
+    expect(html.toLowerCase()).toContain("new schedule");
+  });
+
+  it("also renders the create row for a project with ZERO schedules of its own (the account-level / no-routed-project shape)", () => {
+    const html = renderToStaticMarkup(createElement(ScheduleOwnerList, {
+      schedules: [], activeId: null, siteId: null, siteName: null, onCreate: () => {},
+    }));
+    expect(html).toContain('data-testid="schedule-owner-create"');
+  });
+
+  it("ScheduleCenter/ScheduleSwitcher plumb onCreateSchedule through to ScheduleOwnerList's onCreate, unconditionally optional", () => {
+    const withoutCreate = renderToStaticMarkup(createElement(ScheduleCenter, {
+      toolbar: TOOLBAR, post: () => {}, schedules: [], activeId: null, siteId: "gc", siteName: "Goose Creek",
+    }));
+    // The dropdown itself only mounts on click in a real browser (AnchoredMenu), so this asserts
+    // the wiring compiles/renders cleanly with no onCreateSchedule — the row's absence downstream
+    // is covered by the ui-audit harness's live click-through (verify-schedule-list-reachable.mjs).
+    expect(withoutCreate).toContain('data-testid="schedule-switcher-btn"');
   });
 });
 
