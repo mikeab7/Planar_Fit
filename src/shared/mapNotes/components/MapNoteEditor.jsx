@@ -5,7 +5,9 @@
  * know about. See db/map_notes.sql's header for why that split is load-bearing rather than tidy.
  *
  * INLINE EDITOR, never a dialog box (owner rule, 2026-06-17: no window.prompt/confirm/alert). The
- * delete confirmation is a second click on the same in-card control, not a native confirm().
+ * delete confirmation swaps the action row for a dedicated Confirm/Keep-it pair (NEW-1,
+ * B1372144-HARDENING-1) rather than relabeling the Delete button in place — see that swap's own
+ * comment below for why the relabel version could be misclicked into a silent no-op.
  *
  * LOUD-FAILURE — every save/delete failure is shown in the card, in the words the store handed
  * back, and the card STAYS OPEN with the user's text intact. Nothing here reports a success it did
@@ -70,8 +72,7 @@ export default function MapNoteEditor({ note, sites = [], onSave, onDelete, onCl
     } catch (e) { setErr(e?.message || String(e)); } finally { setBusy(false); }
   };
 
-  const remove = async () => {
-    if (!confirmDel) { setConfirmDel(true); return; }
+  const confirmRemove = async () => {
     setBusy(true); setErr("");
     try {
       const res = await onDelete(note.id);
@@ -143,23 +144,40 @@ export default function MapNoteEditor({ note, sites = [], onSave, onDelete, onCl
         <div role="alert" data-testid="map-note-error" style={{ fontSize: FONT_SIZE.control, color: "var(--danger-text)" }}>{err}</div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm }}>
-        {!isNew && (
-          <Button variant="ghost" onClick={remove} disabled={busy} data-testid="map-note-delete"
-            title={confirmDel ? "Click again to delete this note" : "Delete this note"}
-            style={{ color: "var(--danger-text)" }}>
-            {confirmDel ? "Delete — sure?" : "Delete"}
+      {/* ⛔ CONFIRM IS A SEPARATE ROW, NEVER A RELABEL OF THE SAME BUTTON IN PLACE — the SitePlansSection
+          kebab menu's "the menu swaps its OWN content for a confirm step rather than closing" pattern,
+          copied here rather than reinvented, because the relabel version has a real hazard: "Delete"
+          growing to "Delete — sure?" in a fixed-width row shrinks the flex spacer next to it, which
+          shifts Cancel/Save left underneath wherever the user's second click lands. A miss there reads
+          as "I clicked Delete and it just closed" with zero network traffic — exactly the reported
+          defect, and exactly the class LOUD-FAILURE exists to prevent. Replacing the whole row means
+          the second click can only ever land on a control that belongs to the confirm step itself. */}
+      {confirmDel ? (
+        <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm }}>
+          <span style={{ flex: 1, fontSize: FONT_SIZE.control, color: "var(--danger-text)" }}>Delete this note?</span>
+          <Button variant="ghost" onClick={() => setConfirmDel(false)} disabled={busy}>Keep it</Button>
+          <Button variant="danger" onClick={confirmRemove} disabled={busy} data-testid="map-note-delete-confirm">
+            {busy ? "Deleting…" : "Delete"}
           </Button>
-        )}
-        <span style={{ flex: 1 }} />
-        <Button variant="ghost" onClick={() => onClose?.()} disabled={busy}>Cancel</Button>
-        <Button variant="primary" onClick={save} disabled={busy || problems.length > 0}
-          accent="var(--accent-notes)" onAccent="var(--on-accent-notes)"
-          data-testid="map-note-save"
-          title={problems.length ? problems[0] : `Save ${mapNoteHeadline(draft)}`}>
-          {busy ? "Saving…" : "Save"}
-        </Button>
-      </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm }}>
+          {!isNew && (
+            <Button variant="ghost" onClick={() => setConfirmDel(true)} disabled={busy} data-testid="map-note-delete"
+              title="Delete this note" style={{ color: "var(--danger-text)" }}>
+              Delete
+            </Button>
+          )}
+          <span style={{ flex: 1 }} />
+          <Button variant="ghost" onClick={() => onClose?.()} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={save} disabled={busy || problems.length > 0}
+            accent="var(--accent-notes)" onAccent="var(--on-accent-notes)"
+            data-testid="map-note-save"
+            title={problems.length ? problems[0] : `Save ${mapNoteHeadline(draft)}`}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
