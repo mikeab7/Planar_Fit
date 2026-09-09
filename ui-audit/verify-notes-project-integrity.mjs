@@ -237,9 +237,17 @@ if (await badge.count()) {
 
 /* …and the case the badge exists for: a note still filed under a project that has since been
  * deleted. That is NOT the same fact as "no project", and captioning it as if it were is the
- * conflation that hid the original mis-filing for a week. */
+ * conflation that hid the original mis-filing for a week.
+ *
+ * ⛔ NEW-1 (owner decision 2026-09-09) MOVED THIS ROW OUT OF THE LIVE DASHBOARD TREE — a page
+ * whose project genuinely no longer resolves is collected in the Unfiled view, never
+ * interleaved with the live groups, so it is reached through the footer rail's Unfiled row
+ * now rather than a direct click on the Dashboard. This is the access path changing, not the
+ * badge behaviour this section actually tests. */
 await page.goto(`${BASE}#/notes`, { waitUntil: "domcontentloaded" });
 await page.waitForSelector('[data-testid="notes-tree"]', { timeout: 20000 });
+await tb("notes-view-unfiled").click();
+await pacedWait(page, 400);
 await tb("notes-row-dead_note").click();
 await pacedWait(page, 600);
 const deadLabel = (await tb("note-project-badge").innerText()).trim();
@@ -249,9 +257,17 @@ ok("⛔ AN ID WITH NO PROJECT BEHIND IT IS NAMED AS SUCH, never captioned as 'no
 /* …and the recovered note, which genuinely belongs nowhere, says exactly that instead.
  * "Show me" navigated INTO Grand Port (that is the point — the copy is usually somewhere
  * else), and inside a project the rail shows that project and nothing else, so the way back
- * to a no-project note is the all-notes view. */
+ * to a no-project note is the all-notes view.
+ *
+ * ⛔ A HASH-ONLY `page.goto` DOES NOT REMOUNT THIS SPA — the rail's own `view` state (Pages /
+ * Tasks / Unfiled / Bin) survives it exactly like `activePageId` already does, so leaving the
+ * rail on Unfiled above would otherwise carry into this section and hide a page that does NOT
+ * belong there (a `projectId: null` page is deliberately excluded from Unfiled — it is not an
+ * orphan). Switch back to Pages explicitly rather than relying on navigation to reset it. */
 await page.goto(`${BASE}#/notes`, { waitUntil: "domcontentloaded" });
 await page.waitForSelector('[data-testid="notes-tree"]', { timeout: 20000 });
+await tb("notes-view-tree").click();
+await pacedWait(page, 300);
 await tb(`notes-row-${LOST_ID}`).click();
 await pacedWait(page, 600);
 const lostLabel = (await tb("note-project-badge").innerText()).trim();

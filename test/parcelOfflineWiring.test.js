@@ -221,7 +221,9 @@ describe("NEW-4 — an outage offers the way forward instead of dead-ending", ()
   it("the fallback captures WHERE the map is looking, so the plan is never stranded", () => {
     const fn = finder.slice(finder.indexOf("const startBlankHere = "), finder.indexOf("const startBlankHere = ") + 1400);
     expect(fn).toMatch(/const origin = \{ lat: c\.lat, lon: c\.lon != null \? c\.lon : c\.lng \}/);
-    expect(fn).toMatch(/onSkip && onSkip\(\{ origin, county/);
+    // B1399568 — awaited now (was fire-and-forget `onSkip && onSkip(…)`), so the function's own
+    // in-flight guard actually covers the whole round trip through newBlankSite's write.
+    expect(fn).toMatch(/await onSkip\?\.\(\{ origin, county/);
     expect(infoCard).toContain('data-testid="parcel-card-start-blank"');
   });
 
