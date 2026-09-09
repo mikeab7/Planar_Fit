@@ -3,7 +3,7 @@ import {
   sizeBandFor, bandSentenceLabel, compSizeSf, compHeadlineRate, buildPeerSet,
   peerComparisonSentence, compScaleLayout, countyLabel, countyEntry, relativeTimeLabel,
   mostRecentlyAddedComp, buildCompsCardData, SIZE_BANDS, TYPE_LABEL,
-  compScaleKey, scaleLabel, CARD_LEASE_PERIOD, MIN_PEERS_FOR_SCALE,
+  compScaleKey, scaleLabel, DEFAULT_LEASE_PERIOD, leaseRateUnit, MIN_PEERS_FOR_SCALE,
 } from "../src/workspaces/dashboard/lib/compsCardModel.js";
 
 describe("compsCardModel: sizeBandFor", () => {
@@ -297,9 +297,17 @@ const PRODUCTION_ROWS = [
 ];
 
 describe("compsCardModel: DEFECT 1 — one named period across the whole card", () => {
-  it("names the period it speaks in, rather than leaving it implicit in a unit string", () => {
-    expect(CARD_LEASE_PERIOD.key).toBe("annual");
-    expect(CARD_LEASE_PERIOD.unit).toBe("$/SF/yr");
+  it("names the default period, rather than leaving it implicit in a unit string", () => {
+    expect(DEFAULT_LEASE_PERIOD).toBe("annual");
+    expect(leaseRateUnit(DEFAULT_LEASE_PERIOD)).toBe("$/SF/yr");
+  });
+
+  it("the period is now a CHOICE, not a constant — every function accepts either", () => {
+    expect(leaseRateUnit("monthly")).toBe("$/SF/mo");
+    const r = compHeadlineRate(leaseComp("a", { rate: 6 }), "monthly");
+    expect(r.value).toBeCloseTo(0.5, 10);
+    expect(r.unit).toBe("$/SF/mo");
+    expect(r.period).toBe("monthly");
   });
 
   it("stamps that period on every lease rate it returns, however the comp was recorded", () => {
@@ -338,6 +346,16 @@ describe("compsCardModel: DEFECT 1 — one named period across the whole card", 
     expect(data.rate.unit).toBe("$/SF/yr");
     // The one same-county peer was recorded monthly and reaches the scale annualized (0.65 x 12).
     expect(data.peerSet.peers.map((p) => p.rate)).toEqual([0.65 * 12]);
+  });
+
+  it("flipping the toggle to monthly re-normalizes EVERY rate to monthly instead — still one ruler", () => {
+    const data = buildCompsCardData(PRODUCTION_ROWS, "monthly");
+    expect(data.rate.period).toBe("monthly");
+    expect(data.rate.unit).toBe("$/SF/mo");
+    // Featured was recorded ANNUAL (0.64/SF/yr) -> monthly is 0.64/12.
+    expect(data.rate.value).toBeCloseTo(0.64 / 12, 10);
+    // The one same-county peer was recorded monthly already, so it passes through untouched.
+    expect(data.peerSet.peers.map((p) => p.rate)).toEqual([0.65]);
   });
 });
 
@@ -417,6 +435,24 @@ describe("compsCardModel: DEFECT 2 — a peer set is one lease structure and one
     expect(scaleLabel("lease:annual:gross")).toBe("gross");
     expect(scaleLabel("land:sf")).toBe("$/SF");
     expect(scaleLabel(null)).toBeNull();
+  });
+
+  it("scaleLabel recognizes a MONTHLY-period key exactly the same way — the toggle must not blind it", () => {
+    expect(compScaleKey(leaseComp("a"), "monthly")).toBe("lease:monthly:nnn");
+    expect(scaleLabel("lease:monthly:nnn")).toBe("NNN");
+    expect(scaleLabel("lease:monthly:gross")).toBe("gross");
+  });
+
+  it("buildPeerSet excludes a gross peer under a monthly-period card exactly as it does under annual", () => {
+    const featured = leaseComp("f", { rate: 5, createdAt: "2026-09-08" });
+    const comps = [
+      featured,
+      { ...leaseComp("g1", { rate: 11, createdAt: "2026-09-01" }), leaseRateExpense: "gross" },
+      leaseComp("n1", { rate: 5.2, createdAt: "2026-07-01" }),
+    ];
+    const { peers, excludedReason } = buildPeerSet(comps, featured, "monthly");
+    expect(peers.map((p) => p.comp.id)).toEqual(["n1"]);
+    expect(excludedReason).toBe("not quoted NNN");
   });
 });
 
