@@ -336,7 +336,33 @@ export const ORG_GROUP_LABEL = "Organization";
  *  content the same reachability guarantee B1374 gives "Not in a project" pages, with no new
  *  UI surface. Placed FIRST — it is deliberate reference material, not a fallback bucket
  *  like "Not in a project" (which stays LAST, unchanged). */
-export function projectGroups(tree, projects = []) {
+/** UNFILED (NEW-1) — a root page whose project once resolved and does not any more: the
+ *  project row itself is gone from the account's project list while the page's own bytes
+ *  are untouched. Genuinely different from a `NO_PROJECT_LABEL` page (`projectId == null`),
+ *  which was deliberately created outside any project and is exactly where it was put —
+ *  that is not an orphan and must never be swept in here.
+ *
+ *  Only counted while `projectsState === "ready"`: an unresolved id while the project list
+ *  is still loading, or failed to load, says nothing about whether the project is really
+ *  gone (see Notes.jsx's own `resolveProjectRef` for the same three-way distinction — a
+ *  failed lookup and a genuinely deleted project must never be captioned, or handled, the
+ *  same way). */
+function isOrphanedRoot(page, byId, projectsState) {
+  if (!page || page.orgScope) return false;
+  const pid = page.projectId ?? null;
+  return pid != null && !byId.has(pid) && projectsState === "ready";
+}
+
+/** Every root page that is genuinely orphaned right now (owner decision 2026-09-09: orphaned
+ *  notes get their own holding row — "Unfiled" — never the Bin, and no retention timer starts
+ *  on them). Consumed by the rail's footer count and its Unfiled view; `projectGroups` below
+ *  excludes exactly this same set so they are never ALSO interleaved into the live tree. */
+export function unfiledPages(tree, projects = [], projectsState = "ready") {
+  const byId = new Map((projects || []).filter(Boolean).map((p) => [p.id, p]));
+  return rootsOf(tree).filter((p) => isOrphanedRoot(p, byId, projectsState));
+}
+
+export function projectGroups(tree, projects = [], projectsState = "ready") {
   const byId = new Map((projects || []).filter(Boolean).map((p) => [p.id, p]));
   const order = [];
   const groups = new Map();
@@ -344,7 +370,20 @@ export function projectGroups(tree, projects = []) {
     if (!groups.has(key)) { groups.set(key, []); order.push(key); }
     groups.get(key).push(page);
   };
-  for (const p of rootsOf(tree)) put(p.orgScope ? " org" : (p.projectId ?? " none"), p);
+  for (const p of rootsOf(tree)) {
+    /* UNFILED (NEW-1) — a page whose project is genuinely gone is not grouped here at
+     * all; it belongs in the Unfiled collection (`unfiledPages` above), never interleaved
+     * with the live project groups. This is also NEW-2's fix: the "From a project you
+     * deleted" heading used to render once per ORPHANED PAGE rather than once per group,
+     * because each orphan legitimately keyed its own one-page group by its own dead
+     * project id — excluding them here means that heading never appears in this list at
+     * all any more (the Unfiled view states it once, for the whole collection, regardless
+     * of how many different dead projects they originally came from). A list that is still
+     * loading or that failed to load is not evidence of deletion, so those pages stay
+     * inline, flagged, exactly as before. */
+    if (isOrphanedRoot(p, byId, projectsState)) continue;
+    put(p.orgScope ? " org" : (p.projectId ?? " none"), p);
+  }
   const out = [];
   if (groups.has(" org")) {
     out.push({ projectId: null, org: true, name: ORG_GROUP_LABEL, resolved: true, pages: groups.get(" org") });

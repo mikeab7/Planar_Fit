@@ -48,8 +48,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ancestorIds, boundProjectIds, descendantPageIds, displayTitle, findPage, pagesInScope, projectGroups,
-  subpagesPhrase, subtreePageIds, trashEntries,
-  NO_PROJECT_LABEL, ORG_GROUP_LABEL, SCOPE_ALL, SCOPE_ORG, SCOPE_PROJECT,
+  subpagesPhrase, subtreePageIds, trashEntries, unfiledPages,
+  NO_PROJECT_LABEL, ORG_GROUP_LABEL, SCOPE_ALL, SCOPE_ORG, SCOPE_PROJECT, TRASH_RETENTION_DAYS,
 } from "../lib/notesModel.js";
 import { absoluteStamp, daysLeft } from "../lib/notesTime.js";
 import { QUICK_OPEN_KEY } from "../lib/notesQuickOpen.js";
@@ -89,15 +89,23 @@ const rowBase = {
  * still reads them. Nothing has to be migrated to bring a Recent view back if he ever wants
  * one — it is a component, not a schema.
  *
- * ⛔ AND **TASKS** IS BACK TO THREE (NEW-4), which is not a reversal of the above. Recent
+ * ⛔ AND **TASKS** WAS BACK TO THREE (NEW-4), which was not a reversal of the above. Recent
  * was removed because it re-sorted the SAME pages by a fact the owner does not navigate by;
  * this shows something no other surface in the module can show at all — every unticked
  * checklist line in every note, which is otherwise trapped one note at a time. It earns a
- * segment because without it the information does not exist anywhere. */
+ * segment because without it the information does not exist anywhere.
+ *
+ * ⛔ AND **BIN LEAVES THE SEGMENTED CONTROL** (NEW-3, owner decision 2026-09-09). Pages and
+ * Tasks are places you WORK; the Bin is a STATE, so it was permanently squeezing the two
+ * segments he actually wants into two of three slots for a destination he usually does not.
+ * It moves to the sidebar's own FOOTER RAIL (`SidebarFooter`, below), alongside the new
+ * Unfiled row — see that component's header for why the two belong together and what tells
+ * them apart. This is TWO segments again, but for a different reason than B36050: Bin was
+ * never re-sorting the same pages by a fact nobody navigates by, it was a whole other
+ * destination competing for the same three slots. */
 const VIEWS = [
   { id: "tree", label: "Pages" },
   { id: "tasks", label: "Tasks" },
-  { id: "bin", label: "Bin" },
 ];
 
 /* ---- primitives ------------------------------------------------------------------------ */
@@ -784,6 +792,66 @@ function ViewTabs({ view, onView, narrow = false }) {
   );
 }
 
+/** ⛔ THE FOOTER RAIL (NEW-3, owner decision 2026-09-09) — where Bin went when it left the
+ *  segmented control above, and where Unfiled lives from the day it exists at all.
+ *
+ *  Pinned BELOW the scrolling tree, never inside it — a sibling `flex: 0 0 auto` row, the
+ *  same shape the header block above already uses, so it stays on screen without scrolling
+ *  the tree to find it (VIEWPORT-STABLE's spirit: chrome that matters does not hide behind a
+ *  scroll).
+ *
+ *  TWO DIFFERENT PRESENCE RULES, because Bin and Unfiled are different KINDS of thing:
+ *   • **Bin is a STANDING FEATURE** — always reachable, whether or not anything is in it,
+ *     exactly as it was as a permanent tab. It states its retention period ON THE ROW
+ *     (`kept {N} days`) — the reminder Michael needs at the moment he is deciding whether the
+ *     Bin is safe, not buried a click away inside the view.
+ *   • **Unfiled only exists when it has something to say.** An "Unfiled (0)" row nagging
+ *     permanently is exactly the noise PANEL-BREVITY exists to cut — an account that has
+ *     never had a project deleted should never see this row at all. It carries a count
+ *     because, unlike the Bin, the number IS the point: it says how many notes are waiting
+ *     on a decision. */
+function SidebarFooter({ unfiledCount, view, narrow = false, onOpenUnfiled, onOpenBin }) {
+  const rowStyle = (on) => ({
+    ...rowBase, minHeight: narrow ? 44 : undefined,
+    background: on ? "var(--accent-notes)" : "transparent",
+    color: on ? "var(--on-accent-notes)" : "var(--text-primary)",
+    borderColor: on ? "var(--accent-notes)" : "var(--border-default)",
+  });
+  return (
+    <div
+      data-testid="notes-footer-rail"
+      style={{
+        flex: "0 0 auto", padding: "6px", display: "flex", flexDirection: "column", gap: 4,
+        borderTop: "1px solid var(--border-default)",
+      }}
+    >
+      {unfiledCount > 0 ? (
+        <button
+          type="button"
+          data-testid="notes-view-unfiled"
+          title="Pages whose project you deleted. No timer — file them or bin them yourself."
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onOpenUnfiled}
+          style={{ ...rowStyle(view === "unfiled"), justifyContent: "space-between", fontWeight: 650, fontSize: 12.5 }}
+        >
+          <span>Unfiled</span>
+          <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.85 }}>{unfiledCount}</span>
+        </button>
+      ) : null}
+      <button
+        type="button"
+        data-testid="notes-view-bin"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onOpenBin}
+        style={{ ...rowStyle(view === "bin"), flexDirection: "column", alignItems: "flex-start", gap: 0, justifyContent: "center" }}
+      >
+        <span style={{ fontWeight: 650, fontSize: 12.5 }}>Bin</span>
+        <span style={{ fontSize: 10.5, fontWeight: 600, opacity: 0.75 }}>kept {TRASH_RETENTION_DAYS} days</span>
+      </button>
+    </div>
+  );
+}
+
 /* ---- the rail --------------------------------------------------------------------------- */
 
 export default function NotesTree({
@@ -820,7 +888,12 @@ export default function NotesTree({
     () => pagesInScope(tree, projectId, grouped ? SCOPE_ALL : (orgScope ? SCOPE_ORG : SCOPE_PROJECT)),
     [tree, projectId, grouped, orgScope],
   );
-  const groups = useMemo(() => (grouped ? projectGroups(tree, projects) : []), [grouped, tree, projects]);
+  const groups = useMemo(() => (grouped ? projectGroups(tree, projects, projectsState) : []), [grouped, tree, projects, projectsState]);
+  /* UNFILED (NEW-1) — every root page whose project is genuinely gone, tree-wide, exactly
+   * like the Bin's trash entries are tree-wide: this is not scoped to the current project or
+   * to the Dashboard, because an orphan by definition no longer belongs to anywhere you could
+   * be "standing in". Reachable from the footer rail below regardless of context. */
+  const unfiled = useMemo(() => unfiledPages(tree, projects, projectsState), [tree, projects, projectsState]);
   /* ⛔ THE "BELONGS TO" PANEL MUST OFFER EVERY PROJECT YOU ACTUALLY HAVE NOTES IN, not only
    * the ones the project list resolved. From the Dashboard there is no "this project" to
    * lend, so without this the panel could only ever un-file a page and never file one —
@@ -838,6 +911,11 @@ export default function NotesTree({
    * keystroke of a rename. The workspace computes them once, only while the Bin view is open.
    * Falls back to the bare entries so a build that has not wired it still lists the bin. */
   const bin = useMemo(() => (binFacts?.length ? binFacts : trashEntries(tree)), [binFacts, tree]);
+
+  /* ONE way to switch views, shared by the segmented control above and the footer rail's Bin
+   * / Unfiled rows below — both are "which view is showing" the same way, and a query left
+   * over from search must not survive the switch either way. */
+  const changeView = (v) => { setView(v); onQueryChange(""); onViewChange?.(v); };
 
   /* OPEN THE PATH TO THE PAGE YOU ARE ON, and leave the rest shut. It only ever ADDS: a
    * branch the user opened by hand stays open, because a rail that closes what you just
@@ -1113,7 +1191,7 @@ export default function NotesTree({
         </div>
         {/* The workspace root is told which view is showing, so the task rollup — which has
             to read every page BODY in scope — is computed only while it is on screen. */}
-        <ViewTabs view={view} narrow={narrow} onView={(v) => { setView(v); onQueryChange(""); onViewChange?.(v); }} />
+        <ViewTabs view={view} narrow={narrow} onView={changeView} />
         <ProjectListBanner
           state={projectsState}
           error={projectsError}
@@ -1129,6 +1207,25 @@ export default function NotesTree({
           <TaskList groups={taskGroups} onToggle={onToggleTask} onOpen={onOpenTask} />
         ) : view === "bin" ? (
           <BinList entries={bin} onRestore={onRestore} onPurge={onPurge} onPurgeAll={onPurgeAll} onPeek={onPeekBin} onPurgeEmpties={onPurgeEmpties} />
+        ) : view === "unfiled" ? (
+          /* ⛔ UNFILED (NEW-1) — the holding row, not the Bin. Rendered through the SAME
+           * `renderPage` every other root uses, at every depth, which is what gives an
+           * orphaned page its full right-click menu for free: "Belongs to…" files it under a
+           * real project, "Delete" bins it as a deliberate, separate act. Nothing here starts
+           * a retention clock — these pages simply sit until Michael decides. */
+          unfiled.length === 0 ? (
+            <p data-testid="notes-unfiled-empty" style={{ margin: "8px 10px", fontSize: 12, color: "var(--text-tertiary)" }}>
+              Nothing unfiled.
+            </p>
+          ) : (
+            <div data-testid="notes-unfiled" style={{ padding: "2px 2px 10px" }}>
+              <p style={{ margin: "2px 8px 8px", fontSize: 11.5, lineHeight: 1.5, color: "var(--text-tertiary)" }}>
+                {unfiled.length === 1 ? "1 page" : `${unfiled.length} pages`} from a project you deleted. Nothing
+                here is on a timer — file it under a project from its menu, or delete it yourself when you're ready.
+              </p>
+              {unfiled.map((p) => renderPage(p, 0, true))}
+            </div>
+          )
         ) : roots.length === 0 ? (
           /* ⛔ AN EMPTY RAIL MUST EXPLAIN ITSELF (B1374, kept). Inside a project with notes
              living elsewhere, the way to all of them is the Dashboard — one click, from here
@@ -1169,6 +1266,14 @@ export default function NotesTree({
           roots.map((p) => renderPage(p, 0, true))
         )}
       </div>
+
+      <SidebarFooter
+        unfiledCount={unfiled.length}
+        view={view}
+        narrow={narrow}
+        onOpenUnfiled={() => changeView("unfiled")}
+        onOpenBin={() => changeView("bin")}
+      />
 
       {menu && <RowMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </div>

@@ -608,6 +608,44 @@ position**.
       is never re-examined for binned-ness. Worth closing if it is ever observed live; not closed
       here because doing so safely needs gating the whole integrity scan on "at least one seed
       has completed," which is a bigger change than this fix warranted.
+12. **⛔ A LIVE-VERIFY SESSION CLEANS UP ITS OWN NOTES PAGES, NOT JUST ITS OWN PROJECT (NEW-4,
+    owner report 2026-09-09 — established via the Supabase MCP against `planyr_production`, not
+    assumed).** He found six pages under "From a project you deleted," all titled "Untitled
+    page." **Every one is a session's own diagnostic probe, not his data** — confirmed by
+    reading the actual stored bodies: *"persistence check 6:52pm"* · *"V872976 persistence
+    check"* · *"soft delete check"* · *"race check after 1479"* · *"check after 1475"* ·
+    *"PERSIST CHECK 0227Z"*. All six were created within one 2.5-hour window, 2026-09-05 23:48
+    UTC → 2026-09-06 02:21 UTC, each under its OWN freshly-minted throwaway project id
+    (`smtp17mwi649` … `smtp6qplz47d`) — six separate repro cycles of **V872976 / B1202176**
+    (the "New project → first real write happens in Notes, not Site Planner → does the
+    `sites` row ever materialize?" bug, whose own live-verify steps 14-16 literally instruct
+    *"navigate to that project's Notes tab and click '+ New page'... paste or type some text
+    into it"* — this is not a guess, it is that exact script, run six times).
+    **The session (or sessions) DID clean up three of its six throwaway projects** — `sites`
+    rows for `smtp2dcu4i53`/`smtp6brrghkg`/`smtp6qplz47d` were bulk soft-deleted together at
+    the SAME timestamp, `2026-09-06 03:50:22.589677+00`, a single deliberate cleanup pass (the
+    other three never got a `sites` row at all, which is the original bug reproducing
+    correctly). **It just never went back for the NOTES pages the same cycles had filed** —
+    cleaning up the plan/project side of a repro and stopping there leaves exactly this
+    residue, because a Notes page's bytes are NEVER gated on its project's `sites` row existing
+    (`Notes.jsx`'s wiring to `ensureProjectRow` is deliberately best-effort — "its bytes are
+    never at risk," per V872976's own text — which is correct for not losing a real user's
+    words and is exactly what let a throwaway diagnostic page survive its own project's
+    deletion).
+    **THE RULE, stated so the next live-verify session cannot repeat this:** a live check that
+    creates a throwaway PROJECT to reproduce a bug must delete every NOTES PAGE it filed under
+    that project too, in the SAME cleanup pass — not as a separate, easy-to-forget step. Before
+    ending a live-verify session that touched Notes, confirm zero throwaway pages remain (the
+    Unfiled row this same item — NEW-1 — adds is now the fastest way to check: an account with
+    no real orphans should show none). This extends `CLAUDE.md`'s owner constraint #7 ("a live
+    check runs on a throwaway duplicate of a real plan... and the session says exactly what was
+    touched") — that constraint's own wording is about Site Planner plans; Notes pages filed
+    under a throwaway project are exactly the same kind of test residue and are covered by the
+    same discipline from here on.
+    **NOT cleaned up as part of this item, deliberately — STANDING RULE #2 applies to test
+    artifacts too, not just symptoms: they are surfaced under Unfiled (NEW-1), never
+    auto-deleted, so Michael can see them and decide.** A session correcting this defect does
+    not get to unilaterally delete rows it merely diagnosed.
 
 ---
 
