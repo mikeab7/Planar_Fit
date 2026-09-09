@@ -20,7 +20,7 @@ import {
   addPage, allPageIds, ancestorIds, boundProjectIds, deleteNode, emptyTree, expiredTrashIds,
   findPage, firstPageId, migrate, movePage, pagesInScope, projectGroups, projectOfPage,
   commitTitle, displayTitle, purgeTrashEntry, recentPages, renameNode, restoreNode, searchTitles, setPageProject,
-  subtreePageIds, touchPage, trashEntries, trashPageIds, walkPages,
+  subtreePageIds, touchPage, trashEntries, trashPageIds, unfiledPages, walkPages,
   NOTES_TREE_VERSION, NO_PROJECT_LABEL, SCOPE_ALL, SCOPE_PROJECT,
 } from "../src/workspaces/notes/lib/notesModel.js";
 
@@ -298,12 +298,26 @@ describe("the Dashboard groups by project, with the no-project group last", () =
     expect(groups[1].pages.map((p) => p.id)).toEqual(["c"]);
   });
 
-  it("a project the list cannot resolve still gets its OWN group, flagged — never folded away", () => {
-    const groups = projectGroups(sample(), []);
-    expect(groups[0].projectId).toBe("GP");
-    expect(groups[0].resolved).toBe(false);
-    expect(groups[0].name).toBeNull();
-    expect(groups[0].pages.map((p) => p.id)).toEqual(["a", "b"]);
+  /* ⛔ SUPERSEDED (NEW-1/NEW-2, owner decision 2026-09-09: orphaned notes get their own
+   * holding row). This USED to assert the unresolved project still got its own inline group,
+   * flagged. That is exactly the bug the owner reported — a page whose project he deleted
+   * kept showing up interleaved in the live tree, and its heading repeated once per orphaned
+   * PAGE rather than once per group. It now goes to `unfiledPages` instead and never appears
+   * in `projectGroups` at all while the project list is genuinely ready. */
+  it("⛔ a project the list has genuinely resolved to be GONE gets NO inline group at all — it is unfiled instead", () => {
+    const groups = projectGroups(sample(), [], "ready");
+    expect(groups.map((g) => g.projectId)).not.toContain("GP");
+    expect(groups.map((g) => g.pages.map((p) => p.id)).flat()).toEqual(["c"]);
+  });
+
+  it("...but while the project list is only LOADING or FAILED, an unresolved id is not evidence of deletion — it stays inline, flagged", () => {
+    for (const state of ["loading", "failed"]) {
+      const groups = projectGroups(sample(), [], state);
+      const gp = groups.find((g) => g.projectId === "GP");
+      expect(gp, state).toBeTruthy();
+      expect(gp.resolved, state).toBe(false);
+      expect(gp.pages.map((p) => p.id), state).toEqual(["a", "b"]);
+    }
   });
 
   it("emits no empty groups", () => {
@@ -314,6 +328,36 @@ describe("the Dashboard groups by project, with the no-project group last", () =
     const groups = projectGroups(sample(), [{ id: "GP", name: "Grand Port" }]);
     const ids = groups.flatMap((g) => g.pages.map((p) => p.id));
     expect(ids.slice().sort()).toEqual(["a", "b", "c"]);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════ */
+describe("UNFILED — orphaned notes get their own holding row, never the Bin, never a timer (NEW-1, owner decision 2026-09-09)", () => {
+  it("a root page whose project is genuinely gone is unfiled", () => {
+    expect(unfiledPages(sample(), [], "ready").map((p) => p.id)).toEqual(["a", "b"]);
+  });
+
+  it("a root page bound to a project that DOES resolve is never unfiled", () => {
+    expect(unfiledPages(sample(), [{ id: "GP", name: "Grand Port" }], "ready")).toEqual([]);
+  });
+
+  it("a page deliberately created with NO project (`Not in a project`) is never unfiled — it is not an orphan", () => {
+    const ids = unfiledPages(sample(), [], "ready").map((p) => p.id);
+    expect(ids).not.toContain("c");
+  });
+
+  it("while the project list is loading or failed, nothing is unfiled — an unresolved id is not proof of deletion yet", () => {
+    expect(unfiledPages(sample(), [], "loading")).toEqual([]);
+    expect(unfiledPages(sample(), [], "failed")).toEqual([]);
+  });
+
+  it("defaults to the ready state when the caller passes nothing", () => {
+    expect(unfiledPages(sample(), []).map((p) => p.id)).toEqual(["a", "b"]);
+  });
+
+  it("an org-scope page is never unfiled — org pages always carry a null projectId by design", () => {
+    const t = addPage(sample(), { title: "Reference", orgScope: true }).tree;
+    expect(unfiledPages(t, [], "ready").some((p) => p.title === "Reference")).toBe(false);
   });
 });
 

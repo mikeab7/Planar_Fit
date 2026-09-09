@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId } from "../src/shared/projects/projectModel.js";
+import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, findProjectAtOrigin, distanceFeetBetween, SAME_GROUND_FT } from "../src/shared/projects/projectModel.js";
 import { listProjects } from "../src/shared/projects/projects.js";
 import { setActiveUser } from "../src/workspaces/site-planner/lib/activeUser.js";
 
@@ -388,5 +388,94 @@ describe("listProjects — pursuit-only by default (NEW-1)", () => {
       fresh: { id: "fresh", groupId: "fresh", site: "Fresh site", role: "pursuit", updatedAt: 60 },
     }));
     expect(listProjects().map((p) => p.id).sort()).toEqual(["fresh", "legacy"]);
+  });
+});
+
+// B1399568 — ADOPT, DON'T MINT: planning a site on ground that already carries a project must
+// find that project rather than let a second `group_id = id` row be minted. Production evidence:
+// two projects born 51s apart at byte-identical origin coordinates (lat 33.44769381770632, lon
+// -94.13769222822577 — "ALUMAX RD, NASH,", Bowie county), both empty shells. `findProjectAtOrigin`
+// is the pure decision SitePlannerApp.jsx's newSiteFromMap/newBlankSite consult before minting —
+// see its header in projectModel.js. Full mint-vs-adopt integration proof (through the real
+// storage.js saveSite/loadSitesList) lives in test/duplicateProjectOrigin.test.js; this suite
+// covers the matching rule itself.
+describe("distanceFeetBetween — pure haversine distance", () => {
+  it("is 0 for the identical point", () => {
+    expect(distanceFeetBetween({ lat: 33.4, lon: -94.1 }, { lat: 33.4, lon: -94.1 })).toBe(0);
+  });
+
+  it("is Infinity for a missing or non-finite point on either side", () => {
+    expect(distanceFeetBetween(null, { lat: 1, lon: 1 })).toBe(Infinity);
+    expect(distanceFeetBetween({ lat: 1, lon: 1 }, { lat: NaN, lon: 1 })).toBe(Infinity);
+    expect(distanceFeetBetween({ lat: 1, lon: 1 }, undefined)).toBe(Infinity);
+  });
+
+  it("reports a real distance in the right ballpark for a known-separated pair", () => {
+    // Roughly a degree of latitude apart ≈ 364,000-366,000 ft (~69 miles) at this latitude.
+    const d = distanceFeetBetween({ lat: 33.0, lon: -94.0 }, { lat: 34.0, lon: -94.0 });
+    expect(d).toBeGreaterThan(360000);
+    expect(d).toBeLessThan(367000);
+  });
+});
+
+describe("findProjectAtOrigin — the ADOPT decision", () => {
+  const ORIGIN = { lat: 33.44769381770632, lon: -94.13769222822577 };
+
+  it("returns null when nothing exists at this ground yet", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: { lat: 40, lon: -100 }, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBeNull();
+  });
+
+  it("returns null for an unusable origin (missing / non-finite)", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: ORIGIN, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, null)).toBeNull();
+    expect(findProjectAtOrigin(records, { lat: NaN, lon: ORIGIN.lon })).toBeNull();
+  });
+
+  it("finds a project at the byte-identical production origin", () => {
+    const records = [{ id: "smtu8o27freg", groupId: "smtu8o27freg", site: "ALUMAX RD, NASH,", origin: ORIGIN, updatedAt: 1000 }];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBe("smtu8o27freg");
+  });
+
+  it("matches any plan in a group, not only the anchor row (a plan's origin mirrors its project's)", () => {
+    const records = [
+      { id: "anchorA", groupId: "anchorA", origin: ORIGIN, updatedAt: 100 },
+      { id: "plan2", groupId: "anchorA", origin: ORIGIN, updatedAt: 500 }, // a second plan of the SAME project
+    ];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBe("anchorA");
+  });
+
+  it("does not match a genuinely different location", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: { lat: 29.76, lon: -95.37 }, updatedAt: 100 }]; // Houston, TX — far away
+    expect(findProjectAtOrigin(records, ORIGIN)).toBeNull();
+  });
+
+  it("tolerates float jitter within SAME_GROUND_FT but not beyond it", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: ORIGIN, updatedAt: 100 }];
+    // ~1e-6 deg of lat is on the order of a few inches — well inside the tolerance.
+    const nudgedIn = { lat: ORIGIN.lat + 0.000001, lon: ORIGIN.lon };
+    expect(findProjectAtOrigin(records, nudgedIn)).toBe("g1");
+    // A degree of latitude is tens of miles — far outside SAME_GROUND_FT.
+    const farAway = { lat: ORIGIN.lat + 1, lon: ORIGIN.lon };
+    expect(findProjectAtOrigin(records, farAway)).toBeNull();
+    expect(SAME_GROUND_FT).toBeLessThan(500); // sanity: this is a tight "same click" tolerance, not a neighborhood radius
+  });
+
+  it("excludes a given group id (never adopts itself)", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: ORIGIN, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, ORIGIN, { excludeGroupId: "g1" })).toBeNull();
+  });
+
+  it("breaks a tie between pre-existing duplicates by picking the most recently updated group", () => {
+    const records = [
+      { id: "older", groupId: "older", origin: ORIGIN, updatedAt: 100 },
+      { id: "newer", groupId: "newer", origin: ORIGIN, updatedAt: 900 },
+    ];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBe("newer");
+  });
+
+  it("ignores records with no origin at all", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: null, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBeNull();
   });
 });
