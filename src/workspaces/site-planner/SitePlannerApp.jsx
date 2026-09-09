@@ -49,7 +49,7 @@ import { RADIUS } from "../../shared/ui/radius.js";
 // downstream propagation entirely — the same principle NEW-2(a) already applied to `currentSite`.
 import { writeLastRoute } from "../../app/lastRoute.js";
 import { DEFAULT_MODULE } from "../../app/route.js";
-import { markProjectFreshlyMinted } from "../../shared/projects/projectModel.js";
+import { markProjectFreshlyMinted, findProjectAtOrigin } from "../../shared/projects/projectModel.js";
 
 migrateOldAutosave(); // bring any legacy single-slot autosave into the site store
 migrateSiteGroups();  // give every legacy record a site (location) group
@@ -585,6 +585,13 @@ export default function App({
   // sits BEFORE `saveSite` on purpose: `team_id` is written only on the row's INSERT, so a team
   // stamped afterwards would need an UPDATE — which the database now refuses outright.
   const newSiteFromMap = async (payload) => {
+    // B1399568 — ADOPT, DON'T MINT: production minted two projects 51s apart at byte-identical
+    // origin coordinates. Check fresh (never the possibly-stale `sites` prop) whether this exact
+    // ground already has a project before minting a second `group_id = id` row, and open it
+    // instead — regardless of whether this is a genuine second press or a re-entered call. See
+    // findProjectAtOrigin's header in shared/projects/projectModel.js.
+    const existingGroupId = payload.origin ? findProjectAtOrigin(loadSitesList(), payload.origin) : null;
+    if (existingGroupId) { openProjectGroup(existingGroupId); return; }
     const id = newId();
     locallyMintedGroupsRef.current.add(id); // B1202176 — see the ref's own header
     markProjectFreshlyMinted(id); // B1202176 (extended) — this ref's cross-reload twin
@@ -619,11 +626,18 @@ export default function App({
    * stranded in blank space. That one DOES get written immediately — an anchor is a fact worth
    * keeping even before anything is drawn (and `persistOrDrop` keeps a blank plan that has one). */
   const newBlankSite = async (opts) => {
+    const o = opts && opts.origin && Number.isFinite(opts.origin.lat) && Number.isFinite(opts.origin.lon)
+      ? { lat: opts.origin.lat, lon: opts.origin.lon } : null;
+    // B1399568 — ADOPT, DON'T MINT: same guard as newSiteFromMap, for this project's other
+    // birthplace (the located blank branch below). Only located blanks can collide — an
+    // unlocated blank writes nothing, so it can never duplicate a project.
+    if (o) {
+      const existingGroupId = findProjectAtOrigin(loadSitesList(), o);
+      if (existingGroupId) { openProjectGroup(existingGroupId); return; }
+    }
     const id = newId();
     locallyMintedGroupsRef.current.add(id); // B1202176 — see the ref's own header; covers BOTH branches below
     markProjectFreshlyMinted(id); // B1202176 (extended) — this ref's cross-reload twin; covers BOTH branches below
-    const o = opts && opts.origin && Number.isFinite(opts.origin.lat) && Number.isFinite(opts.origin.lon)
-      ? { lat: opts.origin.lat, lon: opts.origin.lon } : null;
     if (o) {
       // B326416 — the second (and last) birthplace of a project. See newSiteFromMap.
       const { teamId } = await defaultShareTeam(signedInUid, SHARE_LOADERS);

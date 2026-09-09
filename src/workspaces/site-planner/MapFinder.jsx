@@ -3027,21 +3027,39 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
    * no longer has a second caller on this toolbar. */
 
 
+  /* B1399568/FINDING-B — `startBlankHere` is reachable from FOUR places (the toolbar's own "Draw"
+   * button, the decide bar's "site" verb, ParcelInfoCard's outage fallback, and the map-wide
+   * outage offer) and NONE of the first three funnel through the decide bar's `decideBusyRef`
+   * guard. The function itself awaits a county lookup (up to 3s) before it ever hands off to
+   * `onSkip` (= `newBlankSite`), which then awaits a team resolution before writing — a
+   * multi-second window with nothing on screen yet. The guard therefore lives HERE, at the one
+   * function every entry point already calls, rather than duplicated at each call site (three of
+   * which this item found un-gated). Awaiting `onSkip` (previously fire-and-forget) is what makes
+   * the guard's window cover the WHOLE round trip through `newBlankSite`'s own ground-adopt check
+   * and write, not just this function's own body — a fire-and-forget `onSkip` would have let a
+   * second press re-enter `newBlankSite` before the first press's `saveSite` had run. */
+  const startBlankHereBusyRef = useRef(false);
   const startBlankHere = async (at) => {
-    const c = at || (mapRef.current ? mapRef.current.getCenter() : null);
-    if (!c) { onSkip && onSkip(); return; }
-    const origin = { lat: c.lat, lon: c.lon != null ? c.lon : c.lng };
-    setErr(""); setFallbackOffer(null);
-    let county = null;
+    if (startBlankHereBusyRef.current) return;
+    startBlankHereBusyRef.current = true;
     try {
-      const ans = await Promise.race([
-        countyAtPoint(origin.lon, origin.lat),
-        new Promise((res) => setTimeout(() => res(null), 3000)),
-      ]);
-      // NEW-1 — state-qualified; see `resolveCompCounty` above for why an unqualified name is a defect.
-      county = ans?.name ? countyKeyForName(ans.name, ans.state) : null;
-    } catch (_) { /* the planner resolves it from the origin on load */ }
-    onSkip && onSkip({ origin, county, name: parcelInfo?.label || addr.trim() || "Untitled site" });
+      const c = at || (mapRef.current ? mapRef.current.getCenter() : null);
+      if (!c) { await onSkip?.(); return; }
+      const origin = { lat: c.lat, lon: c.lon != null ? c.lon : c.lng };
+      setErr(""); setFallbackOffer(null);
+      let county = null;
+      try {
+        const ans = await Promise.race([
+          countyAtPoint(origin.lon, origin.lat),
+          new Promise((res) => setTimeout(() => res(null), 3000)),
+        ]);
+        // NEW-1 — state-qualified; see `resolveCompCounty` above for why an unqualified name is a defect.
+        county = ans?.name ? countyKeyForName(ans.name, ans.state) : null;
+      } catch (_) { /* the planner resolves it from the origin on load */ }
+      await onSkip?.({ origin, county, name: parcelInfo?.label || addr.trim() || "Untitled site" });
+    } finally {
+      startBlankHereBusyRef.current = false;
+    }
   };
   // Always capture the planner underlay from Esri: it supports image `export`
   // (USGS tiles render on the map but its export op returns no image). The
@@ -3075,7 +3093,11 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     const name = siteNameFromParcel(last?.attrs, {
       addr: last?.addr, searched: parcelInfo?.label || addr.trim(), acct: last?.acct,
     });
-    onUseParcels({ ...asm, name, county });
+    // B1399568/FINDING-B — awaited (was fire-and-forget): `onUseParcels` (= newSiteFromMap) has
+    // its own await before it writes, so runDecideVerb's in-flight guard only covers the whole
+    // round trip — and therefore only closes the race — if this function's own promise doesn't
+    // resolve until newSiteFromMap has actually finished.
+    await onUseParcels({ ...asm, name, county });
   };
 
   const asm = selected.length ? computeAssembly(selected, BASEMAPS.esri.export) : null;
@@ -3140,11 +3162,15 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       accent: PAL.accent,
       onAccent: "var(--on-accent)",
       title: "Start a plan on this ground",
+      // B1399568/FINDING-B — `planSelected`/`startBlankHere` are both `async` and await a
+      // network call (county lookup / team resolution) BEFORE the project is ever written, so
+      // `run` must RETURN that promise — runDecideVerb's in-flight guard can only cover the
+      // window it can see.
       run: (target) => {
-        if (target === "parcels") { planSelected(); return; }
+        if (target === "parcels") return planSelected();
         const pin = droppedPin;
         clearDecidePin();
-        if (pin) startBlankHere({ lat: pin.lat, lon: pin.lon });
+        if (pin) return startBlankHere({ lat: pin.lat, lon: pin.lon });
       },
     },
     {
@@ -3153,10 +3179,10 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       onAccent: ON_COMP_ACCENT,
       title: "Record this as a leasing or sale comp",
       run: (target) => {
-        if (target === "parcels") { placeCompOnSelectedParcel(); return; }
+        if (target === "parcels") return placeCompOnSelectedParcel();
         const pin = droppedPin;
         clearDecidePin();
-        if (pin) placeCompPinAt({ lat: pin.lat, lng: pin.lon });
+        if (pin) return placeCompPinAt({ lat: pin.lat, lng: pin.lon });
       },
       // A comp needs somewhere to go: without `onPlaceComp` this whole flow has no receiver.
       available: () => !!onPlaceComp,
@@ -3205,9 +3231,27 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     lastVerb,
     (k) => (verbsByKey[k].available ? verbsByKey[k].available() : true),
   ).map((k) => ({ ...verbsByKey[k], label: verbLabel(k, selected.length) }));
-  const runDecideVerb = (verb, target) => {
+  /* B1399568/FINDING-B — the decide bar had NO in-flight protection: `planSelected` awaits a
+   * county lookup (up to 3s) and `newSiteFromMap` then awaits a team resolution, both BEFORE the
+   * project is ever written — a multi-second window with nothing on screen yet where a second
+   * press (button or Enter, both funnel through here) re-entered the same verb before the first
+   * press's own write had happened, so the ground-adopt check (findProjectAtOrigin) had nothing
+   * to find yet. `decideBusyRef` (not state alone) is the guard so a stale render closure — the
+   * Enter-key listener's effect below does not list this flag as a dependency — still reads the
+   * live value; `decideBusy` state exists only to drive the buttons' visible disabled state. */
+  const decideBusyRef = useRef(false);
+  const [decideBusy, setDecideBusy] = useState(false);
+  const runDecideVerb = async (verb, target) => {
+    if (decideBusyRef.current) return;
+    decideBusyRef.current = true;
+    setDecideBusy(true);
     setLastVerb(verb.key);
-    verb.run(target);
+    try {
+      await verb.run(target);
+    } finally {
+      decideBusyRef.current = false;
+      setDecideBusy(false);
+    }
   };
 
   /* ────────────────────────────────────────────────────────────────────────────────────────
@@ -3815,6 +3859,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                   <Button
                     variant={i === 0 ? "primary" : "ghost"}
                     onClick={() => runDecideVerb(v, decideTarget)}
+                    disabled={decideBusy}
                     title={v.title}
                     data-testid={`map-decide-verb-${v.key}`}
                     style={{
