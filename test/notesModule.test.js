@@ -111,6 +111,9 @@ const ALL_NOTES_FILES = [
   "lib/notesFontFamily.js",
   // B1382548 — a pasted run inherits the font its source gave it. Paste boundary only.
   "lib/notesPasteInherit.js",
+  // NEW-7/NEW-8/NEW-9 — a control reports the RESOLVED VALUE, not whether a mark is stored:
+  // `inherit` is not a colour, and an absent font mark is still a font.
+  "lib/notesResolvedValue.js",
 ];
 const SKETCH_FILES = ALL_NOTES_FILES.filter((f) => f.includes("Sketch"));
 
@@ -456,9 +459,20 @@ describe("no dialog boxes anywhere in the module (owner rule)", () => {
      * `editor.getAttributes("noteCallout")` on every render, and FormatMenu reads its current
      * VALUE from the `value`/`mixed` props its caller computes off the editor's own selection
      * (lib/notesMixedSelection.js) — never off its own `open` state — which is the sharper
-     * assertion above and the reason raising this blunt cap by one is not a weakening. */
+     * assertion above and the reason raising this blunt cap by one is not a weakening.
+     *
+     * ⛔ RAISED 9 → 10 (NEW-7/NEW-9), and here is the justification rather than a silent bump.
+     * The tenth is `resolvedDefaults` — the typeface, size and ink an UNSTYLED run is actually
+     * rendered in, which is the one question in this file the editor cannot answer, because the
+     * answer lives in CSS and only the browser knows it ("Default" is not a font). It is
+     * therefore not a mirror of anything the editor holds: it is seeded from `getComputedStyle`
+     * (never from `editor.`, so the sharp assertion above still covers it), it is re-read in a
+     * layout effect after EVERY render, and the setter returns the previous object unless the
+     * value genuinely changed — so it cannot drift as the caret moves, which is the failure
+     * this cap exists to catch. If a future change makes it read `editor.` at init, the sharp
+     * assertion fails first and this comment is not what saves it. */
     const states = [...bar.matchAll(/useState\(/g)].length;
-    expect(states, "a mirrored active-state copy drifts the moment the caret moves").toBeLessThanOrEqual(9);
+    expect(states, "a mirrored active-state copy drifts the moment the caret moves").toBeLessThanOrEqual(10);
   });
 });
 

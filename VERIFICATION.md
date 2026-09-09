@@ -185,6 +185,28 @@ was never clicked" quietly ships broken.
 6. Check both the light and dark app themes. **Expect:** in both, every label and every pin stays readable — check specifically a pin sitting over water (or another dark patch of imagery) and one sitting over bright pavement/concrete; the label plate must read cleanly against both.
 
 **Result:** ⏳ pending — needs the real GIS host (blocked from this sandbox) and the real account's pin density.
+### V1008240 — B1391952 / B1391953: on HIS Silvestri > Utility note, every run that looks the same reports the same, and no control answers with a category label `Blocker: real-data`
+
+**Why this needs its own real pass.** The fixture is rebuilt from the three encodings he measured, and it reproduces his report exactly — but the encodings came off HIS note, and a real Outlook signature can carry combinations a rebuild does not (a `color: inherit` sitting on a wrapper rather than the run, a highlight with an alpha, a run carrying both). His existing notes are also deliberately NOT rewritten, so they still hold the old marks: the whole point is that the READ path now reports them honestly, and only his note can confirm that.
+
+**What was verified here (this session, real headless Chromium, real mouse drags, logged out).**
+1. `ui-audit/verify-notes-font-control.mjs` — **43 checks, 0 findings** on the shipping build. §3b drives all three colour encodings plus a genuinely red run, the same three for HIGHLIGHT plus a genuinely blue one, a selection across all three (must read as ONE colour) and across two real colours (must go indeterminate), the font control and its dropdown's first row, and the size and spacing boxes.
+2. **RED-PROVEN against untouched `main`**: 7 failures, reproducing his report verbatim — `inherit` → swatch `none`, the false "mixed" across two identical-looking runs, "Default"/"Size"/"Spacing" — while every known-good arm (real red, real blue, a real colour difference) stayed green, which is what localises the fault to the app rather than the instrument.
+3. Unit: `test/notesResolvedValue.test.js` (13 cases). Full repo suite **16,233 green**. Lint, design-drift (back to main's exact count), panel-copy, doc-pointer, signature-budget and visual-regression (16/16) all pass.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, on a THROWAWAY DUPLICATE of Silvestri > Utility (never his real one — owner constraint 7):**
+1. Read the loaded chunk hash in the SAME observation as everything below (`document.querySelectorAll('script[src]')`) and confirm it names a build after this PR merged. **Expect:** not the pre-merge hash. A stale tab reproduces the old behaviour perfectly.
+2. Select "Kandice Cabets". **Expect:** the Font box names a typeface and marks it as the standard one — not the bare word "Default".
+3. Open the Font dropdown. **Expect:** its first row also names that typeface; there is no entry that is just "Default".
+4. Select "Quadvest", then "Contacts:", then "Simon Sequeira" in turn — the three encodings. **Expect:** the colour button shows the SAME black bar under the A all three times. In particular "Contacts:" must no longer show a blank bar.
+5. Select from "Quadvest" through "Simon Sequeira" in one drag. **Expect:** one colour, not an indeterminate/blank state — they are the same black.
+6. Colour one word a real red, then select it together with a black word. **Expect:** NOW it goes indeterminate. (This is the arm that proves step 5 is not just "show nothing".)
+7. Repeat 4–6 with the highlight button on a highlighted and an unhighlighted run. **Expect:** the same behaviour; an unhighlighted run and an `inherit` one read alike.
+8. Select a run you have never sized. **Expect:** the size box shows a NUMBER marked as the standard, not the word "Size". Same for the spacing box, which should name the note's density.
+9. Confirm nothing in the note changed: **Expect:** no text moved, no colour changed. This release rewrites nothing — it only reports.
+
+**Result:** ⏳ pending — needs his own signed-in browser and his own note.
+
 ### V1011856 — B1395568: the "per year / per month" toggle survives a reload and follows the account to a second device, and the map's Comps rail never disagrees with the card `Blocker: auth`
 
 **Why this needs a real pass, and exactly how far the sandbox already got.** The toggle's own mechanics — flipping the featured rate, the peer scale, both tick labels and the sentence together, without also opening the comp underneath it — are driven live in this session against the REAL `CompsCard` component in a real headless browser (see below), not just asserted in a unit test. What a sandbox cannot do is sign in: the proxy CORS-blocks the Supabase auth handshake, so the one thing left is whether the choice actually round-trips through `profiles.prefs.compsRatePeriod` — surviving a reload, and following the account to a second device/browser — and whether the map's Comps rail (a signed-in-only surface: comps are account data) reads back the identical choice the card wrote. This is a narrow residual, not an unverified feature.

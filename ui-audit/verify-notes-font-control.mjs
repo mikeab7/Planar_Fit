@@ -71,13 +71,33 @@ async function edge(needle, side) {
     return null;
   }, [needle, side]);
 }
+/** ⛔ COLLAPSE FIRST — A DRAG THAT STARTS INSIDE AN EXISTING SELECTION IS A DRAG-AND-DROP, NOT A
+ *  NEW SELECTION. Found by this harness contradicting itself: "two genuinely different colours
+ *  still go indeterminate" failed here and PASSED when the same two runs were driven alone. The
+ *  difference was the preceding gesture — the new drag's mousedown landed inside the range the
+ *  previous one had left selected, so the browser began dragging that text instead of selecting.
+ *  It is silent, it can MOVE content, and every assertion after it describes a selection nobody
+ *  made. One click to collapse costs nothing and removes the whole class.
+ *
+ *  ⛔ AND IT PROVES WHAT IT SELECTED. A range that does not actually contain both endpoints is
+ *  reported and refused, rather than measured — a harness may not vouch for a selection it did
+ *  not obtain (DRIVER-SCROLL-IS-NOT-APP-SCROLL §6). */
 async function dragSelect(a, b) {
   const f = await edge(a, "start"); const t = await edge(b, "end");
-  if (!f || !t) return false;
+  if (!f || !t) { fail(`could not locate the range ${a}..${b} — any assertion on it is void`); return false; }
+  await page.mouse.click(f.x, f.y);                 // collapse whatever was selected before
+  await pacedWait(page, 120);
   await page.mouse.move(f.x, f.y); await page.mouse.down();
   await page.mouse.move((f.x + t.x) / 2, (f.y + t.y) / 2, { steps: 4 });
   await page.mouse.move(t.x, t.y, { steps: 4 }); await page.mouse.up();
-  await pacedWait(page, 250); return true;
+  await pacedWait(page, 250);
+  const got = await page.evaluate(() => document.getSelection().toString());
+  const want = [a, b].map((n) => n.replace(/[:]/g, ""));
+  if (!want.every((n) => got.replace(/[:]/g, "").includes(n))) {
+    fail(`the drag ${a}..${b} did not select both endpoints — assertion void`, `selected ${JSON.stringify(got)}`);
+    return false;
+  }
+  return true;
 }
 async function caretIn(needle) {
   const spot = await page.evaluate((n2) => {
@@ -174,8 +194,16 @@ const WORD_HTML = `<div style='font-family:"Calibri",sans-serif;font-size:11.0pt
 <p class=MsoNormal><span style='font-size:11px'>713-416-5353</span></p>
 </div>`;
 await seed({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "paste here" }] }] });
-await page.locator(".ProseMirror").click();
+/* ⛔ CLICK THE TEXT, NEVER THE EDITOR ELEMENT'S CENTRE (carry-forward trap 12). A press on the
+   mat PLACES A NOTE BOX; `locator(".ProseMirror").click()` aims at the element's centre, which on
+   a nearly-empty page is mat, so this harness silently created an anchored box, put the caret
+   inside it, and pasted there — Ctrl+A then selected nothing and the payload arrived as PLAIN
+   TEXT. It reads exactly like a broken paste fix, and it was the harness. */
+if (!(await caretIn("paste here"))) fail("could not place the caret in the seeded text — section 1 is void");
 await page.keyboard.press("Control+A");
+if (!(await page.evaluate(() => document.getSelection().toString().includes("paste here")))) {
+  fail("Ctrl+A did not select the document — the paste below would not replace it");
+}
 await page.evaluate((html) => {
   const dt = new DataTransfer();
   dt.setData("text/html", html);
@@ -325,6 +353,98 @@ await dragSelect("Wordcalibri", "Offpalette");
 const twoFonts = await reportOf("nt-font");
 if (twoFonts === "blank(mixed)") pass("a selection spanning two typefaces reports nothing, announced as mixed (NEW-2)");
 else fail("a two-typeface selection still claims a single font", `reads ${JSON.stringify(twoFonts)}`);
+
+/* ═══ 3b · REPORT THE RESOLVED VALUE, NOT WHETHER A MARK IS STORED (NEW-7 / NEW-8 / NEW-9) ══ */
+console.log("\n3b — one colour, three encodings; and 'Default' is not a font");
+{
+  const M2 = (t, attrs) => ({ type: "text", text: t, marks: attrs ? [{ type: "textStyle", attrs }] : undefined });
+  const HL = (t, color) => ({ type: "text", text: t, marks: [{ type: "highlight", attrs: { color } }] });
+  await seed({
+    type: "doc",
+    content: [
+      /* THE THREE ENCODINGS OF ONE BLACK, exactly as they sit in his own Silvestri note. */
+      { type: "paragraph", content: [M2("Nomarkrun")] },                              // no colour mark
+      { type: "paragraph", content: [M2("Inheritrun", { color: "inherit" })] },       // color: inherit
+      { type: "paragraph", content: [M2("Explicitrun", { color: "rgb(27, 30, 38)" })] }, // explicit default
+      /* A GENUINELY COLOURED RUN — the known-good arm: real colours must still report. */
+      { type: "paragraph", content: [M2("Realredrun", { color: "#C0392B" })] },
+      /* HIGHLIGHT, the same three encodings, because it shares the mechanism. */
+      { type: "paragraph", content: [{ type: "text", text: "Nohlrun" }] },
+      { type: "paragraph", content: [HL("Inherithl", "inherit")] },
+      /* ⛔ BLUE, NOT YELLOW, AND THAT IS THE WHOLE POINT OF THIS ROW. The highlight button paints
+         its DEFAULT swatch (yellow — the colour it would apply) when a run has none, so a
+         "real yellow highlight" arm reports yellow whether the feature works or not: a VACUOUS
+         check that passes on a dead implementation. Blue can only come from the mark. */
+      { type: "paragraph", content: [HL("Realbluehl", "#BFDBFE")] },
+    ],
+  });
+
+  const inkOf = (id) => page.locator(`[data-testid="${id}"]`).first().evaluate((e) => {
+    const bars = [...e.querySelectorAll("span")].map((x) => getComputedStyle(x).backgroundColor);
+    return bars.find((b) => b && b !== "rgba(0, 0, 0, 0)") || "none";
+  });
+
+  const rows = [];
+  for (const [run, id] of [["Nomarkrun", "nt-color"], ["Inheritrun", "nt-color"], ["Explicitrun", "nt-color"],
+                           ["Realredrun", "nt-color"], ["Nohlrun", "nt-highlight"], ["Inherithl", "nt-highlight"],
+                           ["Realbluehl", "nt-highlight"]]) {
+    await dragSelect(run, run);
+    rows.push({ run, swatch: await inkOf(id), font: await reportOf("nt-font") });
+  }
+  console.log("\nEVIDENCE TABLE — what the colour controls report per encoding");
+  for (const r of rows) console.log(`  ${r.run.padEnd(14)} | swatch ${String(r.swatch).padEnd(20)} | font ${r.font}`);
+
+  const [noMark, inherit, explicit, realRed, noHl, inheritHl, realHl] = rows;
+  if (noMark.swatch === inherit.swatch && inherit.swatch === explicit.swatch) {
+    pass(`all three encodings of one black report the SAME swatch (${noMark.swatch})`);
+  } else {
+    fail("the three encodings of one colour still report differently",
+      `no-mark ${noMark.swatch} · inherit ${inherit.swatch} · explicit ${explicit.swatch}`);
+  }
+  /* KNOWN-GOOD ARM: a real colour must still come through, or the fix is just "show nothing". */
+  if (realRed.swatch !== noMark.swatch && /192, 57, 43/.test(realRed.swatch)) pass(`a genuinely red run still reports red (${realRed.swatch})`);
+  else fail("a real colour stopped reporting correctly — the fix is over-folding", realRed.swatch);
+
+  if (noHl.swatch === inheritHl.swatch) pass(`highlight folds 'inherit' the same way (${noHl.swatch})`);
+  else fail("highlight still treats 'inherit' as a distinct state", `none ${noHl.swatch} · inherit ${inheritHl.swatch}`);
+  if (/191, 219, 254/.test(realHl.swatch)) pass(`a genuinely highlighted run still reports ITS OWN colour, not the button's default (${realHl.swatch})`);
+  else fail("a real highlight stopped reporting", realHl.swatch);
+  if (noHl.swatch === realHl.swatch) fail("VACUOUS: the highlight arms cannot tell highlighted from not — this section proves nothing", `both ${noHl.swatch}`);
+
+  /* Two runs that LOOK identical must not report as a disagreement — his exact report. */
+  await dragSelect("Nomarkrun", "Explicitrun");
+  const acrossIdentical = await inkOf("nt-color");
+  if (acrossIdentical === noMark.swatch) pass("a selection across all three encodings reads as ONE colour, not mixed");
+  else fail("two visually identical runs still report as mixed", acrossIdentical);
+
+  /* …but two genuinely different colours still must. */
+  await dragSelect("Explicitrun", "Realredrun");
+  const acrossReal = await page.locator('[data-testid="nt-color"]').first().getAttribute("aria-label");
+  if (/mixed/.test(acrossReal || "")) pass("two genuinely different colours still go indeterminate");
+  else fail("a real colour difference stopped reporting as mixed", String(acrossReal));
+
+  /* NEW-7: the font control, and the dropdown's own first row, name a typeface. */
+  if (/·\s*standard/.test(noMark.font) && !/^Default$/.test(noMark.font)) {
+    pass(`an unstyled run names the typeface it is actually rendered in: ${JSON.stringify(noMark.font)}`);
+  } else fail("the font control still answers with a category label rather than a name", noMark.font);
+  await dragSelect("Nomarkrun", "Nomarkrun");
+  await page.locator('[data-testid="nt-font"]').first().click();
+  await pacedWait(page, 250);
+  const firstRow = (await page.locator('[data-testid="nt-font-opt-default"]').first().innerText()).trim();
+  await page.keyboard.press("Escape");
+  if (/·\s*standard/.test(firstRow)) pass(`the dropdown's first row names a font too: ${JSON.stringify(firstRow)}`);
+  else fail("the font list still offers a mystery as its first entry", firstRow);
+
+  /* NEW-9: the two further instances the sweep found. */
+  await dragSelect("Nomarkrun", "Nomarkrun");
+  const sizeLbl = await reportOf("nt-size");
+  const spacingLbl = await reportOf("nt-spacing");
+  console.log(`  size box on an unsized run: ${JSON.stringify(sizeLbl)} · spacing box on an unspaced block: ${JSON.stringify(spacingLbl)}`);
+  if (/\d/.test(sizeLbl) && /std/.test(sizeLbl)) pass(`the size box names the size actually rendered: ${JSON.stringify(sizeLbl)}`);
+  else fail("the size box still answers with the word 'Size'", sizeLbl);
+  if (/std/.test(spacingLbl)) pass(`the spacing box names the note's own density: ${JSON.stringify(spacingLbl)}`);
+  else fail("the spacing box still answers with the word 'Spacing'", spacingLbl);
+}
 
 /* ═══ 4 · HEADINGS ACCEPT FORMATTING (NEW-6) ═══════════════════════════════════════════════ */
 console.log("\n4 — NEW-6: font, size, bold, italic and colour on a HEADING (measured, not assumed)");
