@@ -41,7 +41,18 @@ export function nextContractualDate(p, nowMs = Date.now()) {
 
 /** `projects` — `groupProjectsByGroupId()` output, extended with the three raw date fields (see
  * dashboardSitesFetch.js). `quietDaysByGroup` — `{ [groupId]: days }` from real element-edit
- * recency (dashboardElementRecencyFetch.js + siteRecency.js), never last-edited/autosave. */
+ * recency (dashboardElementRecencyFetch.js + siteRecency.js), never last-edited/autosave.
+ *
+ * ⛔ B1411504 — the undated↔undated tie-break. Confirmed against the owner's real portfolio
+ * (2026-09-09): EVERY open pursuit has all three contractual-date fields null — nobody has used
+ * the "Deal dates…" editor yet, so `next` is null for every row and the old comparator's
+ * `ad==null && bd==null → return 0` made the whole list a no-op sort, leaving Array.sort's
+ * stability to show whatever order the rows happened to arrive in as if it meant something.
+ * Alphabetical-by-name is the tie-break here — deliberately NOT quiet time (`quietDays`), which
+ * this module's own header already rejects as a sort input for the reason stated there, and NOT
+ * `updatedAt`/recency, which is the same signal by another name. It says nothing about urgency,
+ * which is the honest thing to say when no row has a real due date to rank by; see
+ * `allPursuitsUndated` below for the card-level admission of that state. */
 export function pursuitsTable(projects, quietDaysByGroup, { nowMs = Date.now() } = {}) {
   return (projects || [])
     .filter((p) => p.role !== "tracked" && OPEN_STATUSES.has(p.status))
@@ -57,11 +68,18 @@ export function pursuitsTable(projects, quietDaysByGroup, { nowMs = Date.now() }
     .sort((a, b) => {
       const ad = a.next ? a.next.days : null;
       const bd = b.next ? b.next.days : null;
-      if (ad == null && bd == null) return 0;
+      if (ad == null && bd == null) return (a.name || "").localeCompare(b.name || ""); // no date on either side — alphabetical, never quiet time
       if (ad == null) return 1; // undated always sorts to the bottom
       if (bd == null) return -1;
       return ad - bd; // ascending — soonest first; quiet time never a tiebreak input
     });
+}
+
+/** True when NOT ONE open pursuit has a contractual date set — the card's cue to say so plainly
+ * instead of presenting the alphabetical fallback as if it were a real "soonest date" sort
+ * (B1411504). False for an empty list — that's a different, already-handled empty state. */
+export function allPursuitsUndated(rows) {
+  return Array.isArray(rows) && rows.length > 0 && rows.every((r) => !r.next);
 }
 
 /** { [groupId]: whole days since the group's real last edit }, derived from a
