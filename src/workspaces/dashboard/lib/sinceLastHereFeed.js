@@ -83,7 +83,14 @@
  * being created or renamed, which read off real stamps with no such limit.
  */
 
-import { compHeadlineRate, formatRateValue, DEFAULT_LEASE_PERIOD } from "./compsCardModel.js";
+import { compHeadlineRate, formatRateValue, DEFAULT_LEASE_PERIOD, countyNameWords } from "./compsCardModel.js";
+import { shortenDisplayName } from "../../../shared/projects/projectModel.js";
+
+// B1407824 — how far a name in this feed's own sentence/subline can run before it's shortened
+// (shortenDisplayName's contract: a name at or under this stays untouched; a longer one is cut
+// cleanly, never on a dangling comma/period/hyphen/space). The feed row sits beside an icon tile
+// and a right-aligned age chip, so it has real but not unlimited width.
+const FEED_NAME_MAX_CHARS = 36;
 
 const MS_PER_DAY = 86400000;
 const OWN_ACTION_DEBOUNCE_MS = 30000; // "his own actions from thirty seconds ago" — never shown
@@ -127,10 +134,18 @@ function planIdentity(site) {
 
 /** "Harris County · Pursuit" — real, already-fetched facts, used as the sub-line's fallback
  * substance whenever a plan's building geometry isn't in the touched set (a freshly created plan
- * that isn't a pursuit, or one nobody opened this session). */
+ * that isn't a pursuit, or one nobody opened this session).
+ *
+ * B1407824 — `site.county` is a lower-case ROUTING KEY ("harris", "fort_bend" — see
+ * shared/CLAUDE.md's County ROUTING KEYS note), never a display string, so building the sentence
+ * with it verbatim printed "harris County" / "bowie County". `countyNameWords` (compsCardModel.js
+ * — the SAME title-casing the Comps card already shows) is the one place this repo turns that key
+ * into "Harris" / "Fort Bend"; this composes it into "County" exactly like that module's own
+ * `countyLabel` composes it into "County, TX/CO" — one capitalization rule, two sentences. */
 function planContextLine(site) {
   const bits = [];
-  if (site.county) bits.push(`${site.county} County`);
+  const { words } = countyNameWords(site.county);
+  if (words) bits.push(`${words.join(" ")} County`);
   const label = statusLabel(site.status);
   if (label) bits.push(label);
   return bits.join(" · ");
@@ -157,6 +172,9 @@ function buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnaps
     const renamedMs = site.siteRenamedAt != null ? Number(site.siteRenamedAt) : NaN;
     const hasBuildingData = Object.prototype.hasOwnProperty.call(buildingCountBySite || {}, siteId);
     const name = (site.site || site.name || "Untitled site").trim() || "Untitled site";
+    // B1407824 — the FULL name is what's kept in the snapshot and what `open` resolves against;
+    // only the SENTENCE gets shortened, so a long name never breaks this row's own layout.
+    const displayName = shortenDisplayName(name, FEED_NAME_MAX_CHARS);
 
     let fired = false;
 
@@ -168,7 +186,7 @@ function buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnaps
         id: `plan-created:${siteId}`,
         kind: "plan-created",
         ts: createdMs,
-        parts: [{ text: "New plan " }, { text: name, bold: true }],
+        parts: [{ text: "New plan " }, { text: displayName, bold: true }],
         subline: line || "New plan",
         open: { kind: "project", groupId },
       });
@@ -180,7 +198,7 @@ function buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnaps
         id: `plan-renamed:${siteId}`,
         kind: "plan-renamed",
         ts: renamedMs,
-        parts: [{ text: "Renamed to " }, { text: name, bold: true }],
+        parts: [{ text: "Renamed to " }, { text: displayName, bold: true }],
         subline: planContextLine(site) || "Renamed",
         open: { kind: "project", groupId },
       });
@@ -196,7 +214,7 @@ function buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnaps
           id: `plan-edited:${siteId}:${updatedMs}`,
           kind: "plan-edited",
           ts: updatedMs,
-          parts: [{ text: name, bold: true }, { text: " updated" }],
+          parts: [{ text: displayName, bold: true }, { text: " updated" }],
           subline: buildingsLine(nowCount, nowSqft),
           open: { kind: "project", groupId },
         });

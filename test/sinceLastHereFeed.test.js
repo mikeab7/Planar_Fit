@@ -48,6 +48,35 @@ describe("buildSinceLastHereFeed — plans", () => {
     expect(feed.rows[0].subline).toBe("Harris County · Pursuit");
   });
 
+  // B1407824 — `site.county` is a lower-case ROUTING KEY ("bowie", "harris", "fort_bend"), not a
+  // display string; the subline used to print it verbatim ("bowie County"). Two adjacent cases:
+  // the routing key needs capitalizing, and one that already arrives correctly capitalized (a
+  // legacy row, or the map-marker path — see shared/CLAUDE.md's County ROUTING KEYS note) must
+  // read exactly the same either way.
+  it("title-cases a lower-case county routing key (single- and multi-word)", () => {
+    const sites = [{ id: "s1", group_id: "g1", site: "Alumax Rd", county: "bowie", status: "pursuit", created_at: new Date(NOW - DAY).toISOString(), updated_at: new Date(NOW - DAY).toISOString() }];
+    const feed = buildSinceLastHereFeed(baseArgs({ sites }));
+    expect(feed.rows[0].subline).toBe("Bowie County · Pursuit");
+
+    const multiWord = [{ id: "s2", group_id: "g2", site: "Katy Tract", county: "fort_bend", status: "active", created_at: new Date(NOW - DAY).toISOString(), updated_at: new Date(NOW - DAY).toISOString() }];
+    const feed2 = buildSinceLastHereFeed(baseArgs({ sites: multiWord }));
+    expect(feed2.rows[0].subline).toBe("Fort Bend County · Active");
+  });
+
+  it("a county name that already arrives correctly capitalized reads identically", () => {
+    const sites = [{ id: "s1", group_id: "g1", site: "Alumax Rd", county: "Harris", status: "pursuit", created_at: new Date(NOW - DAY).toISOString(), updated_at: new Date(NOW - DAY).toISOString() }];
+    const feed = buildSinceLastHereFeed(baseArgs({ sites }));
+    expect(feed.rows[0].subline).toBe("Harris County · Pursuit");
+  });
+
+  // B1407824 — the exact reported production case: the stored plan name FITS under the feed
+  // row's own limit (nothing to cut for space), but itself dangles on a bare trailing comma.
+  it("cleans a short plan name that itself dangles on a comma, even though nothing needed cutting for space", () => {
+    const sites = [{ id: "s1", group_id: "g1", site: "ALUMAX RD, NASH,", county: "bowie", status: "pursuit", created_at: new Date(NOW - DAY).toISOString(), updated_at: new Date(NOW - DAY).toISOString() }];
+    const feed = buildSinceLastHereFeed(baseArgs({ sites }));
+    expect(feed.rows[0].parts.map((p) => p.text).join("")).toBe("New plan ALUMAX RD, NASH");
+  });
+
   it("never reports a plan backfilled to the 1970 sentinel as 'created'", () => {
     const sites = [{ id: "s1", group_id: "g1", site: "Old Plan", county: "Harris", status: "pursuit", created_at: "1970-01-01T00:00:00.000Z", updated_at: new Date(NOW - DAY).toISOString() }];
     const feed = buildSinceLastHereFeed(baseArgs({ sites }));

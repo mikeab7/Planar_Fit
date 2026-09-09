@@ -17,9 +17,15 @@ import { RADIUS } from "../../../shared/ui/radius.js";
 import { recentPlansLayoutMode, countForMode } from "../lib/recentPlansLayout.js";
 import { relativeTimeShort } from "../lib/relativeTime.js";
 import { lazyGenerateThumbnail } from "../lib/recentPlansThumbnailFallback.js";
+import { shortenDisplayName } from "../../../shared/projects/projectModel.js";
 
 const MONO_FONT = "ui-monospace, monospace"; // same stack as ParcelDataPanel.jsx's MONO_FONT
 const EMPTY = { fontSize: 12, color: "var(--text-secondary)", fontStyle: "italic" };
+// B1407824 — the tile caption sits in a quarter-width grid cell; the "cannot render" fallback has
+// more room (it's line-clamped to two lines). The `title=` on the tile button below still carries
+// the FULL name, so hovering always shows the real thing regardless of either cap.
+const TILE_CAPTION_MAX_CHARS = 22;
+const CANNOT_RENDER_MAX_CHARS = 60;
 
 function svgDataUri(svg) {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
@@ -67,12 +73,12 @@ function PlanThumbCell({ plan, svg, onOpen }) {
           <img src={svgDataUri(svg)} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
         ) : cannotRender ? (
           <span style={{ fontSize: 11, color: "var(--text-secondary)", padding: "0 8px", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-            {plan.name}
+            {shortenDisplayName(plan.name, CANNOT_RENDER_MAX_CHARS)}
           </span>
         ) : null /* still generating — an empty faint panel, never a placeholder icon */}
       </div>
       <div style={{ fontSize: 12, fontWeight: 500, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "none" }}>
-        {plan.name}
+        {shortenDisplayName(plan.name, TILE_CAPTION_MAX_CHARS)}
       </div>
       <div style={{ fontFamily: MONO_FONT, fontSize: 10.5, color: "var(--text-secondary)", flex: "none" }}>
         {relativeTimeShort(plan.updatedAt)}

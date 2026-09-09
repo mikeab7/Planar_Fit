@@ -48,6 +48,28 @@ describe("mapMarkers", () => {
     const [m] = mapMarkers([p], []);
     expect(m).toMatchObject({ kind: "active", id: "a", lat: HERE.lat, lon: HERE.lon, name: "a", project: p });
   });
+
+  // B1407824 — the pin label has no fixed width of its own, so a long project name is shortened
+  // here rather than left to run the label plate off the map. The exact cut is shortenDisplayName's
+  // job (see test/projects.test.js for its own case table); this just proves the marker uses it.
+  it("shortens a long project name for the pin label, never on a dangling comma", () => {
+    const p = { ...active("a", HERE), name: "ALUMAX RD, NASHVILLE, TX 75569" };
+    const [m] = mapMarkers([p], []);
+    expect(m.name.length).toBeLessThan(p.name.length);
+    expect(m.name).not.toMatch(/[,.\-\s]…$/);
+    expect(m.name.endsWith("…")).toBe(true);
+    // the marker's OWN record still carries the real, untouched name for anything that needs it
+    expect(m.project.name).toBe(p.name);
+  });
+
+  // B1407824 — the exact reported production case: the stored name FITS under the pin's own
+  // limit (nothing to cut for space), but itself dangles on a bare trailing comma. Confirms the
+  // map pin shows it cleaned up, not verbatim.
+  it("cleans a short name that itself dangles on a comma, even though nothing needed cutting for space", () => {
+    const p = { ...active("a", HERE), name: "ALUMAX RD, NASH," };
+    const [m] = mapMarkers([p], []);
+    expect(m.name).toBe("ALUMAX RD, NASH");
+  });
 });
 
 describe("missingLocationCount", () => {

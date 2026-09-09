@@ -16,8 +16,16 @@
  * not to substitute one silently.
  */
 import { daysUntil } from "./dashboardDates.js";
+import { shortenDisplayName } from "../../../shared/projects/projectModel.js";
 
 const OPEN_STATUSES = new Set(["pursuit", "active", "onhold"]);
+
+// B1407824 — the Pursuit column's own cell also carries a CSS `text-overflow: ellipsis` clamp
+// (PursuitsCard.jsx) as a backstop for an unusually wide font, but pixel-width CSS truncation has
+// no idea where a comma, period or hyphen sits — it can land the cut right after one, with no
+// ellipsis if the clamp never actually engages. Shortened here instead, at the pure table-model
+// layer, so the name that reaches the cell is already safe to display in full.
+const PURSUIT_NAME_MAX_CHARS = 26;
 
 export const NEXT_DATE_FIELDS = [
   { key: "feasibilityExpiry", label: "Feasibility ends" },
@@ -59,7 +67,7 @@ export function pursuitsTable(projects, quietDaysByGroup, { nowMs = Date.now() }
     .map((p) => ({
       groupId: p.groupId,
       siteId: p.siteId,
-      name: p.name,
+      name: shortenDisplayName(p.name, PURSUIT_NAME_MAX_CHARS),
       county: p.county,
       status: p.status,
       next: nextContractualDate(p, nowMs),
