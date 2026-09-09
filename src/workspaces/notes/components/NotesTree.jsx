@@ -832,10 +832,10 @@ function SidebarFooter({ unfiledCount, view, narrow = false, onOpenUnfiled, onOp
           title="Pages whose project you deleted. No timer — file them or bin them yourself."
           onMouseDown={(e) => e.preventDefault()}
           onClick={onOpenUnfiled}
-          style={{ ...rowStyle(view === "unfiled"), justifyContent: "space-between", fontWeight: 650, fontSize: 12.5 }}
+          style={{ ...rowStyle(view === "unfiled"), justifyContent: "space-between", fontWeight: 650, fontSize: 12 }}
         >
           <span>Unfiled</span>
-          <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.85 }}>{unfiledCount}</span>
+          <span style={{ fontSize: 10.5, fontWeight: 700, opacity: 0.85 }}>{unfiledCount}</span>
         </button>
       ) : null}
       <button
@@ -845,7 +845,7 @@ function SidebarFooter({ unfiledCount, view, narrow = false, onOpenUnfiled, onOp
         onClick={onOpenBin}
         style={{ ...rowStyle(view === "bin"), flexDirection: "column", alignItems: "flex-start", gap: 0, justifyContent: "center" }}
       >
-        <span style={{ fontWeight: 650, fontSize: 12.5 }}>Bin</span>
+        <span style={{ fontWeight: 650, fontSize: 12 }}>Bin</span>
         <span style={{ fontSize: 10.5, fontWeight: 600, opacity: 0.75 }}>kept {TRASH_RETENTION_DAYS} days</span>
       </button>
     </div>
@@ -1219,7 +1219,7 @@ export default function NotesTree({
             </p>
           ) : (
             <div data-testid="notes-unfiled" style={{ padding: "2px 2px 10px" }}>
-              <p style={{ margin: "2px 8px 8px", fontSize: 11.5, lineHeight: 1.5, color: "var(--text-tertiary)" }}>
+              <p style={{ margin: "2px 8px 8px", fontSize: 12, lineHeight: 1.5, color: "var(--text-tertiary)" }}>
                 {unfiled.length === 1 ? "1 page" : `${unfiled.length} pages`} from a project you deleted. Nothing
                 here is on a timer — file it under a project from its menu, or delete it yourself when you're ready.
               </p>
