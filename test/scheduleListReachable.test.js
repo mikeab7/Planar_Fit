@@ -105,6 +105,57 @@ describe("B1397568 — 'New schedule' is a row IN ScheduleOwnerList, reachable f
   });
 });
 
+// B1404352 — the owner's own live click-test found ZERO rename/remove affordance anywhere for a
+// schedule. Rename/Delete are independently optional, matching onCreate's own pattern, so a
+// caller that wires neither renders exactly as it did before this item.
+describe("B1404352 — Rename/Delete are per-row, independently optional", () => {
+  const ONE = [{ id: 1, name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" }];
+
+  it("renders NEITHER icon when onRename/onDelete are both omitted — unchanged prior behavior", () => {
+    const html = renderToStaticMarkup(createElement(ScheduleOwnerList, {
+      schedules: ONE, activeId: 1, siteId: "gc", siteName: "Goose Creek",
+    }));
+    expect(html).not.toContain("schedule-owner-rename");
+    expect(html).not.toContain("schedule-owner-delete");
+  });
+
+  it("renders ONLY the rename icon when only onRename is passed", () => {
+    const html = renderToStaticMarkup(createElement(ScheduleOwnerList, {
+      schedules: ONE, activeId: 1, siteId: "gc", siteName: "Goose Creek", onRename: () => {},
+    }));
+    expect(html).toContain('data-testid="schedule-owner-rename"');
+    expect(html).not.toContain('data-testid="schedule-owner-delete"');
+  });
+
+  it("renders ONLY the delete icon when only onDelete is passed", () => {
+    const html = renderToStaticMarkup(createElement(ScheduleOwnerList, {
+      schedules: ONE, activeId: 1, siteId: "gc", siteName: "Goose Creek", onDelete: () => {},
+    }));
+    expect(html).not.toContain('data-testid="schedule-owner-rename"');
+    expect(html).toContain('data-testid="schedule-owner-delete"');
+  });
+
+  it("renders BOTH icons on every group's rows (this project, Organization, other projects) when both are passed", () => {
+    const schedules = [
+      { id: 1, name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
+      { id: 5, name: "Pursuits" },
+      { id: 2, name: "Grand Port", linkedSiteId: "grp-2", linkedSiteName: "Grand Port" },
+    ];
+    const html = renderToStaticMarkup(createElement(ScheduleOwnerList, {
+      schedules, activeId: 1, siteId: "gc", siteName: "Goose Creek", onRename: () => {}, onDelete: () => {},
+    }));
+    expect(html.match(/data-testid="schedule-owner-rename"/g)?.length).toBe(3);
+    expect(html.match(/data-testid="schedule-owner-delete"/g)?.length).toBe(3);
+  });
+
+  it("ScheduleCenter/ScheduleSwitcher plumb onRenameSchedule/onDeleteSchedule through unconditionally optional", () => {
+    const withoutEither = renderToStaticMarkup(createElement(ScheduleCenter, {
+      toolbar: TOOLBAR, post: () => {}, schedules: [], activeId: null, siteId: "gc", siteName: "Goose Creek",
+    }));
+    expect(withoutEither).toContain('data-testid="schedule-switcher-btn"');
+  });
+});
+
 const TOOLBAR_SRC = readFileSync(
   fileURLToPath(new URL("../src/workspaces/scheduler/components/ScheduleToolbar.jsx", import.meta.url)),
   "utf8",
@@ -142,5 +193,43 @@ describe("Structural guard — the switcher's mount point cannot be re-gated on 
     // renders AgendaView instead, never a second copy of this one) — so this can't be duplicated
     // into a conditional branch without this count changing.
     expect(SCHEDULER_SRC.match(/<ScheduleCenter/g)?.length).toBe(1);
+  });
+});
+
+// B1404352 — the header "Schedules" dropdown (ScheduleSwitcher, only reachable live via
+// AnchoredMenu's click-to-open portal, which renderToStaticMarkup cannot exercise) is proven by
+// source instead: every hop from Scheduler.jsx down to ScheduleOwnerList carries onRename/onDelete
+// through by name, so a broken hop anywhere in the chain fails here rather than only showing up as
+// a live dropdown whose icons silently don't work.
+describe("Structural guard — onRenameSchedule/onDeleteSchedule reach ScheduleOwnerList through every hop", () => {
+  it("Scheduler.jsx wires both into its <ScheduleCenter> call", () => {
+    const idx = SCHEDULER_SRC.indexOf("<ScheduleCenter\n");
+    const call = SCHEDULER_SRC.slice(idx, SCHEDULER_SRC.indexOf("/>", idx));
+    expect(call).toContain("onRenameSchedule={renameSchedule}");
+    expect(call).toContain("onDeleteSchedule={deleteSchedule}");
+  });
+
+  it("Scheduler.jsx also wires both into its EMPTY-STATE <ScheduleOwnerList> call", () => {
+    const idx = SCHEDULER_SRC.indexOf("<ScheduleOwnerList\n");
+    expect(idx, "the empty-state <ScheduleOwnerList ...> call was not found").toBeGreaterThan(-1);
+    const call = SCHEDULER_SRC.slice(idx, SCHEDULER_SRC.indexOf("/>", idx));
+    expect(call).toContain("onRename={renameSchedule}");
+    expect(call).toContain("onDelete={deleteSchedule}");
+  });
+
+  it("ScheduleCenter forwards onRenameSchedule/onDeleteSchedule into <ScheduleSwitcher>", () => {
+    const idx = TOOLBAR_SRC.indexOf("<ScheduleSwitcher ");
+    expect(idx, "the <ScheduleSwitcher ...> call was not found").toBeGreaterThan(-1);
+    const call = TOOLBAR_SRC.slice(idx, TOOLBAR_SRC.indexOf("/>", idx));
+    expect(call).toContain("onRename={onRenameSchedule}");
+    expect(call).toContain("onDelete={onDeleteSchedule}");
+  });
+
+  it("ScheduleSwitcher forwards onRename/onDelete into <ScheduleOwnerList>", () => {
+    const idx = TOOLBAR_SRC.indexOf("<ScheduleOwnerList\n");
+    expect(idx, "the <ScheduleOwnerList ...> call inside ScheduleSwitcher was not found").toBeGreaterThan(-1);
+    const call = TOOLBAR_SRC.slice(idx, TOOLBAR_SRC.indexOf("/>", idx));
+    expect(call).toContain("onRename={onRename}");
+    expect(call).toContain("onDelete={onDelete}");
   });
 });

@@ -11,10 +11,9 @@
  * The organization is a peer heading in the same list, never an "unassigned" or "no project"
  * bucket — owner rule, 2026-09-08: everything lives under something.
  *
- * Purely a switcher: it selects, it never creates, renames or deletes (those stay on the
- * breadcrumb's own kebab, which already has them and already confirms). Ownership itself is read
- * through the shared `partitionSchedules`, never re-derived here — one answer to "who owns this",
- * the whole point of src/shared/schedule/scheduleOwnership.js.
+ * It selects, and — since B1404352 (see that note below) — it also creates, renames and deletes.
+ * Ownership itself is read through the shared `partitionSchedules`, never re-derived here — one
+ * answer to "who owns this", the whole point of src/shared/schedule/scheduleOwnership.js.
  *
  * ⛔ B1396192 — THIS USED TO RENDER ONLY INSIDE Scheduler.jsx'S EMPTY STATE, so the moment a
  * routed project HAD a schedule (any schedule), every one of its OTHER schedules — and the
@@ -44,12 +43,27 @@
  * schedule" / "Link an existing schedule" buttons (LinkSchedulePanel) immediately above this
  * list, and a second create row there would be a redundant control for the one case that
  * already had a clear one.
+ *
+ * ⛔ B1404352 — RENAME AND DELETE, per row, when `onRename`/`onDelete` are passed in. Owner's own
+ * live click-test on planyr.io found zero rename/remove affordance anywhere for a SCHEDULE (the
+ * project breadcrumb's kebab only ever reaches the one schedule linked to the CURRENT project —
+ * see B1358128/B1361681 — so a project's OTHER schedules, and every org-owned one, were
+ * unreachable). This is that control, on every row this list already shows. No dialog boxes
+ * (owner rule): rename swaps the row's label for an inline `<input>`; delete swaps the ROW for an
+ * inline "Delete “name”? …" / Keep it / Delete confirmation, matching the shape
+ * `SitePlansSection`'s kebab menu and `MapNoteEditor`'s delete row already use elsewhere in this
+ * app, never a same-button relabel (B1389520's own lesson: growing a label in place can shift a
+ * second click onto an adjacent control). A same-owner name collision WARNS, exactly like
+ * creating a schedule does (`validateNewSchedule`) — he's allowed to name two schedules alike on
+ * purpose; what he isn't allowed is to do it without knowing.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { RADIUS } from "../../../shared/ui/radius.js";
 import { FONT_SIZE, SPACE } from "../../../shared/ui/designTokens.js";
 import { MODULE_ACCENT } from "../../../shared/ui/moduleAccent.js";
-import { ORG_OWNER_LABEL, partitionSchedules } from "../../../shared/schedule/scheduleOwnership.js";
+import {
+  ORG_OWNER_LABEL, partitionSchedules, ownerKeyOf, nameCollision, normalizeName, describeScheduleDelete,
+} from "../../../shared/schedule/scheduleOwnership.js";
 
 const ACCENT = MODULE_ACCENT.scheduler;
 
@@ -76,36 +90,166 @@ const createRow = {
   ...rowBase, fontWeight: 700, color: ACCENT,
 };
 
-function Group({ title, schedules, activeId, onSelect, emptyText }) {
+// B1404352 — Rename/Delete icons, drawn in this app's own idiom (stroke, currentColor) rather
+// than a text glyph or emoji — same reasoning as ProjectBreadcrumb.jsx's PencilIcon/TrashIcon,
+// duplicated here rather than imported: that file's copies are module-private, and a shared
+// icon module doesn't exist yet for this repo's handful of per-file drawn icons (see that
+// file's own header note on the same choice for its OrgIcon).
+const PencilIcon = ({ size = 12 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+    style={{ flex: "none", display: "block" }}>
+    <path d="M4 20h4L20 8l-4-4L4 16z" />
+    <path d="M14.5 5.5L18.5 9.5" />
+  </svg>
+);
+const TrashIcon = ({ size = 12 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+    style={{ flex: "none", display: "block" }}>
+    <path d="M4 7h16" />
+    <path d="M9 7V4h6v3" />
+    <path d="M6 7l1 13h10l1-13" />
+    <path d="M10 11v6M14 11v6" />
+  </svg>
+);
+
+const iconBtn = {
+  display: "flex", alignItems: "center", justifyContent: "center", flex: "none",
+  width: 22, height: 22, padding: 0, borderRadius: RADIUS.sm, border: "none",
+  background: "none", cursor: "pointer", color: "var(--text-secondary)",
+};
+const renameInput = {
+  flex: "1 1 auto", minWidth: 0, padding: "3px 6px", borderRadius: RADIUS.sm,
+  border: `1px solid ${ACCENT}`, outline: "none", background: "var(--surface-raised)",
+  color: "var(--text-primary)", fontFamily: "inherit", fontSize: FONT_SIZE.control,
+};
+const warningText = {
+  display: "block", fontSize: FONT_SIZE.micro, color: "var(--warn-text)",
+  padding: `2px ${SPACE.sm}px 0`, lineHeight: 1.4,
+};
+const confirmWrap = {
+  display: "flex", flexDirection: "column", gap: SPACE.xs, width: "100%",
+  padding: `${SPACE.sm}px ${SPACE.md}px`, borderRadius: RADIUS.md,
+  border: "1px solid var(--danger)", background: "var(--hover-chrome)",
+};
+const confirmText = { fontSize: FONT_SIZE.control, color: "var(--text-primary)", lineHeight: 1.4 };
+const confirmActions = { display: "flex", justifyContent: "flex-end", gap: SPACE.xs };
+const confirmBtnBase = {
+  cursor: "pointer", border: "none", borderRadius: RADIUS.sm,
+  padding: "5px 10px", fontFamily: "inherit", fontSize: FONT_SIZE.control, fontWeight: 700,
+};
+const confirmBtnGhost = { ...confirmBtnBase, background: "none", color: "var(--text-secondary)" };
+const confirmBtnDanger = { ...confirmBtnBase, background: "var(--danger)", color: "var(--on-accent)" };
+
+// A single schedule row — plain, editing (inline rename), or confirming (inline delete). Module
+// scope (MODULE-SCOPE-COMPONENTS): defining this inside ScheduleOwnerList's render body would
+// remount it, and a new type every render, every keystroke while a menu is open elsewhere.
+function ScheduleRow({
+  s, active, onSelect, canManage,
+  editing, editVal, onEditValChange, onCommitRename, onCancelRename, onStartRename, editWarning,
+  confirming, onStartConfirm, onCancelConfirm, onCommitDelete,
+}) {
+  const label = s.name || "Untitled schedule";
+  if (confirming) {
+    return (
+      <div style={confirmWrap} data-testid="schedule-owner-row-confirm" data-schedule-id={String(s.id)}>
+        <div style={confirmText}>{describeScheduleDelete(s.name, s.taskCount)}</div>
+        <div style={confirmActions}>
+          <button type="button" data-testid="schedule-owner-delete-cancel" onClick={onCancelConfirm} style={confirmBtnGhost}>
+            Keep it
+          </button>
+          <button type="button" data-testid="schedule-owner-delete-confirm" onClick={onCommitDelete} style={confirmBtnDanger}>
+            Delete
+          </button>
+        </div>
+      </div>
+    );
+  }
+  if (editing) {
+    return (
+      <div style={{ ...rowBase, cursor: "default", flexDirection: "column", alignItems: "stretch", gap: 0 }} data-testid="schedule-owner-row-editing" data-schedule-id={String(s.id)}>
+        <input
+          autoFocus
+          value={editVal}
+          onChange={(e) => onEditValChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); onCommitRename(); }
+            else if (e.key === "Escape") { e.preventDefault(); onCancelRename(); }
+          }}
+          onBlur={onCommitRename}
+          aria-label={`Rename “${label}”`}
+          data-testid="schedule-owner-rename-input"
+          style={renameInput}
+        />
+        {editWarning && <span style={warningText}>{editWarning}</span>}
+      </div>
+    );
+  }
+  return (
+    <div
+      data-testid="schedule-owner-row"
+      data-schedule-id={String(s.id)}
+      style={{ ...rowBase, cursor: "default", padding: `${SPACE.xs}px ${SPACE.sm}px ${SPACE.xs}px ${SPACE.md}px` }}
+    >
+      <button
+        type="button"
+        aria-current={active ? "true" : undefined}
+        onClick={() => onSelect?.(s.id)}
+        style={{
+          all: "unset", boxSizing: "border-box", cursor: "pointer", flex: "1 1 auto", minWidth: 0,
+          fontWeight: active ? 600 : 400, color: active ? ACCENT : "inherit",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </button>
+      {canManage && (
+        <span style={{ display: "flex", gap: 1, flex: "none" }}>
+          {onStartRename && (
+            <button type="button" data-testid="schedule-owner-rename" title={`Rename “${label}”`} aria-label={`Rename “${label}”`} onClick={() => onStartRename(s)} style={iconBtn}>
+              <PencilIcon />
+            </button>
+          )}
+          {onStartConfirm && (
+            <button type="button" data-testid="schedule-owner-delete" title={`Delete “${label}”`} aria-label={`Delete “${label}”`} onClick={() => onStartConfirm(s)} style={{ ...iconBtn, color: "var(--danger)" }}>
+              <TrashIcon />
+            </button>
+          )}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Group({ title, schedules, activeId, onSelect, emptyText, manage }) {
   if (!schedules.length && !emptyText) return null;
+  const canManage = !!(manage && (manage.onStartRename || manage.onStartConfirm));
   return (
     <>
       <div style={heading}>{title}</div>
       {schedules.length === 0
         ? <div style={emptyNote}>{emptyText}</div>
-        : schedules.map((s) => {
-            const active = s.id === activeId;
-            return (
-              <button
-                key={s.id}
-                type="button"
-                data-testid="schedule-owner-row"
-                data-schedule-id={String(s.id)}
-                aria-current={active ? "true" : undefined}
-                onClick={() => onSelect?.(s.id)}
-                style={{
-                  ...rowBase,
-                  fontWeight: active ? 600 : 400,
-                  borderColor: active ? ACCENT : "transparent",
-                  background: active ? "var(--hover-chrome)" : "none",
-                }}
-              >
-                <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {s.name || "Untitled schedule"}
-                </span>
-              </button>
-            );
-          })}
+        : schedules.map((s) => (
+            <ScheduleRow
+              key={s.id}
+              s={s}
+              active={s.id === activeId}
+              onSelect={onSelect}
+              canManage={canManage}
+              editing={manage?.editingId === s.id}
+              editVal={manage?.editVal ?? ""}
+              editWarning={manage?.editingId === s.id ? manage?.editWarning : null}
+              onEditValChange={manage?.onEditValChange}
+              onCommitRename={() => manage?.onCommitRename(s)}
+              onCancelRename={manage?.onCancelRename}
+              onStartRename={manage?.onStartRename}
+              confirming={manage?.confirmId === s.id}
+              onStartConfirm={manage?.onStartConfirm}
+              onCancelConfirm={manage?.onCancelConfirm}
+              onCommitDelete={() => manage?.onCommitDelete(s)}
+            />
+          ))}
     </>
   );
 }
@@ -116,8 +260,47 @@ export default function ScheduleOwnerList({
   // call site does not (that surface already offers Create/Link via LinkSchedulePanel). See this
   // file's own header, B1397568.
   onCreate,
+  // B1404352 — optional, independently: rename a schedule (id, newName) or delete one (id).
+  // Neither call site is required to wire both — matches onCreate's own pattern, and keeps a
+  // future read-only listing possible without a dead prop.
+  onRename, onDelete,
 }) {
   const { here, org, elsewhere } = useMemo(() => partitionSchedules(schedules, siteId), [schedules, siteId]);
+  const [editingId, setEditingId] = useState(null);
+  const [editVal, setEditVal] = useState("");
+  const [confirmId, setConfirmId] = useState(null);
+
+  const startRename = (s) => { setConfirmId(null); setEditingId(s.id); setEditVal(s.name || ""); };
+  const cancelRename = () => setEditingId(null);
+  const commitRename = (s) => {
+    const v = (editVal || "").trim();
+    setEditingId(null);
+    if (!v || v === s.name) return; // empty or unchanged — keep the prior name, no-op
+    onRename?.(s.id, v);
+  };
+  const startConfirm = (s) => { setEditingId(null); setConfirmId(s.id); };
+  const cancelConfirm = () => setConfirmId(null);
+  const commitDelete = (s) => { setConfirmId(null); onDelete?.(s.id); };
+
+  // A same-owner name collision WARNS, live, exactly like creating a schedule does
+  // (validateNewSchedule) — never blocks: he's allowed to name two schedules alike on purpose.
+  const editingSchedule = editingId != null ? schedules.find((p) => p && p.id === editingId) : null;
+  const editWarning = editingSchedule && nameCollision(schedules, ownerKeyOf(editingSchedule), editVal, editingId)
+    ? `There is already a schedule called “${normalizeName(editVal)}” here.`
+    : null;
+
+  const manage = (onRename || onDelete) ? {
+    editingId, editVal, editWarning,
+    onEditValChange: setEditVal,
+    onCommitRename: commitRename,
+    onCancelRename: cancelRename,
+    onStartRename: onRename ? startRename : undefined,
+    confirmId,
+    onStartConfirm: onDelete ? startConfirm : undefined,
+    onCancelConfirm: cancelConfirm,
+    onCommitDelete: commitDelete,
+  } : null;
+
   return (
     <div style={wrap} data-testid="schedule-owner-list">
       {siteId != null && (
@@ -127,10 +310,11 @@ export default function ScheduleOwnerList({
           activeId={activeId}
           onSelect={onSelect}
           emptyText="No schedules here yet."
+          manage={manage}
         />
       )}
-      <Group title={ORG_OWNER_LABEL} schedules={org} activeId={activeId} onSelect={onSelect} />
-      <Group title="Other projects" schedules={elsewhere} activeId={activeId} onSelect={onSelect} />
+      <Group title={ORG_OWNER_LABEL} schedules={org} activeId={activeId} onSelect={onSelect} manage={manage} />
+      <Group title="Other projects" schedules={elsewhere} activeId={activeId} onSelect={onSelect} manage={manage} />
       {onCreate && (
         <>
           <div style={divider} />
