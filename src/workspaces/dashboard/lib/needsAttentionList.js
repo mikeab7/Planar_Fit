@@ -58,7 +58,25 @@ function leafTasks(tasks) {
 /** `projectsMap` — the raw `value.projects` map from the "hs-v1" planar_data row
  * (dashboardScheduleFetch.js's `fetchScheduleProjects`). Returns one row per task currently
  * stamped `needsAttentionSince`, across every project, sorted DESCENDING by days since it
- * entered the state (oldest first — the row that has waited longest leads the list). */
+ * entered the state (oldest first — the row that has waited longest leads the list), ties broken
+ * by `waiting` (more downstream tasks blocked wins) then task name — see B1411504 below for why
+ * a tie-break was needed at all.
+ *
+ * ⛔ B1411504 — `bulkStamped`, and why `days` alone can't be trusted for a tied row. The
+ * Scheduler's `reconcileNeedsAttention` (public/sequence/index.html) stamps `needsAttentionSince`
+ * on every real data change — including the FIRST LOAD of an existing schedule after this field
+ * shipped, which stamps EVERY already-red task at once with ONE shared `nowIso`. Confirmed against
+ * the owner's real production row (2026-09-09): 25 of his 31 currently-flagged tasks carry the
+ * exact same timestamp to the millisecond, another 6 share a second exact timestamp — two bulk
+ * events, zero organic ones. Those tasks span due dates five weeks apart, so `days` for them means
+ * "how long we've been WATCHING", not "how long it's actually been" — and there is no other
+ * per-task timestamp anywhere in this document to backfill from (re-confirmed 2026-09-08,
+ * dashboardScheduleFetch.js's own header). Rather than ship a confident-looking number that will
+ * be wrong for weeks, a row is marked `bulkStamped: true` whenever its exact `needsAttentionSince`
+ * is shared with at least one other currently-flagged task anywhere in the account — an
+ * independent, organic transition landing on the same millisecond as another is not a real
+ * possibility, so sharing IS the bulk-event signature. The card renders those with a "+" — "at
+ * least this many days" — instead of a bare number that implies precision it doesn't have. */
 export function needsAttentionList(projectsMap, nowMs = Date.now()) {
   const projects = projectsMap && typeof projectsMap === "object" ? Object.values(projectsMap) : [];
   const rows = [];
@@ -80,10 +98,15 @@ export function needsAttentionList(projectsMap, nowMs = Date.now()) {
         dueDate: t.end || null,
         waiting: succ[t.id] || 0,
         days,
+        stampedAt: t.needsAttentionSince,
       });
     }
   }
-  return rows.sort((a, b) => b.days - a.days);
+  const stampCounts = new Map();
+  for (const r of rows) stampCounts.set(r.stampedAt, (stampCounts.get(r.stampedAt) || 0) + 1);
+  for (const r of rows) r.bulkStamped = stampCounts.get(r.stampedAt) > 1;
+
+  return rows.sort((a, b) => b.days - a.days || b.waiting - a.waiting || a.taskName.localeCompare(b.taskName));
 }
 
 /** Per-project totals for the card footer, loudest (most rows) project first — e.g.

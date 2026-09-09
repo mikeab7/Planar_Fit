@@ -7,9 +7,13 @@
  * Quiet for. Acres was explicitly dropped ("Yield is what he compares two deals on; acreage is a
  * detail you look up once you are inside the deal") and the separate "In" column was folded into
  * Next's second line, per the same correction.
+ *
+ * B1411504 — when nobody has entered a deal date yet, the table falls back to an alphabetical
+ * order (pursuitsList.js) and this card says so above the header row, rather than let a plain
+ * name-order list masquerade as the "soonest date" sort it's built to be.
  */
 import { formatShortDate } from "../lib/dashboardDates.js";
-import { nextLineTone, isQuietEmphasized } from "../lib/pursuitsList.js";
+import { nextLineTone, isQuietEmphasized, allPursuitsUndated } from "../lib/pursuitsList.js";
 
 const EMPTY = { fontSize: 12, color: "var(--text-secondary)", fontStyle: "italic" };
 const TONE_COLOR = { danger: "var(--danger-text)", accent: "var(--accent)", muted: "var(--text-secondary)" };
@@ -60,8 +64,17 @@ function QuietCell({ days }) {
 
 export function PursuitsCard({ rows, yieldBySite, onOpenProject }) {
   if (!rows || !rows.length) return <div style={EMPTY}>No open pursuits right now.</div>;
+  // B1411504 — when no pursuit has a contractual date, the table is sorted alphabetically
+  // (pursuitsList.js's own tie-break) rather than by "soonest date" — say so, rather than let a
+  // name-order list read as if it meant something about urgency. See that module's header.
+  const allUndated = allPursuitsUndated(rows);
   return (
     <div style={{ overflowX: "auto" }}>
+      {allUndated && (
+        <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>
+          No deal dates set yet — sorted alphabetically.
+        </div>
+      )}
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>

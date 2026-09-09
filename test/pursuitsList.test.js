@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   nextContractualDate, pursuitsTable, quietDaysByGroupFromRecency, quietDaysByGroupFromRows, nextLineTone, isQuietEmphasized,
+  allPursuitsUndated,
 } from "../src/workspaces/dashboard/lib/pursuitsList.js";
 
 const NOW = new Date(2026, 8, 6).getTime(); // Sep 6, 2026, local midnight
@@ -85,6 +86,44 @@ describe("pursuitsTable", () => {
     const projects = [{ ...base, groupId: "a", name: "ALUMAX RD, NASH,", county: "bowie" }];
     const rows = pursuitsTable(projects, {}, { nowMs: NOW });
     expect(rows[0].name).toBe("ALUMAX RD, NASH");
+  });
+
+  // B1411504 — confirmed on the owner's real portfolio: every open pursuit has all three
+  // contractual-date fields unset, so `next` is null on every row and the OLD comparator's
+  // `ad==null && bd==null → return 0` left Array.sort's stability to present raw insertion order
+  // as if it were a sort. A sort keyed on a value no row has must not present an arbitrary order
+  // as meaningful — this asserts the fallback is a REAL, defensible order (alphabetical), not
+  // whatever order the caller happened to hand in.
+  it("undated-vs-undated ties break ALPHABETICALLY, never insertion order (no arbitrary sort)", () => {
+    const projects = [
+      { ...base, groupId: "z", name: "Zebra Site", county: "harris" },
+      { ...base, groupId: "a", name: "Alpha Site", county: "harris" },
+      { ...base, groupId: "m", name: "Mid Site", county: "harris" },
+    ];
+    const rows = pursuitsTable(projects, {}, { nowMs: NOW });
+    expect(rows.map((r) => r.name)).toEqual(["Alpha Site", "Mid Site", "Zebra Site"]);
+  });
+
+  it("still never lets quiet time decide the undated tie-break", () => {
+    const projects = [
+      { ...base, groupId: "z", name: "Zebra Site", county: "harris" },
+      { ...base, groupId: "a", name: "Alpha Site", county: "harris" },
+    ];
+    // Zebra is far quieter (staler) than Alpha; alphabetical order must still win.
+    const rows = pursuitsTable(projects, { z: 400, a: 0 }, { nowMs: NOW });
+    expect(rows.map((r) => r.name)).toEqual(["Alpha Site", "Zebra Site"]);
+  });
+});
+
+describe("allPursuitsUndated", () => {
+  it("true only when every row lacks a next date", () => {
+    expect(allPursuitsUndated([{ next: null }, { next: null }])).toBe(true);
+  });
+  it("false when at least one row has a date", () => {
+    expect(allPursuitsUndated([{ next: null }, { next: { days: 3 } }])).toBe(false);
+  });
+  it("false for an empty list — a distinct, already-handled empty state", () => {
+    expect(allPursuitsUndated([])).toBe(false);
   });
 });
 
