@@ -42,10 +42,15 @@ describe("SitePlannerApp.jsx marks every freshly-minted project id before it can
     // The whole point of this fix: the NO-ORIGIN branch never calls saveSite at all (documented
     // above it as deliberate — "a blank site that's never edited should never be saved"), so the
     // mark must happen unconditionally, ahead of the `if (o) {` split, not inside either branch.
+    // B1399568 added an EARLIER `if (o) {` block (the ADOPT ground-check, which runs and can
+    // return before an id is ever minted) — anchor on `const id = newId();` to find the SAVE
+    // branch's own `if (o) {`, not that earlier one.
     const fnStart = SP.indexOf("const newBlankSite = async (opts) => {");
+    const mintIdx = SP.indexOf("const id = newId();", fnStart);
     const markIdx = SP.indexOf("locallyMintedGroupsRef.current.add(id);", fnStart);
-    const branchIdx = SP.indexOf("if (o) {", fnStart);
+    const branchIdx = SP.indexOf("if (o) {", mintIdx);
     expect(fnStart).toBeGreaterThan(-1);
+    expect(mintIdx).toBeGreaterThan(fnStart);
     expect(markIdx).toBeGreaterThan(fnStart);
     expect(markIdx).toBeLessThan(branchIdx);
   });
@@ -60,17 +65,21 @@ describe("SitePlannerApp.jsx marks every freshly-minted project id before it can
    * must ALSO write the cross-reload twin (`markProjectFreshlyMinted`, a small capped localStorage
    * list in projectModel.js), or this exact case regresses silently. */
   it("both mint sites also call the persisted, cross-reload-surviving twin", () => {
-    expect(SP.includes('import { markProjectFreshlyMinted } from "../../shared/projects/projectModel.js";')).toBe(true);
+    // B1399568 added findProjectAtOrigin to this same import line — still one import, both names.
+    expect(SP.includes('import { markProjectFreshlyMinted, findProjectAtOrigin } from "../../shared/projects/projectModel.js";')).toBe(true);
     const newSiteStart = SP.indexOf("const newSiteFromMap = async (payload) => {");
     const newBlankStart = SP.indexOf("const newBlankSite = async (opts) => {");
     expect(newSiteStart).toBeGreaterThan(-1);
     expect(newBlankStart).toBeGreaterThan(-1);
     const persistIdxA = SP.indexOf("markProjectFreshlyMinted(id);", newSiteStart);
+    // B1399568: anchor newBlankSite's search on its own `const id = newId();`, same reasoning as
+    // the test above — an earlier `if (o) {` (the ADOPT ground-check) now precedes the save branch.
+    const mintIdxB = SP.indexOf("const id = newId();", newBlankStart);
     const persistIdxB = SP.indexOf("markProjectFreshlyMinted(id);", newBlankStart);
     expect(persistIdxA).toBeGreaterThan(newSiteStart);
     expect(persistIdxA).toBeLessThan(SP.indexOf("saveSite(", newSiteStart));
-    expect(persistIdxB).toBeGreaterThan(newBlankStart);
-    expect(persistIdxB).toBeLessThan(SP.indexOf("if (o) {", newBlankStart));
+    expect(persistIdxB).toBeGreaterThan(mintIdxB);
+    expect(persistIdxB).toBeLessThan(SP.indexOf("if (o) {", mintIdxB));
   });
 });
 
