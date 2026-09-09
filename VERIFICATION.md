@@ -668,44 +668,27 @@ Signed in, at 1600×465, on the Site Planner map:
 
 **Result:** ⏳ **pending — PARCEL FLAVOUR NOT DRIVEN.** Step 2 (the at-rest row) passed on the owner's own browser 2026-09-08 on build `4194dda`; every parcel-flavour step is untouched and needs a signed-in browser with a reachable county parcel service. `Cadence: once`.
 
-### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back `Blocker: real-data`
+### V993809 — B1370545 / B1433856: something can be placed above the page title WITHOUT overlapping it `Blocker: real-data`
 
-> ⛔ **UPDATED 2026-09-08 (round 3).** He ran the steps below on the shipped build himself and it FAILED on the left — the page had no grey margin left of it once anything had grown, so there was nothing to press in and nowhere to drag to. Two further defects were found underneath (a compensation that had never fired; a gutter change scrolling the page sideways on every load). The steps are unchanged and now also cover the gutter: **at step 2, first check there is visibly grey to the LEFT of the page before trying to press in it.**
+> ⛔ **CORRECTED 2026-09-09 (B1433856).** This item's own original "what was verified here" text — "a box stored at `y: -60` renders overlapping the title's own bounding rect… and is fully inside the sheet, which grew upward to hold it" — was recording the DEFECT, not a pass. The owner found exactly that overlap live on his own account: `note-title`'s rect and a placed note's rect painted the same pixels, the note's glyphs drew over the title's letters once his title grew long, and a real click on the shared pixels focused NEITHER element (`document.activeElement` stayed `BODY`) — a permanent, reload-surviving dead zone. B1433856 fixed the mechanism (the GAP after the band grows, never the sheet's padding-top, so a box lands in fresh space below the band instead of behind it) and this item's claim, steps and proof are rewritten below to match the CORRECTED behavior. The underlying live-check question is unchanged — "does placing something near the title work correctly on his real note" — so this stays the same V# rather than minting a new one.
 
-**Why this needs its own real pass.** Everything below is measured here on a seeded page in a headless browser, and it all passes — but the report was made on his own Goose Creek → Platting note, whose real content (a long title, a metadata line, real body text, several boxes at once, a window he sized himself) is what the growth budget is computed against. Zoom-/data-density-dependent rendering is a mandatory LIVE-VERIFY class, and a seeded fixture is exactly the thing that can make a real defect unreachable.
+**Why this needs its own real pass.** The room a box needs before it clears the title band depends on the band's own rendered height — which depends on the title's length, whether the note carries a project badge, and the phone breakpoint. A seeded page has a short title and one metadata line; his real notes do not. **This is no longer a concern for the FIX's correctness** (the growth math no longer reads the band's height at all — see B1433856 — so it is provably indifferent to what makes the band taller or shorter), but it is still the right bar for a zoom-/data-density-dependent rendering claim: confirming the picture looks right on his own real note, not just that the math is sound.
 
 **What was verified here (this session, real headless Chromium, real mouse, logged out).**
-1. `ui-audit/verify-notes-free-placement.mjs` §1–§5 — all eight directions (left · right · above · below · four diagonals) drive a box 420px, store the exact asked-for coordinate, grow the page to hold it, and return the same coordinate after a reload. Grow-then-return shrinks the page back to its natural 580 on left, right and above. Two boxes on opposite sides render on one grown page and both survive a reload. Far-left to far-right in one gesture: -300 → 600, on the page, persisted. Phone-width window with a box at x -500: kept and reached.
-2. Unit tests: `anchorExtentLeft`/`anchorExtentTop` (`test/notesAnchorZoom.test.js`), the retired floors in `moveAnchorPoint`/`placeAnchor`/`resizeBox` (`test/notesBoxResize.test.js`, `test/notesAnchorZoom.test.js`), the unclamped group drag (`test/notesMarquee.test.js`). Full repo suite green; `npm run ci-parity` PASS.
-3. `ui-audit/verify-notes-page-growth.mjs` — every check green after its §1 was re-pointed at the new rule (a negative coordinate is KEPT, and opening the note no longer rewrites the stored document).
-
-**Steps, each with a named expected result — on `planyr.io`, signed in, on a THROWAWAY DUPLICATE of a real note (never one of his own plans — owner constraint 7):**
-1. Read the loaded chunk hash in the same observation as everything below (`document.querySelectorAll('script[src]')`), and confirm it names a build after this PR merged. A stale tab will reproduce the OLD behaviour perfectly.
-2. Place a note in the right margin and drag it well past the page's LEFT edge. **Expect:** it follows the pointer the whole way; the page extends leftward to contain it; the title and the body text do NOT jump sideways as it grows.
-3. Drag the same note above the title. **Expect:** it follows; the page extends upward; nothing is cut off at the top.
-4. Drag it back inside the column. **Expect:** the page shrinks back to its ordinary width and height.
-5. Repeat 2–4 diagonally (up-left and down-left). **Expect:** the same on both axes at once.
-6. Put one note far left and a second far right at the same time. **Expect:** one page holds both.
-7. Reload the note. **Expect:** every box is exactly where it was left, and the page is the same size.
-8. Confirm on his ACTUAL Platting note that the old scratch anchor at `y: -21` renders where it says it is and is no longer dragged back onto the page on load.
-
-**Result:** ⏳ pending — needs his own signed-in browser and his own note. Sandbox measurements above are complete and green.
-
-### V993809 — B1370545: something can actually be placed and kept level with the page title `Blocker: real-data`
-
-**Why this needs its own real pass.** The room a box has above the body's origin is the sheet's top padding plus the TITLE BAND's own height — and that band's height depends on the title's length, whether the note carries a project badge, and the phone breakpoint. A seeded page has a short title and one metadata line; his real notes do not.
-
-**What was verified here (this session, real headless Chromium, logged out).** `ui-audit/verify-notes-free-placement.mjs` §6: a box stored at `y: -60` renders overlapping the title's own bounding rect (title top 151, box top 177) and is fully inside the sheet, which grew upward to hold it. `ui-audit/verify-notes-print-free-placement.mjs` §1 confirms the same negative `y` reaches the printed document verbatim.
+1. `ui-audit/verify-notes-free-placement.mjs` §6 (rewritten): a box at `y` of −10 / −30 / −60 / −90 / −260 NEVER paints inside the title's own rect (all five clear it), and the sheet still grows to hold each one. The red-proof — a real click at the geometric intersection point — is confirmed to FAIL on `origin/main` (`document.activeElement` reads `BODY`, reproducing the owner's own measurement exactly) and PASS on the fix (focuses `note-title`).
+2. `ui-audit/verify-notes-free-placement.mjs` §6b (new): title short → long → short again (no overlap at any point, since the fix never reads title length); a note level with the CHIPS row ("Edited …", not just the bare title) — renders below the chip row's own bottom, confirmed geometrically; the same in dark mode — unaffected; a title long enough to "wrap" — confirmed N/A (`note-title` is a plain single-line `<input>`, asserted from the live DOM rather than assumed).
+3. `ui-audit/verify-notes-print-free-placement.mjs` §1 confirms a negative `y` still reaches the printed document verbatim — the print path was never affected by this defect (it always reserved the full negative-`y` distance as extra margin, never crediting the band, so it never had this bug; see B1433856's own note on why).
 
 **Steps, each with a named expected result — on `planyr.io`, signed in, on a throwaway duplicate note:**
 1. Read the served chunk hash in the same observation as the steps below.
-2. Press in the grey margin to the LEFT of the page, level with the page's title. **Expect:** a note is created there, beside the title, not below the metadata line.
-3. Type into it, click away, reload. **Expect:** it is still beside the title.
-4. Drag an existing note from the body up until it is level with the title. **Expect:** it goes there and stays; the page grows upward rather than stopping it.
-5. Do 2–4 again on a note with a LONG title that wraps, and on a note filed in a project (so the badge row is present). **Expect:** the same, with the page reaching further up as the band is taller.
-6. Repeat step 2 on a phone-width window. **Expect:** the same behaviour at the phone's own title size.
+2. Type a LONG title (long enough that a short placeholder wouldn't reach) on a note with no other content yet. **Expect:** the title reads cleanly, no stray glyphs from anything else overlapping it.
+3. Press in the blank space just below the title (not on the title's own text) and type a note. **Expect:** the note appears BELOW the title band, never overlapping or hidden behind the title's letters, and the page grows to make room for it.
+4. Click directly on the title's own text, anywhere across its full width, including well past a short title's own placeholder. **Expect:** every such click focuses the title for editing — never a dead click, never selecting something else.
+5. Drag an existing note from the body up toward the title. **Expect:** it stops clear of the title band (renders in the space that opens up, not on top of the title); the page grows to hold it.
+6. Reload. **Expect:** the same — nothing shifted back into an overlapping position.
+7. Repeat 2–3 on a note filed in a project (so the "Edited …" / project chip row is present under the title) and on a phone-width window. **Expect:** the same — no overlap with the chip row either.
 
-**Result:** ⏳ pending — needs his own signed-in browser and a note with a real title and metadata line.
+**Result:** ⏳ pending — needs his own signed-in browser, a note with a real title and metadata line, and confirmation the corrected (non-overlapping) picture matches what the sandbox proof above shows.
 
 ### V993810 — B1370548: printing a note that carries placed content, from a real browser's own print dialogue `Blocker: real-data`
 
