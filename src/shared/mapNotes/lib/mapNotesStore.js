@@ -60,12 +60,18 @@ export async function updateMapNote(id, note) {
 }
 
 /** SOFT delete — keyed on (owner, id) by RLS's owner-only UPDATE policy, exactly as comps is.
- * Never a hard delete: the row stays, `deleted_at` is stamped, and restoreMapNote undoes it. */
+ * Never a hard delete: the row stays, `deleted_at` is stamped, and restoreMapNote undoes it.
+ *
+ * ⛔ The success check verifies the RETURNED ROW, not just that the array is non-empty (B209's
+ * class — a truthy-but-wrong response must never read as success). `.select("id")` with no
+ * `.eq(...)` match returns `[]`, which the OLD `!data.length` check already caught; this additionally
+ * refuses an array whose one element doesn't actually carry the id that was asked for, so a response
+ * shape neither of us has seen yet still fails loud instead of silently closing the editor. */
 export async function deleteMapNote(id) {
   if (!supabase) return { error: new Error("Supabase not configured") };
   const { data, error } = await supabase.from(TABLE).update({ deleted_at: new Date().toISOString() }).eq("id", id).select("id");
   if (error) return { error };
-  if (!Array.isArray(data) || !data.length) return { error: new Error("Not deleted — you can only remove notes you wrote") };
+  if (!Array.isArray(data) || data[0]?.id !== id) return { error: new Error("Not deleted — you can only remove notes you wrote") };
   return { error: null };
 }
 
@@ -74,7 +80,7 @@ export async function restoreMapNote(id) {
   if (!supabase) return { error: new Error("Supabase not configured") };
   const { data, error } = await supabase.from(TABLE).update({ deleted_at: null }).eq("id", id).select("id");
   if (error) return { error };
-  if (!Array.isArray(data) || !data.length) return { error: new Error("Not restored — you can only restore notes you wrote") };
+  if (!Array.isArray(data) || data[0]?.id !== id) return { error: new Error("Not restored — you can only restore notes you wrote") };
   return { error: null };
 }
 

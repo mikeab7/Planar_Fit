@@ -182,17 +182,33 @@ const markerCount = () => page.evaluate(() => document.querySelectorAll(".map-no
 }
 
 // ── E · SOFT DELETE, ON A SECOND CLICK, AND IT IS A PATCH — NEVER A DELETE ───────────────────
+// B1372144-HARDENING-1 — the confirm step REPLACES the action row (Delete/Cancel/Save) with a
+// dedicated Confirm/Keep-it row, rather than relabeling the Delete button in place. The relabel
+// version grew "Delete" into "Delete — sure?" inside the SAME fixed-width row as Cancel/Save,
+// shrinking the flex spacer between them — a second click aimed at the (now wider) button could
+// land on the shifted Cancel/Save instead, closing the editor with ZERO network traffic and no
+// error, which reads exactly like "I clicked Delete and it just worked." This block asserts the
+// row is genuinely swapped (the old Delete button is gone, not just relabeled) and — closing a
+// real gap in the old assertion here — that the PATCH is scoped to THIS note's own id, not just
+// "some PATCH with deleted_at happened to go out."
 {
   const before = seen.length;
   await page.click('[data-testid="map-note-delete"]');
   await pacedWait(page, 300);
-  const confirming = await page.evaluate(() => document.querySelector('[data-testid="map-note-delete"]').textContent);
-  ok("E · the first Delete click asks rather than deleting (no dialog box, inline)", /sure/i.test(confirming) && seen.length === before);
-  await page.click('[data-testid="map-note-delete"]');
+  const armed = await page.evaluate(() => ({
+    oldButtonGone: !document.querySelector('[data-testid="map-note-delete"]'),
+    confirmButtonPresent: !!document.querySelector('[data-testid="map-note-delete-confirm"]'),
+  }));
+  ok("E · the first Delete click swaps the row for a Confirm/Keep-it pair (no dialog box, inline)",
+     armed.oldButtonGone && armed.confirmButtonPresent && seen.length === before,
+     JSON.stringify(armed));
+  await page.click('[data-testid="map-note-delete-confirm"]');
   await pacedWait(page, 800);
   const del = seen.filter((s) => s.method !== "GET").pop();
   ok("E · deleting stamps deleted_at — it is never a hard DELETE", !!del && del.method === "PATCH" && !!del.body?.deleted_at,
      del ? `${del.method} ${JSON.stringify(del.body).slice(0, 40)}` : "nothing sent");
+  ok("E · the delete is scoped to THIS note's own id", !!del && !!subject && del.url.includes(`id=eq.${subject.id}`),
+     del ? del.url.split("?")[1] : "");
   ok("E · no hard DELETE request was ever issued", seen.every((s) => s.method !== "DELETE"));
   ok("E · the marker leaves the map", (await markerCount()) === 1);
   ok("E · the count follows", (await page.evaluate(() => document.querySelector('[data-testid="map-show-notes"]').closest("label").textContent.trim())) === "Notes (1)");
@@ -234,6 +250,43 @@ const markerCount = () => page.evaluate(() => document.querySelectorAll(".map-no
   await page.mouse.click(mb.x, mb.y);
   await pacedWait(page, 700);
   ok("F · and a later map click changes nothing — the paint was not merely DEFERRED", (await markerCount()) === after);
+}
+
+// ── G · THE ADJACENT CASE: A PARCEL-ANCHORED NOTE DELETES THE SAME WAY A PIN-ANCHORED ONE DOES ──
+// The reported defect was on a parcel anchor specifically ("select a parcel, decide bar -> Add a
+// note"); section E above proved the fix on note-a, a PIN anchor. `deleteMapNote`/`confirmRemove`
+// never read `anchor_kind`, so there is no reason to expect a difference — but that is exactly the
+// kind of assumption this repo's own WRONG-CASE rule says to verify rather than take on faith.
+{
+  const target = await page.evaluate(() => {
+    const el = document.querySelector('[data-note-id="note-b"]');
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  ok("G · the parcel-anchored note's own marker is addressable by id", !!target);
+  await page.mouse.click(target.x, target.y);
+  await pacedWait(page, 600);
+  const opened = await page.evaluate(() => ({
+    editorOpen: !!document.querySelector('[data-testid="map-note-editor"]'),
+    anchorText: document.querySelector('[data-testid="map-note-editor"]')?.textContent || "",
+  }));
+  ok("G · it reopens as the parcel anchor it was seeded as", opened.editorOpen && /On a parcel/.test(opened.anchorText), JSON.stringify({ editorOpen: opened.editorOpen }));
+  const before = seen.length;
+  await page.click('[data-testid="map-note-delete"]');
+  await pacedWait(page, 300);
+  const armed = await page.evaluate(() => ({
+    oldButtonGone: !document.querySelector('[data-testid="map-note-delete"]'),
+    confirmButtonPresent: !!document.querySelector('[data-testid="map-note-delete-confirm"]'),
+  }));
+  ok("G · the same Confirm/Keep-it swap arms for a parcel anchor", armed.oldButtonGone && armed.confirmButtonPresent && seen.length === before);
+  await page.click('[data-testid="map-note-delete-confirm"]');
+  await pacedWait(page, 800);
+  const del = seen.filter((s) => s.method !== "GET").pop();
+  ok("G · deleting a parcel-anchored note stamps deleted_at, scoped to note-b",
+     !!del && del.method === "PATCH" && !!del.body?.deleted_at && del.url.includes("id=eq.note-b"),
+     del ? `${del.method} ${del.url.split("?")[1]}` : "nothing sent");
+  ok("G · the marker leaves the map", (await markerCount()) === 1);
 }
 
 ok("· no page errors during the run", errs.length === 0, errs[0] || "");
