@@ -15,6 +15,17 @@
  * breadcrumb's own kebab, which already has them and already confirms). Ownership itself is read
  * through the shared `partitionSchedules`, never re-derived here — one answer to "who owns this",
  * the whole point of src/shared/schedule/scheduleOwnership.js.
+ *
+ * ⛔ B1396192 — THIS USED TO RENDER ONLY INSIDE Scheduler.jsx'S EMPTY STATE, so the moment a
+ * routed project HAD a schedule (any schedule), every one of its OTHER schedules — and the
+ * Organization's — became unreachable from that project's Schedule tab. That was the owner's
+ * whole original complaint (B1380336/B1380337) restated one level up: Goose Creek's own "TAS Land
+ * Sale" schedule stayed unreachable from Goose Creek's Schedule tab, the instant Goose Creek's
+ * FIRST schedule loaded. This component itself was already correct — the bug was purely about
+ * WHERE it was mounted. It now renders from TWO call sites: Scheduler.jsx's empty state (a
+ * project with no schedule yet — unchanged), and the header's "Schedules" button/dropdown
+ * (`ScheduleSwitcher` in ScheduleToolbar.jsx — new, covers every other case, incl. Grid/Split/
+ * Gantt and the phone-width header's horizontal-scroll toolbar).
  */
 import { useMemo } from "react";
 import { RADIUS } from "../../../shared/ui/radius.js";
