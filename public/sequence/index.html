@@ -11180,11 +11180,6 @@ function measuredColWidth(headerLabel, cellValues, floor) {
   return Math.max(floor, Math.ceil(maxW));
 }
 
-// NEW-1/B1350080 — width of the Columns (⋯) button's trailing gutter strip. The strip itself
-// lives outside the grid's horizontally-scrolling region (see GridView's return), so it can
-// never sit on top of a column and never scrolls away.
-const GRID_GUTTER_W = 28;
-
 function GridView({tasks, succMap, updateTask, deleteTask, getTaskName, proj, setData, setNotesCtx, edit, setEdit, editStartChar, selectedId, setSelectedId, selRange, setSelRange, selectedColIdx, setSelectedColIdx, goToFocus, scrollRef, onScroll, setTaskCtx, insertTask, insertTaskBelow, addTask, addSubtask, duplicateTask, rolledHealthMap, healthColStyle, setHealthColStyle, data, gridZoom=1, setHoverZone, onColWidths, review, moveRows}) {
   // Predecessor lookup for the "a predecessor is late" health condition — memoized on the
   // project's own task array so it's built once per data change, not once per row.
@@ -11843,11 +11838,7 @@ function GridView({tasks, succMap, updateTask, deleteTask, getTaskName, proj, se
 
   return (
     <div style={{position:"relative",flex:1,minWidth:0,minHeight:0,display:"flex"}}>
-    {/* NEW-1/B1350080 — the horizontally-scrolling region stops GRID_GUTTER_W short of the
-        pane's true right edge, so no column can ever render (or scroll) under the gutter strip
-        below — it isn't a sticky trick sharing the columns' own row, it's a structurally
-        separate slice of the pane that column content can never reach. */}
-    <div ref={ref} data-grid-scroll="1" style={{position:"absolute",top:0,left:0,bottom:0,right:GRID_GUTTER_W,overflow:"auto",zoom:gridZoom}} onScroll={handleScroll} onMouseEnter={()=>setHoverZone?.("grid")}>
+    <div ref={ref} data-grid-scroll="1" style={{flex:1,overflow:"auto",position:"relative",zoom:gridZoom}} onScroll={handleScroll} onMouseEnter={()=>setHoverZone?.("grid")}>
       <div style={{position:"sticky",top:0,zIndex:10,display:"flex",background:"var(--surf)",borderBottom:"2px solid var(--amber)",borderLeft:"2px solid transparent",minWidth:totalW,height:30}}>
         {orderedCols.map(c => (
           <div key={c.k}
@@ -12125,27 +12116,22 @@ function GridView({tasks, succMap, updateTask, deleteTask, getTaskName, proj, se
         })}
       </div>
     </div>
-    {/* NEW-1/B1350080 — the Columns (⋯) button's own strip: a structurally separate,
-        never-scrolling 28px column pinned to the pane's true right edge (see the scroll div's
-        `right:GRID_GUTTER_W` inset above), so it can never sit on top of column content and
-        never scrolls away. Its border runs the full pane height so it reads as one continuous
-        column edge, matching the header's own border without needing a per-row spacer. */}
-    <div style={{position:"absolute",top:0,right:0,bottom:0,width:GRID_GUTTER_W,
-      borderLeft:"1px solid var(--bd)",background:"var(--surf)",zIndex:11}}>
-      <div style={{height:30,display:"flex",alignItems:"center",justifyContent:"center",
-        borderBottom:"2px solid var(--amber)"}}>
-        <button ref={colBtnRef} onClick={()=>{setColMenuOpen(o=>!o);setHdrCtx(null);}}
-          title="Show, hide, add or reorder table columns"
-          style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,height:22,padding:0,
-            border:"none",borderRadius:6,cursor:"pointer",
-            color: colMenuOpen ? "var(--amber)" : "var(--mut)",
-            background: colMenuOpen ? "#eef2ff" : "transparent"}}
-          onMouseEnter={e=>{if(!colMenuOpen){e.currentTarget.style.color="var(--amber)";e.currentTarget.style.background="var(--surf)";}}}
-          onMouseLeave={e=>{if(!colMenuOpen){e.currentTarget.style.color="var(--mut)";e.currentTarget.style.background="transparent";}}}>
-          <svg viewBox="0 0 24 24" fill="currentColor" width={14} height={14}><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
-        </button>
-      </div>
-    </div>
+    {/* B1397536 — corrects B1350080's dedicated 28px gutter, which the owner saw live as a dead
+        extra column running the table's full height. The Columns (⋯) button now sits directly ON
+        the header row, pinned to the pane's true right edge, and deliberately OVERLAPS the tail
+        of whatever column is last — no reserved width, no column shrink, no per-row spacer. It's
+        a sibling of the scrolling region (not inside it), so it never scrolls away with the
+        columns even though it now shares their row instead of owning a strip of its own. */}
+    <button ref={colBtnRef} onClick={()=>{setColMenuOpen(o=>!o);setHdrCtx(null);}}
+      title="Show, hide, add or reorder table columns"
+      style={{position:"absolute",top:4,right:14,zIndex:30,display:"flex",alignItems:"center",justifyContent:"center",width:22,height:22,padding:0,
+        border:"none",borderRadius:6,cursor:"pointer",
+        color: colMenuOpen ? "var(--amber)" : "var(--mut)",
+        background: colMenuOpen ? "#eef2ff" : "transparent"}}
+      onMouseEnter={e=>{if(!colMenuOpen){e.currentTarget.style.color="var(--amber)";e.currentTarget.style.background="var(--surf)";}}}
+      onMouseLeave={e=>{if(!colMenuOpen){e.currentTarget.style.color="var(--mut)";e.currentTarget.style.background="transparent";}}}>
+      <svg viewBox="0 0 24 24" fill="currentColor" width={14} height={14}><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+    </button>
     {colMenuOpen && <GridColumnsChooser cols={allCols} visible={colOrder} hidden={hiddenCols}
       anchor={colBtnRef.current?.getBoundingClientRect()}
       onToggle={(k,on)=>on?showCol(k):hideCol(k)}
