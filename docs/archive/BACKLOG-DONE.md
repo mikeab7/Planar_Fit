@@ -13532,9 +13532,9 @@ Both rows reuse the exact `data-testid="notes-view-bin"` the old tab carried, so
 
   | Case | Result | How checked |
   |---|---|---|
-  | Short laptop window / normal desktop | Footer rail stays pinned below the tree, no scroll needed to reach it | Headless, live |
+  | Short laptop window (1366×620) | Footer rail's bounding box sits fully inside the viewport with no scroll needed, Unfiled row visible and clickable | Headless, live — measured `getBoundingClientRect()` against the real viewport height |
   | Phone width (narrow) | Both footer rows meet the ≥44px tap-target floor (`verify-phone-layout.mjs`'s existing budget, unchanged) | Headless, live |
-  | Tree scrolled to the bottom | Footer rail is a sibling of the scroll container, not inside it — stays pinned regardless of scroll position (structural, not just visually confirmed) | Source read + headless (footer present alongside a long seeded tree) |
+  | Tree scrolled to the bottom (a 40-page seeded tree, genuinely scrolled 690px) | Footer rail's own bounding box is pixel-identical before and after — it is a sibling of the scroll container, not inside it | Headless, live — measured, not inferred from the DOM structure alone |
   | Bin still opens and restores/purges correctly from the new entry point | Every existing Bin behavior (Restore, Delete forever, Read it, Empty the bin, "Delete the N empty ones forever") — unchanged; only the row that opens the view moved | `verify-notes-project-integrity.mjs` §7 (35 checks), re-run green |
   | Switching between Pages/Tasks and Bin/Unfiled repeatedly | Selected-state highlight follows correctly on all four surfaces via the shared `changeView()` handler (search query cleared on every switch, same as before) | Headless, live |
 - Sandbox: full Notes-suite `npx vitest run` unaffected (no model-layer change beyond B1409408's). `npm run build` clean.
