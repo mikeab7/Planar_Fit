@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   landSizeSf, landPricePerSf, buildingPricePerSf, annualLeaseRate, leaseTotalAnnualRent,
+  leaseRateForPeriod, leaseRateDisplayFor,
   summarizeLeaseComps, summarizeSaleComps, compsSummaryBits, compFieldRows, compHeadline, partyLabels,
   validAnchor, validateComp, rowToComp, compToRow,
   landPricePerAreaUnit, parseLeaseTermYears, netEffectiveLeaseRate, opexNormalizedRate,
@@ -70,6 +71,42 @@ describe("comps: lease annual normalization", () => {
   });
   it("is null with no rate at all", () => {
     expect(annualLeaseRate({})).toBeNull();
+  });
+});
+
+describe("comps: leaseRateForPeriod — the display-toggle conversion, built on annualLeaseRate", () => {
+  it("converts an annual comp to its monthly equivalent (÷12)", () => {
+    expect(leaseRateForPeriod({ leaseRate: 6, leaseRatePeriod: "annual" }, "monthly")).toBeCloseTo(0.5, 10);
+  });
+  it("converts a monthly comp to its annual equivalent (×12)", () => {
+    expect(leaseRateForPeriod({ leaseRate: 0.5, leaseRatePeriod: "monthly" }, "annual")).toBeCloseTo(6, 10);
+  });
+  it("asking for the comp's OWN period round-trips exactly — no float drift either way", () => {
+    expect(leaseRateForPeriod({ leaseRate: 0.645, leaseRatePeriod: "monthly" }, "monthly")).toBe(0.645);
+    expect(leaseRateForPeriod({ leaseRate: 7.25, leaseRatePeriod: "annual" }, "annual")).toBe(7.25);
+  });
+  it("refuses to guess a period — null, same conditions as annualLeaseRate", () => {
+    expect(leaseRateForPeriod({ leaseRate: 7 }, "monthly")).toBeNull();
+  });
+});
+
+describe("comps: leaseRateDisplayFor — a Rate FIELD's value for a chosen display period", () => {
+  it("with no displayPeriod, shows the comp's own stored rate/period untouched (pre-toggle behavior)", () => {
+    expect(leaseRateDisplayFor({ leaseRate: 0.645, leaseRatePeriod: "monthly" })).toEqual({ formatted: "0.645", period: "monthly" });
+    expect(leaseRateDisplayFor({ leaseRate: 7.5, leaseRatePeriod: "annual" })).toEqual({ formatted: "7.50", period: "annual" });
+  });
+  it("a displayPeriod matching the comp's own is the same untouched, full-precision reading", () => {
+    expect(leaseRateDisplayFor({ leaseRate: 0.645, leaseRatePeriod: "monthly" }, "monthly")).toEqual({ formatted: "0.645", period: "monthly" });
+  });
+  it("a displayPeriod that differs converts and formats to 2 decimals — a derived figure now", () => {
+    expect(leaseRateDisplayFor({ leaseRate: 0.5, leaseRatePeriod: "monthly" }, "annual")).toEqual({ formatted: "6.00", period: "annual" });
+    expect(leaseRateDisplayFor({ leaseRate: 6, leaseRatePeriod: "annual" }, "monthly")).toEqual({ formatted: "0.50", period: "monthly" });
+  });
+  it("a comp with no recorded period can't be honestly converted — falls back to the raw reading, never guessed", () => {
+    expect(leaseRateDisplayFor({ leaseRate: 7 }, "monthly")).toEqual({ formatted: "7.00", period: "annual" });
+  });
+  it("is null with no rate at all", () => {
+    expect(leaseRateDisplayFor({})).toBeNull();
   });
 });
 
@@ -536,6 +573,13 @@ describe("comps: empty fields never render", () => {
     expect(whole.find((r) => r.key === "rate").value).toBe("$7.00/SF/yr NNN");
   });
 
+  it("lease: an explicit displayPeriod re-normalizes the Rate row — the comps rail matching the Dashboard's toggle", () => {
+    const enteredMonthly = { compType: "lease", compDate: "2026-08-01", leaseRate: 0.65, leaseRatePeriod: "monthly", leaseRateExpense: "nnn" };
+    expect(compFieldRows(enteredMonthly, "annual").find((r) => r.key === "rate").value).toBe("$7.80/SF/yr NNN");
+    // Passing no displayPeriod at all is untouched — the comp's own stored rate/period, full precision.
+    expect(compFieldRows(enteredMonthly).find((r) => r.key === "rate").value).toBe("$0.65/SF/mo NNN");
+  });
+
   // ⛔ NEW-1 (owner-adversarial review, 2026-09-05) — a parcel anchor's APN (a county appraisal
   // account number) is an identity, never an address; it gets its own row rather than
   // substituting for the Location text (which CompsPanel.jsx resolves separately).
@@ -585,6 +629,17 @@ describe("comps: headline label", () => {
     expect(compHeadline({ compType: "lease", leaseRate: 7.5, leaseRatePeriod: "annual", leaseRateExpense: "nnn" })).toBe("$7.50/SF/yr NNN");
     expect(compHeadline({ compType: "lease" })).toBe("Lease comp");
     expect(compHeadline({})).toBe("Comp");
+  });
+
+  it("an explicit displayPeriod re-normalizes the lease headline, matching sibling comps entered the other way", () => {
+    const enteredAnnual = { compType: "lease", leaseRate: 6, leaseRatePeriod: "annual", leaseRateExpense: "nnn" };
+    const enteredMonthly = { compType: "lease", leaseRate: 0.5, leaseRatePeriod: "monthly", leaseRateExpense: "nnn" };
+    // Same real rate, different entered periods — shown "per month", both must read identically.
+    expect(compHeadline(enteredAnnual, "monthly")).toBe("$0.50/SF/mo NNN");
+    expect(compHeadline(enteredMonthly, "monthly")).toBe("$0.50/SF/mo NNN");
+    // And "per year" the same way.
+    expect(compHeadline(enteredAnnual, "annual")).toBe("$6.00/SF/yr NNN");
+    expect(compHeadline(enteredMonthly, "annual")).toBe("$6.00/SF/yr NNN");
   });
 });
 
