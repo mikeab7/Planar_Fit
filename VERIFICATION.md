@@ -166,6 +166,26 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V1032736 — B1422496: a card added to the catalog after this ships reaches the owner's real saved layout on its own, and removing a card keeps it removed `Blocker: auth`
+
+**Why this needs a real pass.** The reconciliation mechanism (`newCatalogCards`/`appendNewCatalogCards`/`normalizeDismissed`/`dismissCard`/`undismissCard` in `dashboardLayout.js`) is pure and exhaustively unit-tested, including a bootstrap case proven not to disturb a legacy layout. What can't run here: this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing can confirm the cloud round-trip — reading and writing the new `dashboardDismissedCards` field alongside `dashboardLayout` in his real `profiles.prefs` row — against the owner's own signed-in account. This is the same wall B1213313 (the original arrangeable-grid persistence work, V930464) sat behind for the identical reason: the mechanism is provable in the sandbox, the real cloud row is not.
+
+**What was verified here (this session).**
+1. `test/dashboardLayout.test.js` — 33 tests (13 new), including: a catalog card missing from a previously-saved layout becomes reachable without opening Customize, with every existing entry's x/y/w/h byte-for-byte untouched; a dismissed card stays out even though it's just as absent; the bootstrap default (`undefined`/`null`) seeds every currently-missing card so a legacy layout is a no-op the moment this first runs for that account; an explicitly-saved empty list means everything missing IS new; `dismissCard`/`undismissCard` round-trip correctly.
+2. **Verified failing on pre-fix `main`:** the five new exports don't exist there — running the new test block against the unmodified `dashboardLayout.js` throws `TypeError: newCatalogCards is not a function` on both "does it actually work" tests.
+3. Full suite: 809 files, 16,412 tests, all green. `npm run build` and `npm run lint` both clean (0 errors, no new warnings).
+4. Michael's own account needed no rescue here — he already added all four missing cards by hand through the "Add a card" tray before this shipped, so his saved layout already holds all ten catalog cards; this fix does not write to his row.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner:**
+1. **Read the served chunk hash in the SAME observation as every check below** (Network tab, or `document.querySelectorAll('script[src]')`) and confirm it names a build after this PR merged.
+2. Open the Dashboard. **Expect:** all ten cards still present, in the same arrangement he left them — nothing reset or reordered by this deploy.
+3. Enter Customize, remove any one card, click Done, then reload. **Expect:** the removed card stays gone (it's now in the "Add a card" tray, not back on the grid) — confirms `dismissed` round-trips through his real `profiles.prefs` row, not just this session's memory.
+4. Re-add that same card from the tray, click Done, reload. **Expect:** it's back where it was placed (bottom of the grid, own default size) and stays there on a second reload.
+5. This is the one step that can't be staged ahead of time — it needs a genuinely NEW catalog card shipped after this PR merges: confirm that card appears on his dashboard on the next reload with no trip through Customize, and that nothing else on the grid moved.
+6. This is a read/write check against his real account row — steps 3-4 change his real saved layout structurally (remove/re-add), but restore it to its prior state by the end of step 4; nothing is left disturbed.
+
+**Result:** ⏳ pending — needs the owner's real signed-in account and (for step 5) a future card ship to confirm against.
+
 ### V1024112 — B1407824: a long name shortens cleanly (never on a dangling comma) on all five Dashboard surfaces, and the feed's county names read correctly capitalized `Blocker: auth` `Blocker: real-data`
 
 **Why this needs a real pass.** The exact reported defect — `"ALUMAX RD, NASH,"` with a dangling trailing comma and no ellipsis — is on the owner's own signed-in Dashboard, over his real ALUMAX project and its Bowie-county row. This sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can render the actual Dashboard cards against his real rows. **Mid-session finding, confirmed against production evidence surfaced by the sibling B1399568 fix (same session window):** the reported name is the COMPLETE stored value, not a prefix of something longer — `"ALUMAX RD, NASH,"` is all 16 characters `sites.site` holds for this project, on both of its (separately filed) duplicate rows. A length-only truncate could never fix that; the shared function ships a second branch specifically for a name that already fits but itself dangles on punctuation. What CAN be (and was) proven without a browser: the shared `shortenDisplayName` function's own correctness on both branches (an exhaustive case sweep, see below) and that each of the four files wires it in correctly, through the same pure functions each card calls (`mapMarkers`, `pursuitsTable`, `buildSinceLastHereFeed`) — never through a re-implementation.

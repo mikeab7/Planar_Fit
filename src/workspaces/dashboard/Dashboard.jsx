@@ -50,7 +50,7 @@ import { RecentPlansCard } from "./components/RecentPlansCard.jsx";
 import { SinceLastHereCard } from "./components/SinceLastHereCard.jsx";
 import {
   CARD_DEFS, GRID_COLS, normalizeLayout, availableToAdd, addCard, removeCard, resetLayout,
-  applyGridChange, narrowOrder, toRglItem,
+  applyGridChange, narrowOrder, toRglItem, dismissCard, undismissCard,
 } from "./lib/dashboardLayout.js";
 import { pickRecentPlans } from "./lib/recentPlans.js";
 import { loadDashboardLayout, saveDashboardLayout } from "./lib/dashboardPrefs.js";
@@ -112,6 +112,10 @@ function useMeasuredWidth() {
 
 export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenCompInSitePlanner, onOpenMissingLocationsInSitePlanner, onOpenNoteInNotes }) {
   const [layout, setLayout] = useState(() => normalizeLayout(null));
+  // B1422496 — cards this account has deliberately removed, so catalog reconciliation (see
+  // dashboardPrefs.js's loadDashboardLayout) never re-adds them; see dashboardLayout.js's own
+  // header for the full reasoning.
+  const [dismissed, setDismissed] = useState([]);
   const [customizing, setCustomizing] = useState(false);
   const [saveNote, setSaveNote] = useState(null); // null | "saved" | "local" | "error"
   const layoutLoadedRef = useRef(false);
@@ -126,12 +130,15 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   const [gridInteracting, setGridInteracting] = useState(false);
 
   // Load the saved layout once per mount (this component is not kept alive — see Shell.jsx).
+  // loadDashboardLayout already reconciles it against the current card catalog — any card shipped
+  // since this was last saved is appended here, before it ever reaches state (B1422496).
   useEffect(() => {
     let live = true;
     layoutLoadedRef.current = false;
-    loadDashboardLayout(userId).then(({ layout: loaded }) => {
+    loadDashboardLayout(userId).then(({ layout: loaded, dismissed: loadedDismissed }) => {
       if (!live) return;
       setLayout(loaded);
+      setDismissed(loadedDismissed);
       layoutLoadedRef.current = true;
     });
     return () => { live = false; };
@@ -153,16 +160,17 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     saveCompsRatePeriod(userId, period);
   };
 
-  // Persist on every change, debounced — never on the initial load itself.
+  // Persist on every change, debounced — never on the initial load itself. Also fires right after
+  // load when reconciliation appended a newly-shipped card, so that addition is saved back
+  // immediately rather than only living in this session's state (B1422496).
   useEffect(() => {
     if (!layoutLoadedRef.current) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      saveDashboardLayout(userId, layout).then((res) => setSaveNote(res.ok ? "saved" : userId ? "error" : "local"));
+      saveDashboardLayout(userId, layout, dismissed).then((res) => setSaveNote(res.ok ? "saved" : userId ? "error" : "local"));
     }, SAVE_DEBOUNCE_MS);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, userId]);
+  }, [layout, dismissed, userId]);
 
   // react-grid-layout calls onLayoutChange on mount and on every width recalculation, not just a
   // real drag/resize — most of those echo back the SAME grid-unit positions (only pixel sizes
@@ -360,7 +368,10 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         headerRight={entry.key === "sinceLastHere" ? sinceLastHere?.headerSpan : null}
         customizing={customizing}
         showDragHandle={!isNarrow}
-        onRemove={() => setLayout((l) => removeCard(l, entry.key))}
+        onRemove={() => {
+          setLayout((l) => removeCard(l, entry.key));
+          setDismissed((d) => dismissCard(d, entry.key));
+        }}
       >
         {render()}
       </DashboardCard>
@@ -394,7 +405,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
             </span>
           )}
           {customizing && (
-            <Button size="sm" variant="ghost" onClick={() => setLayout(resetLayout())}>Reset layout</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setLayout(resetLayout()); setDismissed([]); }}>Reset layout</Button>
           )}
           <Button
             size="sm"
@@ -446,7 +457,13 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
             {toAdd.length ? (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                 {toAdd.map((key) => (
-                  <ToggleChip key={key} onClick={() => setLayout((l) => addCard(l, key))}>
+                  <ToggleChip
+                    key={key}
+                    onClick={() => {
+                      setLayout((l) => addCard(l, key));
+                      setDismissed((d) => undismissCard(d, key));
+                    }}
+                  >
                     + {CARD_DEFS[key].title}
                   </ToggleChip>
                 ))}
