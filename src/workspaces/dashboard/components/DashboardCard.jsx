@@ -15,15 +15,26 @@
  * the title (the Comps card's "latest of N"). Every other card leaves it unset, so their header
  * row is byte-identical to before this was added — this is an extension point, not a per-card
  * special case.
+ *
+ * `sizeToContent` (B1426608) — a card whose content is a short list (rows of
+ * text, no chart/map/thumbnail grid) shrinks to its own content height instead of stretching to
+ * fill the grid tile react-grid-layout reserved for it, so one quiet row doesn't sit above a
+ * couple hundred pixels of bare white. `maxHeight: "100%"` still caps it at the tile's reserved
+ * height, so a card with MORE rows than fit still scrolls internally exactly as before — this
+ * never changes the grid's own row-span math (Dashboard.jsx's `layout` state, and what gets
+ * saved to the account, are untouched; only this card's own rendered pixel height changes).
+ * Cards that need every pixel of their tile (a real map, a thumbnail grid that measures its own
+ * box to lay itself out) leave this off and keep the original fill behavior.
  */
 import { RADIUS } from "../../../shared/ui/radius.js";
 import { IconButton } from "../../../shared/ui/controls.jsx";
 
-export default function DashboardCard({ title, headerMeta, headerRight, customizing, showDragHandle = true, onRemove, children }) {
+export default function DashboardCard({ title, headerMeta, headerRight, customizing, showDragHandle = true, sizeToContent = false, onRemove, children }) {
   return (
     <div
       style={{
-        height: "100%",
+        height: sizeToContent ? "auto" : "100%",
+        maxHeight: "100%",
         boxSizing: "border-box",
         background: "var(--surface-raised)",
         border: "1px solid var(--border-default)",
