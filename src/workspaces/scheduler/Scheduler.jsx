@@ -640,7 +640,17 @@ export default function Scheduler({
         onDuplicateProject={(id) => post({ type: "planar:nav-duplicate", id })}
         // B388 — the embedded app's toolbar, lifted into the unified header (center = view +
         // review; right = zoom/export/save/history/contacts/automation/format/settings).
-        toolbarCenter={<ScheduleCenter toolbar={toolbar} post={post} />}
+        toolbarCenter={(
+          <ScheduleCenter
+            toolbar={toolbar}
+            post={post}
+            schedules={projects}
+            activeId={activeId}
+            siteId={projectId}
+            siteName={routedSiteName}
+            onSelectSchedule={selectSchedule}
+          />
+        )}
         toolbarContent={<ScheduleActions toolbar={toolbar} post={post} />}
       />
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
@@ -694,7 +704,12 @@ export default function Scheduler({
         )}
         {/* Which schedules this project owns, and which one is open. Rendered beside the empty
             state (a project with none of its own can still reach the Organization's) — see
-            ScheduleOwnerList's header. */}
+            ScheduleOwnerList's header. B1396192 — this inline block is no longer the ONLY place
+            this list renders: once a schedule IS loaded (showEmptyState false), the identical
+            list is reachable from the header's "Schedules" button (ScheduleCenter →
+            ScheduleSwitcher, in ScheduleToolbar.jsx) instead of inline here, since there's no
+            longer a dedicated empty-state surface to render it into. Kept here, unchanged, for
+            the empty-state case — regressing this was explicitly out of scope. */}
         {showEmptyState && (
           <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "40%", overflow: "auto", zIndex: 7 }}>
             <ScheduleOwnerList
