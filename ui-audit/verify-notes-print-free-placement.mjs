@@ -22,6 +22,12 @@ import { pacedWait } from "./lib/tabTiming.mjs";
 
 const BASE = process.env.BASE_URL || "http://localhost:4173";
 const EXEC = process.env.PW_CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
+/* ⛔ THIS HARNESS REWRITES A COMMITTED FILE EVERY RUN, and the rewrite is almost always
+ * MEANINGLESS: Skia stamps a CreationDate/ModDate into the PDF, so a re-run on identical code
+ * produces an identical-size, identical-content file that `git status` still reports as modified.
+ * Do not read that as "the printed output changed" — check the size and the MediaBox before
+ * believing a diff (26,171 bytes / `0 0 612 792` at the time of writing). Point `PRINT_OUT` at a
+ * scratch directory if you only want to look and not dirty the tree. */
 const OUT = process.env.PRINT_OUT || "docs/artifacts";
 const TREE_KEY = "planyr:notes:tree:v1:local";
 const PAGE_KEY = "planyr:notes:page:v1:local:p1";
