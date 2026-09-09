@@ -1,7 +1,7 @@
 import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { COUNTIES, COUNTIES_MAP, candidateCountiesForPoint, countyForView, countyKeyForName, STATEWIDE_KEYS, SNAPSHOT_COUNTIES, isStatewideLayerUrl, trimLayerUrl, loadCountyPolygons, countyIdentity, noParcelSourceNote } from "./lib/counties.js";
+import { COUNTIES, COUNTIES_MAP, candidateCountiesForPoint, countyForView, countyKeyForName, STATEWIDE_KEYS, SNAPSHOT_COUNTIES, isStatewideLayerUrl, trimLayerUrl, loadCountyPolygons, countyIdentity, noParcelSourceNote, countyBboxIntersectsView } from "./lib/counties.js";
 import { landingView, milesBetween, CLUSTER_RADIUS_MI } from "./lib/landingView.js";
 import { decideTargetOf, orderVerbs, verbLabel } from "./lib/decideBar.js";
 import {
@@ -644,6 +644,45 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   const [addr, setAddr] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const errRef = useRef("");
+  useEffect(() => { errRef.current = err; }, [err]);
+  /* NEW-1 (the Texarkana/Chambers bug) — which place a currently-shown parcel-SOURCE-outage
+   * notice is ABOUT: `{ county }` (a real county's bbox — the hang-guard's two banners) or
+   * `{ state }` (the statewide composite's own banner, which names no county). `message` is the
+   * exact text last set, so `onMove` below only ever clears a notice it can prove is still
+   * showing verbatim — an unrelated `setErr` elsewhere (an address-search failure, a share error,
+   * a locate error…) is left alone even though nothing here resets this ref for those call sites.
+   * Null once nothing outage-shaped is being shown (or once it's been cleared). */
+  const sourceNoticeRef = useRef(null);
+  /* NEW-1 — could the map's CURRENT view plausibly reach whatever this notice names? Read the
+   * map live (never React state) so it's correct whether asked the instant a notice is about to
+   * be shown or, later, on every pan/zoom settle. A county notice checks its bbox; a state-scoped
+   * (statewide-composite) notice checks state membership; anything unrecognized stays plausible —
+   * silencing a real notice on a resolution gap is worse than one shown a beat too long. */
+  const sourceNoticeStillPlausible = (notice) => {
+    if (!notice) return true;
+    const map = mapRef.current;
+    if (!map) return true;
+    if (notice.county) {
+      const b = map.getBounds();
+      return countyBboxIntersectsView(notice.county, { south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() });
+    }
+    if (notice.state) {
+      const c = map.getCenter();
+      const st = siteState({ lat: c.lat, lng: c.lng });
+      return !st || st === notice.state; // unresolved center (outside TX/CO) stays plausible
+    }
+    return true;
+  };
+  /* NEW-1 — the ONE place a parcel-source-outage banner gets shown, so "does the view still make
+   * this plausible" is asked identically at creation time and later, on every pan/zoom, by
+   * `onMove`. Per the bug's EXPECTED behavior: a notice naming somewhere the view isn't near
+   * simply isn't shown — never a corrected-but-still-wrong location, never a generic substitute. */
+  const setSourceNotice = (notice, message) => {
+    if (!sourceNoticeStillPlausible(notice)) return;
+    setErr(message);
+    sourceNoticeRef.current = { ...notice, message };
+  };
   /* NEW-4 — a county outage used to produce a banner and nothing else: the owner was left on a map
    * that would not give him a lot, with no indication that he could proceed anyway. When a source
    * reports UNAVAILABLE (as opposed to "no parcel right there", which is a different fact), the
@@ -1724,6 +1763,18 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       // math). It has to hold when every GIS endpoint is down, which is exactly when a site
       // falls through to a default — the same reason coloradoRegions.js is network-free.
       setViewState(siteState({ lat: c.lat, lng: c.lng }));
+      // NEW-1 (the Texarkana/Chambers bug) — a parcel-source outage banner is a snapshot of
+      // wherever the map WAS when the failing layer's request settled; nothing else ever
+      // reconsiders it, so it can (and did, on the owner's own account) sit there naming a place
+      // 300 miles from wherever the map has since been panned to. Every settle re-asks whether the
+      // notice still names somewhere the view could plausibly be — and only retracts it if the
+      // banner on screen is still the EXACT text this ref remembers setting (an unrelated message
+      // set by anything else since is left alone).
+      const notice = sourceNoticeRef.current;
+      if (notice && errRef.current === notice.message && !sourceNoticeStillPlausible(notice)) {
+        setErr("");
+        sourceNoticeRef.current = null;
+      }
     };
     onMove();
     // NEW-1 — seed the zoom too, not just the centre. `zoom` starts null and only `zoomend`
@@ -2454,7 +2505,9 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       // banner, silently overwrites the correct message with a less accurate one.
       fl.on("requesterror", () => {
         if (CLIENT_SNAPSHOT_COUNTIES.some((c) => downDisplaysRef.current.has(c) && getSnapshot(c))) return;
-        setErr("Statewide parcel outlines are slow right now — clicking a lot still adds it.");
+        // NEW-1 — the composite is scoped to one STATE (txgio_statewide → TX, co_statewide → CO);
+        // don't say "statewide" is slow while the view has since moved to the other one.
+        setSourceNotice({ state: COUNTIES_MAP[key] && COUNTIES_MAP[key].state }, "Statewide parcel outlines are slow right now — clicking a lot still adds it.");
       });
       return;
     }
@@ -2483,7 +2536,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       // what's actually our own saved copy, and only promises a click works where that's now true.
       if (SNAPSHOT_COUNTIES.has(key) && getSnapshot(key)) {
         showSnapshotDisplay(key);
-        setErr(cacheFallbackNotice(key));
+        setSourceNotice({ county: key }, cacheFallbackNotice(key));
         return;
       }
       // B1164656 (NEW-2) — a DIFFERENT nearby real county going down (no snapshot of its own) is
@@ -2491,7 +2544,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       // county in view; never let it clobber that message with the generic one (the same
       // ordering problem the statewide handler above guards against).
       if (CLIENT_SNAPSHOT_COUNTIES.some((c) => downDisplaysRef.current.has(c) && getSnapshot(c))) return;
-      setErr("That county's parcel server is slow right now — showing statewide outlines; clicking a lot still adds it.");
+      setSourceNotice({ county: key }, "That county's parcel server is slow right now — showing statewide outlines; clicking a lot still adds it.");
     };
     // Arm the hang-timer only once a request to the host is actually in flight, so we
     // never false-flag a county just because we're zoomed out below the outline zoom
@@ -2550,7 +2603,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       const knownDown = downDisplaysRef.current.has(county) && !!getSnapshot(county);
       if (!preferred && !knownDown) return;
       showSnapshotDisplay(county);
-      if (knownDown && !preferred) setErr(cacheFallbackNotice(county));
+      if (knownDown && !preferred) setSourceNotice({ county }, cacheFallbackNotice(county));
     });
     return off;
     // eslint-disable-next-line react-hooks/exhaustive-deps
