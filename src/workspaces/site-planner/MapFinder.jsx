@@ -141,6 +141,10 @@ const PAL = {
   chrome: "var(--chrome-bg)", chromeLine: "var(--chrome-divider)", chromeInk: "var(--chrome-text)", chromeMuted: "var(--chrome-muted)", ember: "var(--accent)",
 };
 
+// The Sites panel's one empty-state line — "No sites match…" and (LOCATIONS-MAP-CARD FIX)
+// "Every project already has a location set." both read it, so the two can never drift apart.
+const NO_SITES_MATCH_STYLE = { fontSize: 11.5, color: PAL.muted, padding: "10px 12px" };
+
 /* B831776 (NEW-1/NEW-6) — the Comp-mode accent. Deliberately a different hue from `PAL.accent`
  * (the site/plan action color) so the toolbar switch and the armed-drop indicator can never read
  * as "just another site action" — a raw click in Comp mode creates a standing record (a comp),
@@ -546,7 +550,7 @@ function RailTab({ label, count, active, onClick }) {
   );
 }
 
-export default function MapFinder({ visible, isActive = true, overlays, setOverlays, layerStatus = {}, setLayerStatus, sites = [], parcelSummary = null, lastEditedByGroup = null, activeSiteId, onOpenSite, onDeleteSite, onSetStatus, onSetDates, onRenameSite, onSharedChange, onUseParcels, onSkip, comps = [], onPlaceComp, onCompClick, pendingCompAnchor = null, onCompAnchorConsumed, focusCompId = null, onCompFocusHandled, onCompsChange, onOpenReviewInDocReview }) {
+export default function MapFinder({ visible, isActive = true, overlays, setOverlays, layerStatus = {}, setLayerStatus, sites = [], parcelSummary = null, lastEditedByGroup = null, activeSiteId, onOpenSite, onDeleteSite, onSetStatus, onSetDates, onRenameSite, onSharedChange, onUseParcels, onSkip, comps = [], onPlaceComp, onCompClick, pendingCompAnchor = null, onCompAnchorConsumed, focusCompId = null, onCompFocusHandled, onCompsChange, onOpenReviewInDocReview, focusMissingLocations = null }) {
   const elRef = useRef(null);
   // B1310209 (NEW-2) — the map's own relatively-positioned host box (below), the same one every
   // other floating map panel (the Comps rail, the Layers panel) is already a position:absolute
@@ -1063,6 +1067,16 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     setPanelTab("comp");
     setSitesPanelOpen(true);
   }, [pendingCompAnchor, focusCompId]);
+  // LOCATIONS-MAP-CARD FIX — same shape as the effect above: a request arriving from outside
+  // this component switches the rail to the relevant tab and opens the panel. Re-fires the
+  // filter (never toggles it off) on a repeat click from the Dashboard, same convention as
+  // `focusCompId` re-firing on a repeat click of the same comp.
+  useEffect(() => {
+    if (focusMissingLocations == null) return;
+    setPanelTab("site");
+    setSitesPanelOpen(true);
+    setLocationFilterOnly(true);
+  }, [focusMissingLocations]);
   // Layers/imagery panel: on a phone it collapses to a tap (default closed) so it stops
   // covering the search bar; desktop keeps it always-open as before.
   /* B427409 — the panel's open state now PERSISTS, on the `sitesPanelClosed` pattern one state
@@ -1138,6 +1152,11 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   const [viewState, setViewState] = useState(null); // NEW-2 — the state the map centre is in (see the LayerPanel prop below)
   const [confirmDel, setConfirmDel] = useState(null); // site pending delete confirmation
   const [nameFilter, setNameFilter] = useState(""); // type-to-filter the list by name
+  // LOCATIONS-MAP-CARD FIX — the Dashboard's "N projects' location(s) need fixing" line lands
+  // here with `focusMissingLocations` set; while true the Sites list below narrows to exactly the
+  // projects with no origin, so arriving here actually answers "which ones" instead of handing
+  // back the same unfiltered list a plain tab click would. Cleared by the "Show all" chip.
+  const [locationFilterOnly, setLocationFilterOnly] = useState(false);
   // B855952/B855953/B855954 (NEW-1/NEW-2/NEW-3) — the Sites panel's own cross-device arrangement:
   // which group order the user dragged into, which groups are collapsed, and which sites are
   // pinned to the top. ONE account-scope bag (lib/userPrefs.js's `sitesPanel`), same
@@ -1412,9 +1431,15 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   };
   // The name filter (case-insensitive substring on the site/plan name) — B855952 (NEW-1) removed
   // the status chip filter outright (collapsing a group is the filter now; see the Sites-panel
-  // render below), so this is the only list-narrowing predicate left.
+  // render below), so this was the only list-narrowing predicate until the one below joined it.
   const nf = nameFilter.trim().toLowerCase();
   const passName = (s) => !nf || (s.site || s.name || "").toLowerCase().includes(nf);
+  // LOCATIONS-MAP-CARD FIX — the second (and, until now, only ever off) list-narrowing predicate:
+  // while `locationFilterOnly` is set (via `focusMissingLocations` above, or the header chip),
+  // only sites with no `origin` pass. Combined with `passName` via `passListed`, never in place
+  // of it, so the name filter still works while this is active.
+  const passLocation = (s) => !locationFilterOnly || !s.origin;
+  const passListed = (s) => passName(s) && passLocation(s);
   // B1165440 (defense-in-depth on B1156864/NEW-1 — an adversarial review of PR 1424 found
   // "tracked" sites (market intel only — a comp, an asking price with nothing transacted)
   // sitting in the Pursuit group on planyr.io) — the caller (SitePlannerApp's `siteGroups`)
@@ -3381,6 +3406,12 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // The Pinned section (below) mixes every status under one header, so IT still needs a
   // per-row indicator — `showStatusDot=true` there is deliberate, not an oversight (see call
   // sites). Shared by every status section and the Pinned section alike.
+  // Shared by the "no boundary" flag (below) and the LOCATIONS-MAP-CARD FIX's "no location" flag
+  // — the SAME standing-fact badge look (a signature-budget constraint, not just tidiness: a
+  // second color here is a second distinct control signature on this already-tight surface, see
+  // ui-audit/signature-budget.json's "Map landing page (decide bar)" entry), so both read as one
+  // visual family rather than one looking like a warning and the other like a footnote.
+  const rowFlagBadgeStyle = { flex: "none", fontSize: 9.5, fontWeight: 700, color: PAL.muted, background: "var(--surface-overlay)", border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.pill, padding: "1px 6px", whiteSpace: "nowrap" };
   const siteRow = (s, { showStatusDot = false } = {}) => {
     const isActive = s.id === activeSiteId;
     const st = statusOf(s); const t = statusToken(st);
@@ -3434,7 +3465,13 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                 of being lost. Unaffected by B885136 — it's a standing fact about the site, not a
                 hover reveal, so it stays visible at rest same as before. */}
             {boundary.known && !boundary.hasBoundary && (
-              <span title="No boundary drawn yet" style={{ flex: "none", fontSize: 9.5, fontWeight: 700, color: PAL.muted, background: "var(--surface-overlay)", border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.pill, padding: "1px 6px", whiteSpace: "nowrap" }}>no boundary</span>
+              <span title="No boundary drawn yet" style={rowFlagBadgeStyle}>no boundary</span>
+            )}
+            {/* LOCATIONS-MAP-CARD FIX — same standing-fact pattern as "no boundary" above: a site
+                with no `origin` can't plot on the Dashboard's Locations map card or this map, and
+                this is the one place in the app that says so next to its name. */}
+            {!s.origin && (
+              <span title="No location set — open this project, then Land → Set this plan's location" style={rowFlagBadgeStyle}>no location</span>
             )}
           </div>
         )}
@@ -3504,7 +3541,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     );
   };
   // Sites matching the name filter (for the panel header count).
-  const shownCount = pursuitSites.filter((s) => passName(s)).length;
+  const shownCount = pursuitSites.filter((s) => passListed(s)).length;
 
   // NEW-MAPCTRL-2 — STEEL-MAN ix's way back: re-run the SAME derived landing view a fresh open
   // would use, so "back to your sites" always means the same thing "open the Map view" does.
@@ -3998,6 +4035,18 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                 WHOLE panel — not just one nested list — reachable at any viewport height. */}
             <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
             {sitesPanelOpen && panelTab === "site" && (<>
+            {/* LOCATIONS-MAP-CARD FIX — the banner this filter arrived under: what's showing and
+                why, plus the one-click way back to the full list. Sits above the name filter so
+                it reads first. */}
+            {locationFilterOnly && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", margin: "0 8px 8px", background: "var(--surface-overlay)", border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.sm }}>
+                <span style={{ flex: 1, fontSize: FONT_SIZE.label, color: PAL.ink, lineHeight: 1.35 }}>Showing only projects with no location set — open one to set it.</span>
+                <button onClick={() => setLocationFilterOnly(false)} title="Show every project again"
+                  style={{ flex: "none", fontSize: 10.5, fontWeight: 700, color: PAL.accent, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 4px" }}>
+                  Show all
+                </button>
+              </div>
+            )}
             {/* B855952 (NEW-1) — the name filter and the sort control share ONE line (the status
                 chip row this replaced ate two). "Delete the status filter chip row" — owner,
                 verbatim: "that's not really a good way to filter it… there's literally just
@@ -4023,14 +4072,14 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                 hover/focus-revealed grip. Collapsing a group is the only "filter" left (NEW-1). */}
             <div style={{ maxHeight: 340, overflowY: "auto", paddingBottom: 4, borderTop: `1px solid ${PAL.panelLine}` }}>
               {(() => {
-                const pinnedRows = sortRows(pursuitSites.filter((s) => pinnedSet.has(s.id) && passName(s)));
+                const pinnedRows = sortRows(pursuitSites.filter((s) => pinnedSet.has(s.id) && passListed(s)));
                 const groupBlocks = orderedStatuses.map((st) => {
-                  const rows = pursuitSites.filter((s) => statusOf(s) === st && passName(s)); // TRUE group total — pinned included
+                  const rows = pursuitSites.filter((s) => statusOf(s) === st && passListed(s)); // TRUE group total — pinned included
                   if (!rows.length) return null;
                   const visibleRows = sortRows(rows.filter((s) => !pinnedSet.has(s.id))); // pinned sites live in the Pinned section instead
-                  // While a name filter is active, force matching sections open so a match in a
-                  // settled (collapsed) group isn't hidden.
-                  const t = statusToken(st); const collapsed = groupCollapsedFor(st) && !nf;
+                  // While a name filter (or the missing-location filter) is active, force matching
+                  // sections open so a match in a settled (collapsed) group isn't hidden.
+                  const t = statusToken(st); const collapsed = groupCollapsedFor(st) && !nf && !locationFilterOnly;
                   return (
                     <div key={st}
                       onDragOver={(e) => { if (dragGroup && dragGroup !== st) e.preventDefault(); }}
@@ -4075,7 +4124,12 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                   );
                 }).filter(Boolean);
                 if (!pinnedRows.length && !groupBlocks.length) {
-                  return <div style={{ fontSize: 11.5, color: PAL.muted, padding: "10px 12px" }}>No sites match{nf ? ` “${nameFilter.trim()}”` : ""}.</div>;
+                  // Same empty-state text style either way — LOCATIONS-MAP-CARD FIX's message reuses
+                  // NO_SITES_MATCH_STYLE rather than a second copy of the same literal.
+                  if (locationFilterOnly && !nf) {
+                    return <div style={NO_SITES_MATCH_STYLE}>Every project already has a location set.</div>;
+                  }
+                  return <div style={NO_SITES_MATCH_STYLE}>No sites match{nf ? ` “${nameFilter.trim()}”` : ""}.</div>;
                 }
                 return (
                   <>

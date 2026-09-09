@@ -110,7 +110,7 @@ function useMeasuredWidth() {
   return [ref, width];
 }
 
-export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenCompInSitePlanner, onOpenNoteInNotes }) {
+export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenCompInSitePlanner, onOpenMissingLocationsInSitePlanner, onOpenNoteInNotes }) {
   const [layout, setLayout] = useState(() => normalizeLayout(null));
   const [customizing, setCustomizing] = useState(false);
   const [saveNote, setSaveNote] = useState(null); // null | "saved" | "local" | "error"
@@ -253,6 +253,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         notePages: recentNotePages,
         prevSnapshot: mark.snapshot,
         scheduleLastWriteAt,
+        compsRatePeriod: compsPeriod,
       });
       setSinceLastHere({ feed, headerSpan: spanWords(feed.spanAnchorMs, nowMs), now: nowMs });
       // Fire-and-forget: this visit's own mark for NEXT time. Never blocks dataReady — a failed
@@ -263,6 +264,11 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
       setDataReady(true);
     })();
     return () => { live = false; };
+    // `compsPeriod` deliberately excluded: it only seeds the "New comp" rows' initial subline
+    // (SinceLastHereCard.jsx recomputes it live off the current period on every render regardless
+    // — see sinceLastHereFeed.js's header, FEED-3) and re-running this whole fetch waterfall on a
+    // toggle flip would refetch everything for no reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   const projects = useMemo(() => groupProjectsByGroupId(sites), [sites]);
@@ -293,10 +299,16 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   // Empty-state "add one" — there's no specific comp to deep-link into yet, so this lands the
   // owner on the map/finder view, one click from the Comps tab (MapFinder's own toolbar).
   const addComp = () => onNavigate?.({ module: "site-planner", projectId: null, cross: false, org: false });
-  // NEW-1 (Locations map card) — "wherever he can fix them": the Site Planner's own project list
-  // (no project id lands on MapFinder, never an auto-resumed last plan — SitePlannerApp.jsx's own
-  // bootActiveId), where every located-or-not project is reachable to open and set a location on.
-  const fixLocations = () => onNavigate?.({ module: "site-planner", projectId: null, cross: false, org: false });
+  // LOCATIONS-MAP-CARD FIX (owner report, 2026-09-09) — this used to call `onNavigate` directly,
+  // landing on the Site Planner's plain, unfiltered project list: exactly what clicking the Site
+  // Planner tab itself gives you, with nothing to show it was about the missing locations at all
+  // (read, and reported, as a dead link). `onOpenMissingLocationsInSitePlanner` is the same
+  // token-stamped-intent shape `onOpenCompInSitePlanner` already uses — it still lands on the
+  // Site Planner's project list (there's no dedicated "missing locations" page to send him to
+  // instead), but MapFinder's own effect on the intent arriving opens the Sites tab and narrows
+  // the list to exactly the projects with no location, so the destination actually answers "which
+  // ones, and let me fix them."
+  const fixLocations = () => onOpenMissingLocationsInSitePlanner?.();
 
   // NEW-1 — while data is still loading every slot renders the SAME stable-height skeleton
   // instead of its real (variable-height) content; see the `dataReady` effect above.
@@ -314,6 +326,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
       <SinceLastHereCard
         feed={cardData.sinceLastHere.feed}
         now={sinceLastHere?.now ?? Date.now()}
+        compsRatePeriod={compsPeriod}
         onOpenProject={openProject}
         onOpenTask={openTask}
         onOpenSchedule={openSchedule}

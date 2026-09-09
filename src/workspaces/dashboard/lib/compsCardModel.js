@@ -57,6 +57,18 @@ export function leaseRateUnit(period) {
   return period === "monthly" ? "$/SF/mo" : "$/SF/yr";
 }
 
+/** THE one rate-figure formatter — 2 decimals under $10 (so a $/mo rate reads as real cents, not
+ * a rounded-away dollar), 0 decimals at or above it (matching how every other dollar figure on
+ * this dashboard reads). Moved here from `CompsCard.jsx` (B1405457, 2026-09-08 review FEED-3)
+ * so `sinceLastHereFeed.js`'s "New comp" row can render the SAME comp's rate through the exact
+ * same math AND the exact same formatting the card uses — a second, hand-rolled formatter is
+ * exactly how the two surfaces drifted apart the first time. */
+export function formatRateValue(v) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const decimals = Math.abs(v) < 10 ? 2 : 0;
+  return `$${v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+}
+
 /** The words Michael actually sees on the toggle — "per year" / "per month" — named here once so
  * the card and any other reader of a period value can't drift on wording. */
 export function periodWords(period) {
