@@ -26,9 +26,12 @@
  * wheel/zoom-button automation was tried and is not reliable headless — Leaflet's synthetic wheel
  * handling and the zoom control both proved flaky under Playwright). The address search's own
  * `selectParcelAt` path already had a working (pre-fix) cache fallback, so it would trivially pass
- * even on the old code — the harness instead flies there, DESELECTS the result (an instant local
- * toggle-off, zero network, per B441), then clicks the SAME point again to force a fresh
- * `handleClick` → `identifyParcelEager` → cache-fallback pass, which is the exact code NEW-1 fixed.
+ * even on the old code — the harness instead flies there, CLEARS the search's own selection (the
+ * decide bar's ✕ — an instant local action, zero network, B441's same toggle-off underneath), then
+ * arms Select-parcels mode and clicks the SAME point to force a fresh `handleClick` →
+ * `identifyParcelEager` → cache-fallback pass, which is the exact code NEW-1 fixed.
+ * (B1430384 moved the address field OUT of Select-parcels mode — it did nothing there — so the
+ * search now has to run before that mode is armed, not after; see `flyThenForceFreshClick`.)
  *
  * Three scenarios:
  *   1. Chambers, live down → cached outlines paint, the fresh click selects the lot, and the
@@ -145,21 +148,28 @@ async function newPage(browser) {
   return { page, pageErrors };
 }
 
-// Fly to {lat,lng} via the (mocked) address search, then click that point TWICE — the first
-// click deselects the search's own result (instant, local, B441), the second is a fresh
-// `handleClick` pass, which is the code path NEW-1 fixed. Returns the click box for re-use.
+// Fly to {lat,lng} via the (mocked) address search, then force a FRESH `handleClick` pass at
+// that point — the code path NEW-1 fixed. Returns nothing; leaves the map ready for assertions.
+//
+// B1430384 (NEW-1) — the address field no longer renders while Select-parcels mode is active
+// (it earns its place only outside that mode), so the search has to run BEFORE arming
+// selection, not after. It still auto-selects the parcel there via `selectParcelAt` — that
+// selection is cleared with the decide bar's ✕ (also a local, zero-network action, same role
+// the old "click to deselect" step played) so Select parcels can then be armed and the one map
+// click that follows lands on a genuinely empty spot, forcing the full `handleClick` →
+// `identifyParcelEager` → cache-fallback path rather than the instant local toggle-off.
 async function flyThenForceFreshClick(page, label) {
-  await page.locator("text=/^Select parcels/").first().click();
-  await page.waitForTimeout(500);
   const input = page.locator('input[placeholder*="Type an address"]').first();
   await input.click();
   await input.fill(label);
   await page.waitForTimeout(600);
   await input.press("Enter");
   await page.waitForTimeout(4000); // fly-to + selectParcelAt's own identify settle
+  const clearBtn = page.getByTestId("map-decide-clear");
+  if (await clearBtn.count()) { await clearBtn.click(); await page.waitForTimeout(300); }
+  await page.locator("text=/^Select parcels/").first().click();
+  await page.waitForTimeout(500);
   const box = await page.locator(".leaflet-container").boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2); // deselect (local, no network)
-  await page.waitForTimeout(800);
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2); // fresh handleClick
   await page.waitForTimeout(2500);
 }
