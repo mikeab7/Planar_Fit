@@ -48,6 +48,19 @@ describe("mapMarkers", () => {
     const [m] = mapMarkers([p], []);
     expect(m).toMatchObject({ kind: "active", id: "a", lat: HERE.lat, lon: HERE.lon, name: "a", project: p });
   });
+
+  // B1407824 — the pin label has no fixed width of its own, so a long project name is shortened
+  // here rather than left to run the label plate off the map. The exact cut is shortenDisplayName's
+  // job (see test/projects.test.js for its own case table); this just proves the marker uses it.
+  it("shortens a long project name for the pin label, never on a dangling comma", () => {
+    const p = { ...active("a", HERE), name: "ALUMAX RD, NASHVILLE, TX 75569" };
+    const [m] = mapMarkers([p], []);
+    expect(m.name.length).toBeLessThan(p.name.length);
+    expect(m.name).not.toMatch(/[,.\-\s]…$/);
+    expect(m.name.endsWith("…")).toBe(true);
+    // the marker's OWN record still carries the real, untouched name for anything that needs it
+    expect(m.project.name).toBe(p.name);
+  });
 });
 
 describe("missingLocationCount", () => {

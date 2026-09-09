@@ -67,6 +67,17 @@ describe("pursuitsTable", () => {
     expect(pursuitsTable(null, null)).toEqual([]);
     expect(pursuitsTable([], {})).toEqual([]);
   });
+
+  // B1407824 — the Pursuit column shortens a long name at this pure model layer rather than
+  // leaving it to the cell's own CSS clamp (which has no idea where a comma/period/hyphen sits).
+  // See test/projects.test.js for shortenDisplayName's own case table; this just proves the wire.
+  it("shortens a long pursuit name, never on a dangling comma", () => {
+    const projects = [{ ...base, groupId: "a", name: "ALUMAX RD, NASHVILLE, TX 75569", county: "bowie" }];
+    const rows = pursuitsTable(projects, {}, { nowMs: NOW });
+    expect(rows[0].name.length).toBeLessThan("ALUMAX RD, NASHVILLE, TX 75569".length);
+    expect(rows[0].name).not.toMatch(/[,.\-\s]…$/);
+    expect(rows[0].name.endsWith("…")).toBe(true);
+  });
 });
 
 describe("quietDaysByGroupFromRecency", () => {

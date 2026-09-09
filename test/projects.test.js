@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId } from "../src/shared/projects/projectModel.js";
+import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, shortenDisplayName } from "../src/shared/projects/projectModel.js";
 import { listProjects } from "../src/shared/projects/projects.js";
 import { setActiveUser } from "../src/workspaces/site-planner/lib/activeUser.js";
 
@@ -388,5 +388,87 @@ describe("listProjects — pursuit-only by default (NEW-1)", () => {
       fresh: { id: "fresh", groupId: "fresh", site: "Fresh site", role: "pursuit", updatedAt: 60 },
     }));
     expect(listProjects().map((p) => p.id).sort()).toEqual(["fresh", "legacy"]);
+  });
+});
+
+// B1407824 — a truncated project/plan name was rendering with a dangling trailing comma and no
+// ellipsis ("ALUMAX RD, NASH,") on five Dashboard surfaces (the Locations map pin, the Pursuits
+// table, the Recent plans tile caption, and the Since-you-were-last-here feed's plan rows). A
+// plain `name.slice(0, n)` cuts to a length and stops, with no regard for what character it
+// stopped on and no visible mark that anything was cut. `shortenDisplayName` is the ONE shared
+// place that decides how a name shortens for all of them.
+describe("shortenDisplayName", () => {
+  // The adjacent-case table the fix was built against, one row per case.
+  it("a name shorter than the limit is returned untouched — no ellipsis, nothing was cut", () => {
+    expect(shortenDisplayName("Short Name", 20)).toBe("Short Name");
+  });
+
+  it("a name exactly at the limit is returned untouched — fits exactly, not 'cut'", () => {
+    expect(shortenDisplayName("ExactlyTenChars!", 16)).toBe("ExactlyTenChars!");
+  });
+
+  it("a name cut mid-word is shortened cleanly — a mid-word cut IS an ordinary shortened name", () => {
+    expect(shortenDisplayName("Alumax Road Industrial Park", 10)).toBe("Alumax Roa…");
+  });
+
+  it("a name cut immediately after a comma trims the comma before marking it shortened", () => {
+    // The exact production string this item was filed for: "ALUMAX RD, NASH," is where a naive
+    // slice(0, 16) lands on the fuller address below — and it is exactly the dangling-comma
+    // defect this function exists to prevent.
+    expect(shortenDisplayName("ALUMAX RD, NASH,", 16)).toBe("ALUMAX RD, NASH,");
+    expect(shortenDisplayName("ALUMAX RD, NASH, TX 75569", 16)).toBe("ALUMAX RD, NASH…");
+  });
+
+  it("a name cut immediately after a period trims the period before marking it shortened", () => {
+    expect(shortenDisplayName("Building A. Extra text here", 11)).toBe("Building A…");
+  });
+
+  it("a name cut immediately after a hyphen trims the hyphen before marking it shortened", () => {
+    expect(shortenDisplayName("Alumax-Rd-Extension", 10)).toBe("Alumax-Rd…");
+  });
+
+  it("a name cut immediately after a space trims the space before marking it shortened", () => {
+    expect(shortenDisplayName("Foo Bar Baz Qux", 8)).toBe("Foo Bar…");
+  });
+
+  it("one long word with no separators — nothing to trim back to, so it just cuts and marks it", () => {
+    expect(shortenDisplayName("Supercalifragilisticexpialidocious", 10)).toBe("Supercalif…");
+  });
+
+  it("a run of several trailing separators is trimmed in full, not just the last one", () => {
+    expect(shortenDisplayName("Foo Bar, , TX", 9)).toBe("Foo Bar…");
+  });
+
+  it("null/empty/undefined never throw and never fabricate a mark", () => {
+    expect(shortenDisplayName(null, 10)).toBe("");
+    expect(shortenDisplayName(undefined, 10)).toBe("");
+    expect(shortenDisplayName("", 10)).toBe("");
+  });
+
+  // RED-PROOF — a shortened name must never end on a comma, period, hyphen or space, and must
+  // always carry the one visible mark that it was shortened. Run across a spread of inputs and
+  // limits so this is a property of the function, not one lucky case.
+  it("RED-PROOF: a shortened name never ends on a comma/period/hyphen/space, and is always visibly marked", () => {
+    const names = [
+      "ALUMAX RD, NASH, TX 75569",
+      "Building A. Extra text here",
+      "Alumax-Rd-Extension Industrial",
+      "Foo Bar Baz Qux Industrial Park",
+      "Supercalifragilisticexpialidocious",
+      "St. Louis, MO - Industrial Park",
+      "One,Two,Three,Four,Five,Six,Seven",
+    ];
+    for (const name of names) {
+      for (let maxLen = 1; maxLen <= name.length + 2; maxLen++) {
+        const out = shortenDisplayName(name, maxLen);
+        if (name.length <= maxLen) {
+          expect(out).toBe(name); // untouched — nothing was cut, no mark expected
+          continue;
+        }
+        expect(out.endsWith("…")).toBe(true); // always visibly marked as shortened
+        const withoutMark = out.slice(0, -1);
+        expect(withoutMark).not.toMatch(/[,.\-\s]$/); // never ends on a dangling separator
+      }
+    }
   });
 });

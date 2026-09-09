@@ -166,6 +166,28 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V1024112 — B1407824: a long name shortens cleanly (never on a dangling comma) on all five Dashboard surfaces, and the feed's county names read correctly capitalized `Blocker: auth` `Blocker: real-data`
+
+**Why this needs a real pass.** The exact reported defect — `"ALUMAX RD, NASH,"` with a dangling trailing comma and no ellipsis — is on the owner's own signed-in Dashboard, over his real ALUMAX project and its Bowie-county row. This sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing here can render the actual Dashboard cards against his real rows. What CAN be (and was) proven without a browser: the shared `shortenDisplayName` function's own correctness (an exhaustive case sweep, see below) and that each of the four files wires it in correctly, through the same pure functions each card calls (`mapMarkers`, `pursuitsTable`, `buildSinceLastHereFeed`) — never through a re-implementation.
+
+**What was verified here (this session).**
+1. `test/projects.test.js` — `shortenDisplayName`'s own suite: the full adjacent-case table (shorter than the limit, exactly at the limit, cut mid-word, cut after a comma/period/hyphen/space, one long word with no separators) plus a property-style RED-PROOF sweeping seven names across every length limit from 1 to the name's own length + 2.
+2. Confirmed on pre-fix `origin/main` (`f7f00e3`) that `shortenDisplayName` did not exist anywhere in the repo, and that the naive `name.slice(0, 16)` every surface was effectively falling back to reproduces the EXACT reported string: `"ALUMAX RD, NASH, TX 75569".slice(0, 16)` → `"ALUMAX RD, NASH,"`, character for character.
+3. `test/dashboardMapMarkers.test.js` / `test/pursuitsList.test.js` — a wiring-level test each, reproducing the same long-name case through the real `mapMarkers`/`pursuitsTable` functions the Locations card and Pursuits card actually call.
+4. `test/sinceLastHereFeed.test.js` — two new county-casing tests (a lower-case single-word key, a lower-case multi-word key) plus the existing already-capitalized-key test (unchanged, still passing), all reading the composed subline text.
+5. `test/compsCardModel.test.js` — unchanged and still green, confirming the `countyLabel`/`countyNameWords` refactor didn't move the Comps card's own county-label behavior.
+6. Full suite — 16,299 tests, 807 files, all green. `npm run build` and `npm run lint` (0 errors, no new warnings vs. before this item) both clean.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner:**
+1. **Read the served chunk hash in the SAME observation as every check below** (Network tab, or `document.querySelectorAll('script[src]')`) and confirm it names a build after this PR merged.
+2. Open the Dashboard and find the ALUMAX project (or whichever real project currently has the longest name). **Expect:** on the Locations card's map pin, the Pursuits card's Pursuit column, the Recent plans card's tile caption, and the "Since you were last here" feed's New-plan row (whichever of these the project currently appears on), the name never ends in a bare comma, period, hyphen, or space — a shortened name always ends in "…", and a name that fits is shown in full.
+3. Hover the ALUMAX tile in the Recent plans card (if a thumbnail renders). **Expect:** the tooltip shows the FULL, untruncated name, even though the caption underneath is shortened.
+4. Read a "Since you were last here" feed row that names a Bowie- or Harris-county project (a new/renamed plan). **Expect:** the subline reads "Bowie County · …" / "Harris County · …" — properly capitalized, never "bowie County"/"harris County".
+5. Open the Comps card and read its county text for the same or another county. **Expect:** unchanged from before this fix ("Harris County, TX" etc.) — this item only added a shared capitalization step, it did not touch the Comps card's own wording.
+6. This is a read-only check — nothing needs to be created, edited, or undone.
+
+**Result:** ⏳ pending — needs the owner's real signed-in Dashboard and his real ALUMAX/Bowie-county rows.
+
 ### V1021744 — B1405456 / B1405457: the closed-tasks row is genuinely gone, and a real comp reads identically on the Comps card and in the "Since you were last here" feed `Blocker: auth` `Blocker: real-data`
 
 **Why this needs a real pass.** Both fixes are pure-logic and exhaustively unit-tested against synthetic fixtures, and both were confirmed RED on the pre-fix module and GREEN after via a before/after scratch harness (not just reasoning) — see B1405456/B1405457's own entries in `BACKLOG.md`. What can't run here: this sandbox's proxy CORS-blocks the Supabase auth handshake, so nothing can confirm the feed against the owner's OWN real schedule/comp data, or that the fix reads the same way it was proven to read in isolation.

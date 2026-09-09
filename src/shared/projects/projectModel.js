@@ -7,6 +7,32 @@
  * any workspace without dragging in the localStorage/Supabase chain.
  */
 
+/* B1407824 — a name shortened for a tight display spot (a map pin label, a table cell, a tile
+ * caption) must never just cut to a length and stop: a plain `name.slice(0, n)` can land the cut
+ * immediately after a comma, period, hyphen or space, and the result reads as broken text
+ * ("ALUMAX RD, NASH,") rather than as a shortened name — no ellipsis, no sign anything was cut.
+ * Five Dashboard surfaces (the Locations map pin, the Pursuits table, the Recent plans tile
+ * caption, and the Since-you-were-last-here feed's plan rows) each show a project/plan name in a
+ * space too tight for the full string; this is the ONE place that decides how a name shortens, so
+ * none of the five has to reimplement the rule.
+ *
+ * The contract: a name at or under `maxLen` is returned untouched — no ellipsis, because nothing
+ * was cut. A longer name is cut to `maxLen`, then trimmed back past any trailing run of comma/
+ * period/hyphen/whitespace, then marked with a single trailing "…" — so a shortened name is always
+ * both clean AND visibly identifiable as shortened. A name cut MID-WORD (no trailing separator to
+ * trim) is left exactly as cut — that reads as an ordinary shortened name, not as broken text. */
+const TRAILING_SEPARATOR_RE = /[,.\-\s]+$/;
+
+export function shortenDisplayName(name, maxLen) {
+  const s = name == null ? "" : String(name);
+  if (s.length <= maxLen) return s;
+  const cut = s.slice(0, maxLen);
+  const trimmed = cut.replace(TRAILING_SEPARATOR_RE, "");
+  // A pathological name that is nothing but separators for the first `maxLen` characters would
+  // otherwise trim to "" — fall back to the raw cut rather than hand back an empty label.
+  return `${trimmed || cut}…`;
+}
+
 // How long a deleted project stays in the "Recently deleted" bin before it's purged for good.
 // Canonical here (a pure, dependency-free constant) rather than in storage.js, so a caller that
 // only needs the NUMBER — the breadcrumb's confirmation copy — never has to import the engine

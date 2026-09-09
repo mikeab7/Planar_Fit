@@ -331,18 +331,30 @@ export function compScaleLayout(featuredRate, peerRates) {
   return { min, max, peerFracs: peerRates.map(frac), featuredFrac: frac(featuredRate) };
 }
 
-/** A county routing key ("harris", "co_denver" — see shared/CLAUDE.md's County ROUTING KEYS note:
- * a `co_` prefix means Colorado, no prefix means Texas) formatted as a short display name. This is
- * deliberately a light, dependency-free formatter rather than a lookup into the full `COUNTIES` GIS
- * registry (site-planner/lib/counties.js) — that module is sized for the map workspace, not a
+/** A county routing key ("harris", "co_denver", "fort_bend" — see shared/CLAUDE.md's County
+ * ROUTING KEYS note: a `co_` prefix means Colorado, no prefix means Texas) title-cased into a
+ * proper display name ("Harris", "Denver", "Fort Bend") — no "County"/state suffix, so both this
+ * module's own `countyLabel` (which appends " County, TX/CO") and any other caller that wants a
+ * differently-suffixed form (e.g. the Dashboard feed's own "Harris County", B1407824) can build
+ * their own sentence on top of ONE capitalization rule rather than each re-splitting the key. This
+ * is deliberately a light, dependency-free formatter rather than a lookup into the full `COUNTIES`
+ * GIS registry (site-planner/lib/counties.js) — that module is sized for the map workspace, not a
  * Dashboard card that loads on every visit, and every routing key this app mints already reads as
- * a plain county name once split on its underscore/prefix. Null for no key. */
-export function countyLabel(countyKey) {
-  if (!countyKey) return null;
+ * a plain county name once split on its underscore/prefix. `{ words, isColorado }` — `words` null
+ * for no key / nothing left after splitting. */
+export function countyNameWords(countyKey) {
+  if (!countyKey) return { words: null, isColorado: false };
   const isColorado = countyKey.startsWith("co_");
   const raw = isColorado ? countyKey.slice(3) : countyKey;
   const words = raw.split(/[_\s]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-  if (!words.length) return null;
+  return { words: words.length ? words : null, isColorado };
+}
+
+/** A county routing key formatted as a short display name — "Harris County, TX" / "Denver County,
+ * CO". Null for no key. See `countyNameWords` above for the capitalization rule this builds on. */
+export function countyLabel(countyKey) {
+  const { words, isColorado } = countyNameWords(countyKey);
+  if (!words) return null;
   return `${words.join(" ")} County, ${isColorado ? "CO" : "TX"}`;
 }
 
