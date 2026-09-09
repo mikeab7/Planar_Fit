@@ -201,6 +201,14 @@ const PLACE_NAMES_DEFAULT_OPACITY = 0.85;
  * banners UNDER the search bar — see that render site for the measured collision this closes. */
 const SEARCH_BAR_CLEARANCE_PX = 58;
 
+// B1424624 — the Sites-panel filter row's floor for the "Filter by name…" input, so the sort
+// <select> beside it (whose own longest option, "Recently touched," used to be `flex:"none"`
+// and simply claimed the row) shrinks and ellipsizes first instead of squeezing the input's
+// placeholder down to an unreadable fragment ("Filter by n"). Sized to the input's own measured
+// need at this panel's fixed 232px width (12px Inter placeholder text ≈ 91px + the input's own
+// 16px of horizontal padding), rounded up with a little slack.
+const FILTER_MIN_PX = 112;
+
 // NEW-4 — how long the "location is blocked" notice stays up before it auto-dismisses. Still
 // dismissible by hand at any time. The message itself is one short sentence (reads as two lines
 // in the popover's width); 6s is long enough to read it twice with room to spare, shorter than
@@ -3406,6 +3414,18 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // display:none — VIEWPORT-STABLE) until the row is hovered OR focused, in a slot reserved at
   // its full width the whole time so revealing it never shifts the name or the date; name is
   // the one flexible element and truncates last; date is a fixed tabular-nums column.
+  // ⛔ B1424624 — "TRUNCATES LAST" WAS TRUE FOR ZERO OR ONE STANDING-FACT FLAG AND SILENTLY BROKE
+  // THE MOMENT A SECOND ONE COULD RENDER. Both flags below were `flex:"none"` (refuse to shrink),
+  // so on a project with both "no boundary" AND "no location" (the owner's own Locations-card
+  // link — B1401952/#1589 — routes here filtered to exactly that case) the two fixed-width chips
+  // claimed ~150px of this 232px-wide panel between them and every last pixel of negative space
+  // landed on the name, which has no min-width floor and collapses toward zero (measured live:
+  // the name span rendered under 3px wide — not even one glyph). The name is the reason the row
+  // exists, so it now gets a real floor (`NAME_MIN_PX`) it is never squeezed below; the flags
+  // move into their own shrinkable group (`rowFlagGroupStyle`) that yields ALL of the negative
+  // space first and ellipsizes its own text before the name gives up a single pixel.
+  const NAME_MIN_PX = 64;
+  const rowFlagGroupStyle = { display: "flex", alignItems: "center", gap: 6, flex: "0 1 auto", minWidth: 0, overflow: "hidden" };
   // The Pinned section (below) mixes every status under one header, so IT still needs a
   // per-row indicator — `showStatusDot=true` there is deliberate, not an oversight (see call
   // sites). Shared by every status section and the Pinned section alike.
@@ -3414,7 +3434,10 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // second color here is a second distinct control signature on this already-tight surface, see
   // ui-audit/signature-budget.json's "Map landing page (decide bar)" entry), so both read as one
   // visual family rather than one looking like a warning and the other like a footnote.
-  const rowFlagBadgeStyle = { flex: "none", fontSize: 9.5, fontWeight: 700, color: PAL.muted, background: "var(--surface-overlay)", border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.pill, padding: "1px 6px", whiteSpace: "nowrap" };
+  // B1424624 — `flex:"0 1 auto"` (was `"none"`) + `minWidth:0` + its own ellipsis so a squeezed
+  // flag degrades to a shortened chip rather than either refusing to shrink (the defect) or
+  // vanishing with a hard, ellipsis-less pixel clip.
+  const rowFlagBadgeStyle = { flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", fontSize: 9.5, fontWeight: 700, color: PAL.muted, background: "var(--surface-overlay)", border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.pill, padding: "1px 6px", whiteSpace: "nowrap" };
   const siteRow = (s, { showStatusDot = false } = {}) => {
     const isActive = s.id === activeSiteId;
     const st = statusOf(s); const t = statusToken(st);
@@ -3460,22 +3483,26 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             style={{ flex: 1, minWidth: 0, boxSizing: "border-box", fontSize: 12, fontWeight: 600, color: PAL.ink, fontFamily: "inherit", padding: "1px 4px", border: `1px solid ${PAL.accent}`, borderRadius: RADIUS.sm, outline: "none", background: "var(--surface-raised)" }} />
         ) : (
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: PAL.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: t.struck ? "line-through" : "none" }}>
+            <span style={{ flex: "1 1 auto", minWidth: NAME_MIN_PX, fontSize: 12, fontWeight: 600, color: PAL.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: t.struck ? "line-through" : "none" }}>
               {s.site || s.name || "Untitled site"}
             </span>
-            {/* B845089 — the "no boundary" flag used to live in the acreage column; that column is
-                now last-edited, which a boundary-less site still has, so the flag moved here instead
-                of being lost. Unaffected by B885136 — it's a standing fact about the site, not a
-                hover reveal, so it stays visible at rest same as before. */}
-            {boundary.known && !boundary.hasBoundary && (
-              <span title="No boundary drawn yet" style={rowFlagBadgeStyle}>no boundary</span>
-            )}
-            {/* LOCATIONS-MAP-CARD FIX — same standing-fact pattern as "no boundary" above: a site
-                with no `origin` can't plot on the Dashboard's Locations map card or this map, and
-                this is the one place in the app that says so next to its name. */}
-            {!s.origin && (
-              <span title="No location set — open this project, then Land → Set this plan's location" style={rowFlagBadgeStyle}>no location</span>
-            )}
+            {/* B1424624 — both flags share ONE shrinkable group so they give up space (and, if
+                still squeezed, their own text) before the name above ever gives up its floor. */}
+            <div style={rowFlagGroupStyle}>
+              {/* B845089 — the "no boundary" flag used to live in the acreage column; that column is
+                  now last-edited, which a boundary-less site still has, so the flag moved here instead
+                  of being lost. Unaffected by B885136 — it's a standing fact about the site, not a
+                  hover reveal, so it stays visible at rest same as before. */}
+              {boundary.known && !boundary.hasBoundary && (
+                <span title="No boundary drawn yet" style={rowFlagBadgeStyle}>no boundary</span>
+              )}
+              {/* LOCATIONS-MAP-CARD FIX — same standing-fact pattern as "no boundary" above: a site
+                  with no `origin` can't plot on the Dashboard's Locations map card or this map, and
+                  this is the one place in the app that says so next to its name. */}
+              {!s.origin && (
+                <span title="No location set — open this project, then Land → Set this plan's location" style={rowFlagBadgeStyle}>no location</span>
+              )}
+            </div>
           </div>
         )}
         {/* B885136 (NEW-1) — the org/team chip: invisible at rest, reveals on hover/focus.
@@ -4054,9 +4081,16 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                 chip row this replaced ate two). "Delete the status filter chip row" — owner,
                 verbatim: "that's not really a good way to filter it… there's literally just
                 nothing there." Collapsing a group IS the filter now (below). */}
+            {/* B1424624 — the SAME squeeze as the row's name column, one flex row up: the sort
+                <select>'s longest option ("Recently touched") was `flex:"none"` (refuses to
+                shrink), so on this 232px-wide panel it alone claimed most of the row and the
+                filter input — what the owner actually types into — was left with a few px, and
+                its placeholder read as "Filter by n". `FILTER_MIN_PX` is the floor the input is
+                never squeezed below (enough to show its full placeholder); the select now shrinks
+                first and ellipsizes its own closed-box text before the input gives up a pixel. */}
             <div style={{ display: "flex", gap: 6, padding: "0 8px 8px" }}>
               <input value={nameFilter} onChange={(e) => setNameFilter(e.target.value)} placeholder="Filter by name…" aria-label="Filter sites by name"
-                style={{ flex: 1, minWidth: 0, boxSizing: "border-box", padding: "5px 8px", fontSize: 12, border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.sm, color: PAL.ink, background: "var(--surface-raised)", fontFamily: "inherit", outline: "none" }} />
+                style={{ flex: "1 1 auto", minWidth: FILTER_MIN_PX, boxSizing: "border-box", padding: "5px 8px", fontSize: 12, border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.sm, color: PAL.ink, background: "var(--surface-raised)", fontFamily: "inherit", outline: "none" }} />
               {/* NEW-1 (signature-budget convergence, B1038016) — padding "5px 6px" → "5px 8px",
                   matching the filter input beside it exactly (was the flagged sibling mismatch
                   "Filter sites by name sits 6px from Sort sites within each group — padding
@@ -4064,7 +4098,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
                   inside that padding, so the wider box costs nothing but 2px of breathing room. */}
               <select value={sitesPanelPrefs.sort} onChange={(e) => setSitesSort(e.target.value)} aria-label="Sort sites within each group"
                 title="Sort — applies within each group, not across groups"
-                style={{ flex: "none", boxSizing: "border-box", padding: "5px 8px", fontSize: FONT_SIZE.control, border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.sm, color: PAL.ink, background: "var(--surface-raised)", fontFamily: "inherit", outline: "none" }}>
+                style={{ flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", boxSizing: "border-box", padding: "5px 8px", fontSize: FONT_SIZE.control, border: `1px solid ${PAL.panelLine}`, borderRadius: RADIUS.sm, color: PAL.ink, background: "var(--surface-raised)", fontFamily: "inherit", outline: "none" }}>
                 <option value="largest">Largest first</option>
                 <option value="az">A–Z</option>
                 <option value="recent">Recently touched</option>
