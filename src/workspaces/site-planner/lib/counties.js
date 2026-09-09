@@ -1056,6 +1056,32 @@ function geometryCountyKey(lat, lng) {
   return countyKeyForName(ans.name, ans.state);
 }
 
+/* NEW-1 — could the map's CURRENT VIEW plausibly reach this county's live parcel source at all?
+ * A parcel-source-down notice naming a county the viewport is nowhere near is a confident, useless
+ * answer — reported live: panned to Texarkana (Bowie County, far NE Texas) and told "Chambers
+ * County's live parcel server is unavailable", Chambers being a Gulf Coast county ~300 miles away.
+ * `MapFinder`'s outage banners (the hang-guard's `markDown` and its snapshot-swap twin) are keyed
+ * to whichever county's DISPLAY LAYER happened to fail, with no check that the county is anywhere
+ * near what's on screen — a real county layer stays mounted (and can therefore still time out)
+ * however far the user has since panned, because every configured county's outline is loaded at
+ * once in select mode (`Object.keys(layerUrlsRef.current).forEach(addDisplay)`).
+ *
+ * Pure axis-aligned overlap between the viewport bounds and the county's own `bbox` — the exact
+ * same coarse screen `candidateCountiesForPoint` uses for click routing, just asked from the other
+ * side (does the county reach the view, not does the view contain a point). The bbox is already
+ * padded for border straddles (see COUNTIES_MAP_RAW's header), so this needs no extra margin. A
+ * county with no bbox (never true for a real, addressable county — only the `statewide` composites
+ * lack one, and they're never the ones named in a "such-and-such COUNTY" banner) stays plausible
+ * rather than risk silencing a real notice over a data gap. `bounds` is a plain
+ * `{south, west, north, east}` (Leaflet's LatLngBounds shape, kept out of this module on purpose —
+ * pure/Node-testable, no Leaflet import). */
+export function countyBboxIntersectsView(key, bounds) {
+  const b = COUNTIES_MAP[key] && COUNTIES_MAP[key].bbox;
+  if (!b || !bounds) return true;
+  const [minLat, minLng, maxLat, maxLng] = b;
+  return minLat <= bounds.north && maxLat >= bounds.south && minLng <= bounds.east && maxLng >= bounds.west;
+}
+
 export function candidateCountiesForPoint(lat, lng) {
   const entries = Object.entries(COUNTIES_MAP);
   const within = entries
