@@ -1,3 +1,35 @@
+### V1041281 — B1433761: the 404 page renders in the shared dark brand, keeps its copy and destination, and all four marketing pages stay money-silent ✅ **PASSED 2026-09-09 — Claude, headless Chromium against a real built app (signed out, no external GIS, no real data — ATTEMPT-BEFORE-YOU-PARK)**
+
+**Why this could be run here, not deferred.** A restyle of a static, unauthenticated utility page (`public/404.html`) plus a CI-guard extension — no auth, no external GIS host, no real saved project. None of the five named `Blocker:` classes apply, so this is Claude-doable per ATTEMPT-BEFORE-YOU-PARK and must not be filed as needing a human pass.
+
+**Method.** `npm run build` → `npx vite preview --port 4173` serving the real `dist/` output → Playwright/Chromium (the project's own pinned browser at `/opt/pw-browsers`) driving real page loads and a real click — never a DOM probe alone, per this surface's own history of false alarms from programmatic scroll/measurement (DRIVER-SCROLL-IS-NOT-APP-SCROLL). One genuine wrinkle, found and worked around rather than glossed: `navigator.webdriver` is `true` under Playwright by default, and `index.html`'s own front-door redirect deliberately exempts automation ("never redirect automated browsers") so e2e/ui-audit tooling can drive the app directly — a plain automated click from a fresh profile therefore boots straight into the app instead of following the real-visitor path, which is a false alarm from the instrument, not a defect. Neutralized with the same technique `ui-audit/verify-frontdoor.mjs` already uses (`Object.defineProperty(navigator, "webdriver", { get: () => false })` via `addInitScript`) so the click reproduces exactly what a brand-new human visitor's browser does.
+
+**Checks run, all passed:**
+1. **The page renders on the shared dark brand ground** — `getComputedStyle(document.body).backgroundColor` reads `rgb(13, 17, 22)` (`#0D1116`), with the same thin masthead + "planyr" wordmark `/landing/`, `/privacy/` and `/terms/` already carry.
+2. **The copy is verbatim** — the h1 reads exactly "That page isn't here" and the body still carries the "Planyr may have just been updated in the background" line, unchanged from the pre-restyle page.
+3. **The action is unchanged and works for a brand-new visitor**: the button reads "Go to Planyr" and points at `/`; a real click, from a fresh (empty-localStorage) profile with the webdriver exemption neutralized (see Method), lands on `http://localhost:4173/landing/` — the real marketing landing page (confirmed both by URL and by the presence of its own hero `<h1>`) — not a loop back to another 404, not a blank screen.
+4. **No horizontal scroll at phone width** (390×844).
+5. **A grep of the actual built `dist/` output** for the full banned cost/pricing word and phrase list, across all four marketing pages (`dist/landing/index.html`, `dist/privacy/index.html`, `dist/terms/index.html`, `dist/404.html`) — **zero matches**. `test/landingLegibility.test.js`'s `describe.each` money-silence suite now runs the same check against `public/404.html`'s source too (17/17 tests passing).
+6. **B1384 legibility contract holds**: the page has no JavaScript at all (nothing to disable), no animation (nothing to reduce), and a source sweep of its one `<style>` block found no rule hiding text with `opacity:0` or `visibility:hidden`.
+7. Full suite: `npm run lint` — 0 errors (32 pre-existing warnings, unchanged baseline); `npm run build` clean.
+
+**Result:** ✅ fully passed, nothing pending — archived directly per this file's own rule 3.
+
+### V1041280 — B1433760: the landing footer no longer instructs a visitor to move their cursor, the contour still responds to it, and nothing shifted ✅ **PASSED 2026-09-09 — Claude, headless Chromium against a real built app (signed out, no external GIS, no real data — ATTEMPT-BEFORE-YOU-PARK)**
+
+**Why this could be run here, not deferred.** A footer element removal on an already-signed-out marketing page — no auth, no external GIS host, no real saved project. Claude-doable per ATTEMPT-BEFORE-YOU-PARK.
+
+**Method.** Same build/preview/Playwright method as V1041281 (this session, same build).
+
+**Checks run, all passed, at all three named widths (1600×521, 1440×900, 390×844):**
+1. **The `.cursor-hint` element is gone** — neither `#cursorHint` nor any `.cursor-hint` node exists in the DOM at any width (including the fine-pointer desktop widths where it used to render).
+2. **No horizontal scroll** at any of the three widths.
+3. **No leftover gap where the hint used to sit** — measured the real box geometry of `.footer-right`, `.copyright`, and `.footer-legal`: the gap between the copyright line and the legal-links nav is a normal ~4px line gap (not the ~20px+ a stranded blank line would leave), and the `.footer-right` container's own bottom edge sits flush with the legal nav's bottom edge (no trailing blank space below it) at all three widths.
+4. **The contour still responds to the cursor** — a real `page.mouse.move` sequence (not a synthetic event) produced a different canvas frame afterward (`toDataURL()` before vs. after differs), confirming the bump/tint interaction the cursor hint used to announce is untouched.
+5. Full suite: `npm run lint` — 0 errors; `npm run build` clean; `test/landingLegibility.test.js` 17/17 passing (its `DECORATIVE` selector list and header comment were updated to drop the now-nonexistent `.cursor-hint` references).
+
+**Result:** ✅ fully passed, nothing pending — archived directly per this file's own rule 3.
+
 ### V981248 — B1344528: the landing footer's new privacy/terms links and mailto work, both new pages render fully with JS off and under reduced motion, and the single-screen landing layout is unchanged ✅ **PASSED 2026-09-09 — Claude, headless Chromium against a real built app (signed out, no external GIS, no real data — ATTEMPT-BEFORE-YOU-PARK)**
 
 **Why this could be run here, not deferred.** Two brand-new static pages plus a footer edit on an already-signed-out marketing page — no auth, no external GIS host, no real saved project. None of the five named `Blocker:` classes (`auth`/`live-GIS`/`real-data`/`print-engine`/`live-deploy`) apply, so this is Claude-doable per ATTEMPT-BEFORE-YOU-PARK and must not be filed as needing a human pass.
