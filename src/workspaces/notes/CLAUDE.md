@@ -663,7 +663,6 @@ written out in the header of `lib/notesStore.js`; read it there rather than re-d
     once, one gesture across the whole page, phone width, the title band, the body drag, the
     discard notice, the mat sweep with a KNOWN-GOOD ARM, and the title's own ratio) and
     **verify-notes-print-free-placement** (the real Print button plus a rendered PDF).
-<<<<<<< HEAD
   - **⛔ THE NINTH ROUND (B1273296 ×3 + B1385024–B1385026, owner report 2026-09-08, second block of
     the day) — AND THE MODEL FOR PLACEMENT CHANGED, WHICH DELETED MACHINERY RATHER THAN ADDING ANY.**
     **(a) A PRESS ARMS A CARET AND CREATES NOTHING; THE FIRST CHARACTER MAKES THE NOTE** and grows
@@ -687,8 +686,6 @@ written out in the header of `lib/notesStore.js`; read it there rather than re-d
     **verify-notes-pending-caret** (the whole model, red-proofed at 24 assertions) and
     **verify-notes-left-margin-reachable** (every case starts from an ALREADY-GROWN page — the
     variable the round-2 harness never wrote down).
-=======
->>>>>>> origin/main
 - **HOW BIG THE WRITING IS (B342994, `lib/notesZoom.js`).** Ctrl+wheel and Ctrl+=/−/0 scale the
   **document**, never the app; the browser's own zoom is suppressed for those gestures so the two
   cannot fight; the level is per-scope, persisted, and does not sync (a comfortable size belongs to

@@ -166,11 +166,6 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
-<<<<<<< HEAD
-### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back `Blocker: real-data`
-
-> ⛔ **UPDATED 2026-09-08 (round 3).** He ran the steps below on the shipped build himself and it FAILED on the left — the page had no grey margin left of it once anything had grown, so there was nothing to press in and nowhere to drag to. Two further defects were found underneath (a compensation that had never fired; a gutter change scrolling the page sideways on every load). The steps are unchanged and now also cover the gutter: **at step 2, first check there is visibly grey to the LEFT of the page before trying to press in it.**
-=======
 ### V1005808 — B1382548 / B1382544 / B1382547: a paste straight out of HIS Outlook lands in ONE font, and his EXISTING Silvestri note now names its own fonts and sizes honestly `Blocker: real-data`
 
 **Why this needs its own real pass.** Two reasons, and neither is covered by anything measurable here. **(a)** The paste fix is proven against Word/Outlook clipboard HTML I RECONSTRUCTED from his description — a real clipboard payload off his own Outlook, on Windows, carries `mso-*` declarations, conditional comments and wrapper shapes a reconstruction does not, and this is a "repro cites real project data" item, a mandatory LIVE-VERIFY class. **(b)** His EXISTING notes are deliberately NOT migrated (his own reservation: a repair pass over content he already has is a decision he has not made), so those notes still hold `11.0pt` marks and runs with no font at all. The READ path was made unit- and family-aware precisely so they report themselves honestly anyway — and that half can only be confirmed on his real note.
@@ -378,7 +373,8 @@ Signed in, at 1600×465, on the Site Planner map:
 **Result:** ⏳ **pending — PARCEL FLAVOUR NOT DRIVEN.** Step 2 (the at-rest row) passed on the owner's own browser 2026-09-08 on build `4194dda`; every parcel-flavour step is untouched and needs a signed-in browser with a reachable county parcel service. `Cadence: once`.
 
 ### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back `Blocker: real-data`
->>>>>>> origin/main
+
+> ⛔ **UPDATED 2026-09-08 (round 3).** He ran the steps below on the shipped build himself and it FAILED on the left — the page had no grey margin left of it once anything had grown, so there was nothing to press in and nowhere to drag to. Two further defects were found underneath (a compensation that had never fired; a gutter change scrolling the page sideways on every load). The steps are unchanged and now also cover the gutter: **at step 2, first check there is visibly grey to the LEFT of the page before trying to press in it.**
 
 **Why this needs its own real pass.** Everything below is measured here on a seeded page in a headless browser, and it all passes — but the report was made on his own Goose Creek → Platting note, whose real content (a long title, a metadata line, real body text, several boxes at once, a window he sized himself) is what the growth budget is computed against. Zoom-/data-density-dependent rendering is a mandatory LIVE-VERIFY class, and a seeded fixture is exactly the thing that can make a real defect unreachable.
 
