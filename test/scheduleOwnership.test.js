@@ -16,7 +16,7 @@ import {
   ownerOf, ownerKeyOf, isOrgOwned, isSiteOwned,
   schedulesForOwner, partitionSchedules,
   migrateScheduleOwnership, pruneOrphanScheduleRefs, pruneScheduleRefs, normalizeScheduleOwnership,
-  nameCollision, validateNewSchedule, suggestScheduleName,
+  nameCollision, validateNewSchedule, suggestScheduleName, describeScheduleDelete,
 } from "../src/shared/schedule/scheduleOwnership.js";
 
 const GOOSE = "smqfy48tlk9j";
@@ -332,5 +332,37 @@ describe("the pre-filled name is a SUGGESTION, never a silent auto-name", () => 
   it("an empty suggestion cannot pass validation — so nothing can be created unnamed", () => {
     const suggested = suggestScheduleName(projects(), OWNER_KIND_SITE, GOOSE, "Goose Creek");
     expect(validateNewSchedule({ name: suggested, ownerKind: OWNER_KIND_SITE, siteId: GOOSE, projects: projects() }).ok).toBe(false);
+  });
+});
+
+// B1404352 — the delete confirmation's own sentence. Must NAME the schedule and say what happens
+// to its tasks (the item's own wording) — asserted here so the copy can't silently drift from
+// what ScheduleOwnerList.jsx actually renders.
+describe("describeScheduleDelete — the shell's inline delete confirmation sentence", () => {
+  it("names the schedule and the exact task count when it has tasks", () => {
+    expect(describeScheduleDelete("TAS Land Sale", 8)).toBe("Delete “TAS Land Sale”? This removes 8 tasks.");
+  });
+
+  it("singularizes for exactly one task", () => {
+    expect(describeScheduleDelete("Richfield", 1)).toBe("Delete “Richfield”? This removes 1 task.");
+  });
+
+  it("says the schedule is empty rather than 'This removes 0 tasks'", () => {
+    expect(describeScheduleDelete("Goose Creek (2)", 0)).toBe("Delete “Goose Creek (2)”? This schedule has no tasks.");
+  });
+
+  it("treats a missing/non-finite count as empty rather than throwing or printing NaN", () => {
+    expect(describeScheduleDelete("Goose Creek (2)", undefined)).toBe("Delete “Goose Creek (2)”? This schedule has no tasks.");
+    expect(describeScheduleDelete("Goose Creek (2)", null)).toBe("Delete “Goose Creek (2)”? This schedule has no tasks.");
+    expect(describeScheduleDelete("Goose Creek (2)", NaN)).toBe("Delete “Goose Creek (2)”? This schedule has no tasks.");
+  });
+
+  it("falls back to a generic label rather than an empty/blank name", () => {
+    expect(describeScheduleDelete("", 3)).toBe("Delete “this schedule”? This removes 3 tasks.");
+    expect(describeScheduleDelete(null, 3)).toBe("Delete “this schedule”? This removes 3 tasks.");
+  });
+
+  it("trims whitespace in the name the same way every other schedule-name path does", () => {
+    expect(describeScheduleDelete("  TAS Land Sale  ", 2)).toBe("Delete “TAS Land Sale”? This removes 2 tasks.");
   });
 });

@@ -13,7 +13,7 @@ import ModuleLoader from "../../shared/ui/ModuleLoader.jsx";
 import {
   parseNavState, deriveCurrentProject, findBySiteId, findAllBySiteId, needsScheduleCarryIn,
   dashboardNavActions, shouldShowLinkPanel, shouldAdoptLinkedSiteIntoRoute, isPickShowing,
-  isGridMismatched, newProjectAction,
+  isGridMismatched, newProjectAction, labelMultiScheduleRows,
 } from "./lib/navState.js";
 import { reportClientEvent } from "../../shared/telemetry/clientErrors.js";
 import { scheduleSaveState } from "./lib/saveState.js";
@@ -424,6 +424,15 @@ export default function Scheduler({
     if (linked != null && linked !== projectId) { try { onProjectChange?.(linked); } catch (_) {} }
   };
 
+  // B1404352 — rename/delete a SCHEDULE directly, from the "Schedules" panel's own row. Unlike the
+  // breadcrumb's onRenameProject/onDeleteProject above (which resolve a switcher row through
+  // resolveControlledId because that row's id might be a registry site-standin), ScheduleOwnerList
+  // always hands back a real schedule id straight from the bridged list, so no resolution step is
+  // needed — post it to the embedded app exactly as the breadcrumb already does for the one
+  // schedule it can reach.
+  const renameSchedule = (id, name) => post({ type: "planar:nav-rename", id, name });
+  const deleteSchedule = (id) => post({ type: "planar:nav-delete", id });
+
   // Pressing Dashboard is a USER action that has to move BOTH halves (B1050). Posting to the iframe
   // alone left the outer route pointing at the project, so the route-derived resolution panel stayed
   // up over the dashboard the user had just navigated to, with no way to close it. Mirror
@@ -493,6 +502,17 @@ export default function Scheduler({
   } else {
     currentProject = deriveCurrentProject(projects, activeId, section);
   }
+
+  // B1404352 — owner click-test, verbatim: switching Goose Creek to its "TAS Land Sale" schedule
+  // made the header read "planyr / Dashboard / TAS Land Sale" with Goose Creek gone entirely. This
+  // file's breadcrumb shows SCHEDULE names by design (see the file header) — fine while a project
+  // had exactly one, ambiguous now that B1080547 lets it have several with different names.
+  // labelMultiScheduleRows relabels only the rows belonging to a MULTI-schedule project (using the
+  // linkedSiteName each such row already carries), so `resolveCurrentName` picks up the combined
+  // "Goose Creek / TAS Land Sale" for the crumb AND the dropdown row — a project with just one
+  // schedule (the common case) renders exactly as before. See navState.js for why this can't be
+  // fixed by reassigning `currentProject.name` alone.
+  const breadcrumbProjects = labelMultiScheduleRows(projects);
 
   // The Schedule tab's EMPTY STATE (NEW-2): the route points at a site that has NO linked schedule
   // yet, so there is no grid to show — we render the create/link surface INSTEAD OF the iframe
@@ -610,7 +630,7 @@ export default function Scheduler({
         // Site Planner: pick a project → switch to its Gantt; Dashboard → the reports
         // overview; New project → add one in the scheduler.
         currentProject={currentProject}
-        projects={projects}
+        projects={breadcrumbProjects}
         onSelectProject={selectSchedule}
         onDashboard={goDashboard}
         // B1128272 — the wordmark stays the way OUT of Schedule (onGoDashboard, same as
@@ -654,6 +674,9 @@ export default function Scheduler({
             // Organization when none is routed), now also reachable from the "Schedules" panel
             // itself — see ScheduleOwnerList's own header for why that mattered.
             onCreateSchedule={() => setNewSchedulePrompt(newProjectAction({ projectId, routedSiteName }))}
+            // B1404352 — rename/delete a schedule directly from this panel.
+            onRenameSchedule={renameSchedule}
+            onDeleteSchedule={deleteSchedule}
           />
         )}
         toolbarContent={<ScheduleActions toolbar={toolbar} post={post} />}
@@ -723,6 +746,8 @@ export default function Scheduler({
               siteId={projectId}
               siteName={routedSiteName}
               onSelect={selectSchedule}
+              onRename={renameSchedule}
+              onDelete={deleteSchedule}
             />
           </div>
         )}

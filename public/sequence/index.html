@@ -9120,7 +9120,9 @@ function App() {
     if (!inShell || !data) return;
     // Carry the cross-module link (linkedSiteId/Name) so the shell can map this schedule ↔ a
     // Site Planner project (group_id) and keep the project the same across the header tabs.
-    const list = Object.values(data.projects || {}).map(p => ({ id: p.id, name: p.name, ownerKind: ownerOf(p).kind, linkedSiteId: p.linkedSiteId ?? null, linkedSiteName: p.linkedSiteName ?? null }));
+    // B1404352 — taskCount rides along so the shell's per-schedule delete confirmation can name
+    // what it's about to remove ("This removes 8 tasks") without a second round-trip.
+    const list = Object.values(data.projects || {}).map(p => ({ id: p.id, name: p.name, ownerKind: ownerOf(p).kind, linkedSiteId: p.linkedSiteId ?? null, linkedSiteName: p.linkedSiteName ?? null, taskCount: Array.isArray(p.tasks) ? p.tasks.length : 0 }));
     const sig = JSON.stringify([data.section ?? "projects", data.aPid ?? null, list]);
     if (sig === navSigRef.current) return; // only emit when the nav state actually changes
     navSigRef.current = sig;
@@ -9157,7 +9159,7 @@ function App() {
           // a stripped {id,name} reply (when it lands last before the shell stops polling) made the
           // shell drop linkedSiteId, falsely showing the "no schedule linked" panel over an already-
           // linked project and minting a duplicate schedule on "Create".
-          const list = Object.values(d.projects || {}).map(p => ({ id: p.id, name: p.name, ownerKind: ownerOf(p).kind, linkedSiteId: p.linkedSiteId ?? null, linkedSiteName: p.linkedSiteName ?? null }));
+          const list = Object.values(d.projects || {}).map(p => ({ id: p.id, name: p.name, ownerKind: ownerOf(p).kind, linkedSiteId: p.linkedSiteId ?? null, linkedSiteName: p.linkedSiteName ?? null, taskCount: Array.isArray(p.tasks) ? p.tasks.length : 0 }));
           try { window.parent.postMessage({ source: "planar-seq", type: "planar:nav-state",
             section: d.section ?? "projects", activeId: d.aPid ?? null, projects: list }, window.location.origin); } catch (_) {}
         }
