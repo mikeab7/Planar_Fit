@@ -118,6 +118,7 @@ import { lastEditedLabel } from "./lib/siteRecency.js";
 import { loadUserPrefs, saveUserPrefs, readMirror, setSitesPanelPref } from "./lib/userPrefs.js";
 import { adminBoundariesVisible, attachAdminBoundaries } from "./lib/adminBoundaryGate.js";
 import { compHeadline } from "../../shared/comps/lib/comps.js";
+import { loadCompsRatePeriod } from "../../shared/comps/lib/compsRatePeriodPrefs.js";
 import { compMarkerSvg, compMarkerSize } from "../../shared/comps/lib/compMarkerIcon.js";
 // B1372144 (map notes) — a note is a comp's ANCHOR with a note's payload. It reuses this file's
 // existing ground-first plumbing wholesale (the dropped pin, the parcel selection, the decide bar)
@@ -1266,6 +1267,16 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
   // ── Team sharing (share a project with a team) ──────────────────────────────
   const [myUid, setMyUid] = useState(null);
   const [myTeams, setMyTeams] = useState([]);
+  // NEW-COMPS-CARD — Michael's own "per year / per month" choice (the Dashboard Comps card's
+  // toggle), read here so a comp marker's map tooltip never disagrees with it. Read-only: this
+  // map carries no second toggle of its own. Re-runs once `myUid` resolves from null -> a real
+  // id, same as the account-scoped loads just below.
+  const [compsRatePeriod, setCompsRatePeriod] = useState("annual");
+  useEffect(() => {
+    let live = true;
+    loadCompsRatePeriod(myUid).then(({ period }) => { if (live) setCompsRatePeriod(period); });
+    return () => { live = false; };
+  }, [myUid]);
   const [shareBusy, setShareBusy] = useState(false);
   // NEW-2 — a confirmation the owner asked for: "not really clear that it's sharing anything."
   // A clean share/unshare used to close the menu and say nothing at all — the only evidence was
@@ -2267,7 +2278,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
         const { size, anchor } = compMarkerSize(false);
         const icon = L.divIcon({ className: "map-comp-feature", html: compMarkerSvg(c.compType), iconSize: size, iconAnchor: anchor });
         const marker = L.marker([c.anchor.lat, c.anchor.lon], { icon, interactive: !selectMode && !placingCompPin, keyboard: false, riseOnHover: true });
-        const tip = `${c.title || compHeadline(c)} · ${c.compDate || ""}`;
+        const tip = `${c.title || compHeadline(c, compsRatePeriod)} · ${c.compDate || ""}`;
         if (!selectMode && !placingCompPin) {
           marker.on("click", () => onCompClickRef.current && onCompClickRef.current(c.id)).bindTooltip(tip, { direction: "top" });
         }
@@ -2279,7 +2290,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     if (pressedRef.current) { pendingCompsRebuildRef.current = build; return; }
     build();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [comps, selectMode, placingCompPin, showCompsLayer]);
+  }, [comps, selectMode, placingCompPin, showCompsLayer, compsRatePeriod]);
 
   /* B1372144 — the MAP NOTES layer. Same construction as the comps layer above and gated the same
    * way: ONLY on its own "Notes" checkbox (B831778's rule — what is PAINTED is never a function of

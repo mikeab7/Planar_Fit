@@ -35,6 +35,7 @@ import {
 } from "../lib/compsStore.js";
 import { formatNumberDisplay, sanitizeNumericInput } from "../lib/compSheetColumns.js";
 import { loadSiteSummaries } from "../../../workspaces/site-planner/lib/siteListLight.js";
+import { loadCompsRatePeriod } from "../lib/compsRatePeriodPrefs.js";
 import { listMyTeams, currentIdentity } from "../../../workspaces/site-planner/lib/teams.js";
 import CompEntryGrid, { draftFromParsedRow } from "./CompEntryGrid.jsx";
 import CompDraftsPanel from "./CompDraftsPanel.jsx";
@@ -195,7 +196,7 @@ function SummaryStrip({ comps }) {
   );
 }
 
-export function CompRow({ comp, onOpen, overlaysById }) {
+export function CompRow({ comp, onOpen, overlaysById, compsRatePeriod }) {
   // HARDENING-14 — a comp's own title wins; absent that, its LOCATION (a real identity — an
   // address, an APN, a plan name) is a better row title than its rate, which is what used to show.
   const locationText = useCompLocationText(comp.anchor, overlaysById);
@@ -206,7 +207,7 @@ export function CompRow({ comp, onOpen, overlaysById }) {
       borderBottom: "1px solid var(--border-default)", background: "transparent", cursor: "pointer", fontFamily: "inherit",
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 650, color: "var(--text-primary)" }}>{primary || compHeadline(comp)}</span>
+        <span style={{ fontSize: 13, fontWeight: 650, color: "var(--text-primary)" }}>{primary || compHeadline(comp, compsRatePeriod)}</span>
         {/* NEW-5 — a comp saved with no Executed date reads "Date unknown" rather than a blank
             gap; the tooltip states what it's sorted by instead (its own "Date entered" field is
             the full explanation, one click away in the detail view). */}
@@ -217,7 +218,7 @@ export function CompRow({ comp, onOpen, overlaysById }) {
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 3 }}>
         <TypeChip type={comp.compType} />
-        {primary && <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{compHeadline(comp)}</span>}
+        {primary && <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{compHeadline(comp, compsRatePeriod)}</span>}
       </div>
     </button>
   );
@@ -226,9 +227,9 @@ export function CompRow({ comp, onOpen, overlaysById }) {
 // B1066368 — one row in the "Recently deleted" trash list, mirroring SitePlansSection.jsx's own
 // trash row shape (identity + Restore + Delete forever). Reuses the same identity resolution as
 // CompRow (title, else a real Location, else the rate headline) rather than a bare id or type.
-function TrashRow({ comp, overlaysById, onRestore, onPurge }) {
+function TrashRow({ comp, overlaysById, onRestore, onPurge, compsRatePeriod }) {
   const locationText = useCompLocationText(comp.anchor, overlaysById);
-  const primary = comp.title || locationText || compHeadline(comp);
+  const primary = comp.title || locationText || compHeadline(comp, compsRatePeriod);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 0", borderTop: "1px solid var(--border-default)" }}>
       <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={primary || undefined}>
@@ -275,8 +276,8 @@ function SourceBrochureLink({ comp, overlaysById, onOpenBrochure }) {
   );
 }
 
-export function CompDetail({ comp, canEdit, onEdit, onDelete, onBack, overlaysById, onOpenBrochure, assignNotice, onDismissAssignNotice, projects, trackedSites }) {
-  const rows = compFieldRows(comp);
+export function CompDetail({ comp, canEdit, onEdit, onDelete, onBack, overlaysById, onOpenBrochure, assignNotice, onDismissAssignNotice, projects, trackedSites, compsRatePeriod }) {
+  const rows = compFieldRows(comp, compsRatePeriod);
   // HARDENING-14 — the detail view showed every structured field EXCEPT where the comp actually
   // is, despite that being real, already-resolved information (an address, an APN, a plan name).
   const locationText = useCompLocationText(comp.anchor, overlaysById);
@@ -649,6 +650,10 @@ export default function CompsPanel({
   // own words) — this is the "and SAY SO." Cleared whenever a different comp's detail is opened.
   const [assignNotice, setAssignNotice] = useState(null);
   const [currentUserId, setCurrentUserId] = useState(null);
+  // NEW-COMPS-CARD — Michael's own "per year / per month" choice (the Dashboard Comps card's
+  // toggle), read here so the map's Comps rail never disagrees with it — same account-scoped
+  // preference, loaded read-only (this rail carries no second toggle of its own).
+  const [compsRatePeriod, setCompsRatePeriod] = useState("annual");
   const [teams, setTeams] = useState([]);
   // B849232/NEW-1 — the paste-grid create surface. `gridRows` is a client-side staging array,
   // never persisted until Save; `armedRowId` tracks which row is waiting for the NEXT map-picked
@@ -697,7 +702,10 @@ export default function CompsPanel({
 
   useEffect(() => {
     if (!open) return;
-    currentIdentity().then(({ uid }) => setCurrentUserId(uid));
+    currentIdentity().then(({ uid }) => {
+      setCurrentUserId(uid);
+      loadCompsRatePeriod(uid).then(({ period }) => setCompsRatePeriod(period));
+    });
     listMyTeams().then(setTeams).catch(() => setTeams([]));
   }, [open]);
 
@@ -1159,7 +1167,7 @@ export default function CompsPanel({
             {kmlImportError && <div style={{ padding: "6px 14px 0", fontSize: 10.5, color: "var(--danger-text)" }}>{kmlImportError}</div>}
             <SummaryStrip comps={comps} />
             {comps.length === 0 && <div style={{ padding: 14, fontSize: 12, color: "var(--text-secondary)" }}>No comps yet. Paste a few from a broker email with “＋ Paste comps” above, or point at the map and choose “Log a comp”.</div>}
-            {comps.map((c) => <CompRow key={c.id} comp={c} onOpen={openDetail} overlaysById={overlaysById} />)}
+            {comps.map((c) => <CompRow key={c.id} comp={c} onOpen={openDetail} overlaysById={overlaysById} compsRatePeriod={compsRatePeriod} />)}
 
             {/* B1066368 — "Recently deleted", mirroring SitePlansSection.jsx's own trash disclosure
                 exactly (collapsed by default, fetched lazily on first open). */}
@@ -1179,7 +1187,7 @@ export default function CompsPanel({
                   <div style={{ fontSize: 10.5, color: "var(--text-secondary)", padding: "4px 0" }}>Nothing here.</div>
                 ) : (
                   trash.map((c) => (
-                    <TrashRow key={c.id} comp={c} overlaysById={overlaysById} onRestore={restoreOne} onPurge={purgeForever} />
+                    <TrashRow key={c.id} comp={c} overlaysById={overlaysById} onRestore={restoreOne} onPurge={purgeForever} compsRatePeriod={compsRatePeriod} />
                   ))
                 )
               )}
@@ -1218,7 +1226,7 @@ export default function CompsPanel({
             comp={activeComp} canEdit={activeComp.userId === currentUserId} onEdit={openEdit} onDelete={remove} onBack={() => setView("list")}
             overlaysById={overlaysById} onOpenBrochure={onOpenBrochure}
             assignNotice={assignNotice} onDismissAssignNotice={() => setAssignNotice(null)}
-            projects={projects} trackedSites={trackedSites}
+            projects={projects} trackedSites={trackedSites} compsRatePeriod={compsRatePeriod}
           />
         )}
 
