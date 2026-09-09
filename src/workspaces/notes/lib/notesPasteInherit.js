@@ -39,6 +39,8 @@
  * its walk is unit-tested against a tiny stand-in element tree.
  */
 
+import { isNonValue } from "./notesResolvedValue.js";
+
 /** How far up to look. A clipboard fragment is a handful of wrappers deep (Word nests
  *  `div > div > p > span`); a ceiling keeps a pathological paste from walking a long chain, and
  *  it is not a correctness bound — inheritance that starts further out than this is vanishingly
@@ -71,6 +73,17 @@ function isBoundary(el) {
  *  write the app's own body font into documents as though the user had chosen it. */
 export function pushDownInherited(root) {
   if (!root) return root;
+  /* ⛔ AND STRIP THE NON-VALUES ON THE WAY IN (NEW-8). Outlook emits `color: inherit` on some
+   * runs and nothing on others; both render identically, but one stores a mark that says
+   * "inherit" and the other stores no mark, and the colour control then reported them as two
+   * different states — a swatch on one, nothing on the other, and a false "mixed" across the
+   * pair. `inherit` is not a colour. Removing it here means it stops being CREATED; notes that
+   * already hold one are read correctly by `resolvedColor` and are deliberately not rewritten. */
+  for (const el of root.querySelectorAll("[style]")) {
+    for (const prop of ["color", "backgroundColor", "fontFamily", "fontSize"]) {
+      if (isNonValue(el.style[prop])) el.style[prop] = "";
+    }
+  }
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const holders = new Set();
   let n;

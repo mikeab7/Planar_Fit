@@ -152,6 +152,22 @@ Two more found since, each worth its own line because each returned a confident 
    a defect that existed only in itself. **Diff failure IDENTITIES against a baseline build, never
    counts**: that is what separated three real regressions from twelve pre-existing ones here.
 
+16. **A DRAG THAT STARTS INSIDE AN EXISTING SELECTION IS A DRAG-AND-DROP, NOT A NEW SELECTION
+   (2026-09-09).** Caught by a harness contradicting ITSELF: "two genuinely different colours go
+   indeterminate" failed in the suite and PASSED when the same two runs were driven alone. The
+   difference was the PRECEDING gesture — the new drag's mousedown landed inside the range the
+   last one had left selected, so the browser began dragging that text instead of selecting. It
+   is silent, it can MOVE content, and every assertion after it describes a selection nobody
+   made. **Click once to collapse before every drag, and then PROVE what got selected**
+   (`document.getSelection().toString()` must contain both endpoints) rather than assuming.
+17. **THE BASELINE FOR A "WAS THIS ALREADY BROKEN ON MAIN?" CHECK MUST INCLUDE UNTRACKED FILES
+   (2026-09-09) — and getting this wrong nearly filed one of our own regressions as someone
+   else's.** `git stash push -- src/` does NOT stash untracked files, so a NEW module added by
+   the work under test stays on disk and is counted in the "clean main" measurement. That is how
+   the design-drift ceiling read 580 on "untouched main" when the real number was a passing 572:
+   the new file was in both arms. **Use `git stash push -u`**, and treat any baseline that is
+   itself failing as a claim to verify rather than a relief.
+
 See also `ui-audit/TRAPS.md`, and the named rules **FOREGROUND-OR-VOID** (a background tab cannot
 be measured — not its clock, not its pixels) and **COUNT-EVERY-KIND**.
 
@@ -275,6 +291,23 @@ position**.
    Measured on the pre-fix build: those four DO report `pressed=true` on genuinely bold text
    (the positive case works), and report NOTHING when off or mixed. Use `togglePressed`'s
    `"true"/"false"/"mixed"` for both the accessible state and the paint, from one value.
+
+0c. **⛔ A CONTROL THAT REPORTS WHETHER A MARK IS STORED, WHEN THE USER NEEDS THE RESOLVED VALUE
+   (NEW-7/NEW-8/NEW-9, 2026-09-09).** Sibling of 0b, and the one it does not cover: 0b is about
+   a RANGE disagreeing with itself; this is about a SINGLE run being reported by its storage
+   rather than by what it looks like. Three instances, all measured on his own note: a run with
+   no font mark read **"Default"**, which names no typeface (*"There's always a name to it"*); a
+   `color: inherit` mark painted NO swatch while an identical-looking run with no mark painted
+   the default one, and the pair reported as MIXED; and the size and spacing boxes answered
+   **"Size"** and **"Spacing"** — category labels for text that is plainly being rendered at some
+   real size and spacing. **`inherit` is not a colour. An absent mark is still a value.** Route
+   every readout through `lib/notesResolvedValue.js`, and resolve what CSS owns (the default
+   typeface, size and ink) off the LIVE DOM in a layout effect — never a hard-coded copy of a
+   token, which is wrong in the other theme immediately. Guard:
+   `ui-audit/verify-notes-font-control.mjs` §3b, red-proven on untouched main.
+   ⛔ **AND THE HIGHLIGHT BUTTON'S SWATCH IS A VACUITY TRAP**: with no highlight it paints the
+   colour it WOULD apply, so a "real yellow highlight" arm reports yellow whether the feature
+   works or not. Use a colour the button does not default to.
 
 1. **A GLOBAL KEY BINDING LEAKING INTO TEXT.** Escape handled twice (B434418); the arrow-nudge
    swallowed arrows while typing (B519681). The guard is a **PROPERTY** — every globally-bound key
