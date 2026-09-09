@@ -2,9 +2,12 @@
 /*
  * mark-shared-ids.mjs — the REPAIR half of B308704. Idempotent, additive, and re-runnable.
  *
- * 31 ids inherited from before the reserved-block fix name two different items inside a single
- * ledger file (24 B in docs/archive/BACKLOG-DONE.md, 7 V in docs/archive/VERIFICATION-DONE.md, every one below B6864). This
- * script stamps each colliding heading with a `> ⚠ SHARED ID` line naming its twin.
+ * 33 ids inherited from before the reserved-block fix name two (or, for V45, three) different items
+ * inside a single ledger file (24 B in docs/archive/BACKLOG-DONE.md, 9 V in docs/archive/VERIFICATION-DONE.md, every
+ * one below B6864). This script stamps each colliding heading with a `> ⚠ SHARED ID` line naming
+ * its twin(s). (V39/V100 joined 2026-09-09, discovered — not newly created — when a
+ * verification-queue triage archived a long-pending twin that had been sitting alone in the live
+ * queue since before either collision could be seen in one file; see test/ledgerDuplicateIds.test.js.)
  *
  * ⛔ WHY MARK IN PLACE RATHER THAN RENUMBER, which was a real fork in the road and not a shrug.
  * Prose across this repo says "see B239". For a colliding id NOBODY CAN KNOW which twin a given
