@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  situsAddress, situsKey, siteNameFromParcel, mailingAddressValues, apprRows,
+  situsAddress, situsKey, siteNameFromParcel, mailingAddressValues, apprRows, tidyAddressLabel,
 } from "../src/workspaces/site-planner/lib/appraisal.js";
 import { detectField } from "../src/workspaces/site-planner/lib/counties.js";
 
@@ -147,5 +147,88 @@ describe("the curated rows + the search field use the same ladder", () => {
     expect(detectField([{ name: "OBJECTID" }, { name: "MAIL_ADDR" }], "addr")).toBeNull();
     // The id side is untouched.
     expect(detectField([{ name: "prop_id" }, { name: "SITUS" }], "id")).toBe("prop_id");
+  });
+});
+
+/* NEW-1 (owner report, 2026-09-09) — a project name composed from address parts must drop the
+ * parts that came back empty instead of keeping their separators. Both fixtures below are copied
+ * verbatim from live sources, measured the same day this item was filed:
+ *   - BOWIE is Bowie County's real TxGIO/StratMap record for the "ALUMAX RD, NASH," parcel
+ *     (queried live against feature.geographic.texas.gov/.../stratmap_land_parcels_48_most_recent
+ *     at the exact coordinates production's duplicate-project row carries) — SITUS_ADDR itself
+ *     already reads "ALUMAX RD, NASH," with SITUS_STAT/SITUS_ZIP both blank.
+ *   - the Esri Match_addr strings are copied verbatim from a live query against
+ *     geocode.arcgis.com for the exact addresses production's two rows are named after.
+ */
+const BOWIE_ALUMAX = {
+  OBJECTID: "1313201", PROP_ID: "16818000123", OWNER_NAME: "SOME OWNER LLC",
+  SITUS_ADDR: "ALUMAX RD, NASH,", SITUS_NUM: " ", SITUS_STRE: " ", SITUS_CITY: "NASH",
+  SITUS_STAT: " ", SITUS_ZIP: " ", COUNTY: "BOWIE",
+  LEGAL_DESC: "NASH BUSINESS PARK PHASE V LOT 1 REPLAT 6516/326 09/18/13 BLK/TRACT 1 6.618 ACRES",
+};
+
+describe("tidyAddressLabel — drop empty comma-joined parts instead of keeping their separators (NEW-1)", () => {
+  it("all four parts present — unchanged", () => {
+    expect(tidyAddressLabel("16000 Aldine Westfield Rd, Houston, Texas, 77032"))
+      .toBe("16000 Aldine Westfield Rd, Houston, Texas, 77032");
+  });
+  it("missing zip only — no trailing separator", () => {
+    expect(tidyAddressLabel("16000 Aldine Westfield Rd, Houston, Texas, ")).toBe("16000 Aldine Westfield Rd, Houston, Texas");
+  });
+  it("missing state only — the empty slot's comma is dropped, not left doubled", () => {
+    expect(tidyAddressLabel("16000 Aldine Westfield Rd, Houston, , 77032")).toBe("16000 Aldine Westfield Rd, Houston, 77032");
+  });
+  it("missing state AND zip — the real production shape (ALUMAX RD, NASH,)", () => {
+    expect(tidyAddressLabel("ALUMAX RD, NASH,")).toBe("ALUMAX RD, NASH");
+  });
+  it("missing city (state/zip present) — the empty middle slot is dropped, not doubled", () => {
+    expect(tidyAddressLabel("500 Industrial Blvd, , TX 77447")).toBe("500 Industrial Blvd, TX 77447");
+  });
+  it("a lookup that returns nothing but a street — unchanged (nothing to drop)", () => {
+    expect(tidyAddressLabel("Alumax Rd")).toBe("Alumax Rd");
+  });
+  it("every part empty — null, so the caller falls through its own ladder", () => {
+    expect(tidyAddressLabel(",  ,")).toBeNull();
+    expect(tidyAddressLabel("")).toBeNull();
+  });
+  it("null/undefined in, null out — never throws", () => {
+    expect(tidyAddressLabel(null)).toBeNull();
+    expect(tidyAddressLabel(undefined)).toBeNull();
+  });
+  it("a fully-populated label with no empty slot is byte-identical (idempotent)", () => {
+    const clean = "1115 E Airtex Dr, Houston, TX 77073";
+    expect(tidyAddressLabel(clean)).toBe(clean);
+  });
+});
+
+describe("siteNameFromParcel never leaves a dangling or doubled separator (NEW-1)", () => {
+  it("the real Bowie ALUMAX RD parcel — situs alone, city present, state+zip blank", () => {
+    expect(siteNameFromParcel(BOWIE_ALUMAX, {})).toBe("ALUMAX RD, NASH");
+  });
+
+  it("the real Harris Match_addr, used as the `searched` fallback when no parcel/situs exists", () => {
+    // Copied verbatim from a live geocode.arcgis.com response for this exact address.
+    const rawMatchAddr = "16000 Aldine Westfield Rd, Houston, Texas, 77032";
+    expect(siteNameFromParcel(null, { searched: rawMatchAddr })).toBe(rawMatchAddr); // fully populated: unchanged
+  });
+
+  it("a parcel identifier with no address at all still falls through to the account id (separate question — not fixed here)", () => {
+    expect(siteNameFromParcel(null, { acct: "154602" })).toBe("154602");
+  });
+
+  // RED-PROOF — this is the invariant the whole item is about. Verified to FAIL on unfixed
+  // `main` (`tidyAddressLabel` absent, `siteNameFromParcel` returning the raw candidate): the
+  // Bowie case below reads back "ALUMAX RD, NASH," and trips both assertions.
+  it.each([
+    ["all four parts", { SITUS_ADDR: "500 Industrial Blvd, Katy, TX 77494" }, {}],
+    ["missing zip only", { SITUS_ADDR: "500 Industrial Blvd, Katy, TX" }, {}],
+    ["missing state only", { SITUS_ADDR: "500 Industrial Blvd, Katy," }, {}],
+    ["missing state and zip (the real Bowie shape)", BOWIE_ALUMAX, {}],
+    ["missing city", { SITUS_ADDR: "500 Industrial Blvd, , TX 77494" }, {}],
+    ["street only, nothing else resolved", null, { searched: "Alumax Rd" }],
+  ])("%s — never ends on a separator, never a doubled one", (_label, attrs, opts) => {
+    const name = siteNameFromParcel(attrs, opts);
+    expect(name).not.toMatch(/[,\s]$/);
+    expect(name).not.toMatch(/,\s*,/);
   });
 });
