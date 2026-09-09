@@ -254,7 +254,9 @@ describe("MapFinder.jsx — FINDING-B: the decide bar and startBlankHere are gua
     const fnEnd = MF.indexOf("\n  };", fnStart);
     const body = MF.slice(fnStart, fnEnd);
     expect(body.includes("await onSkip?.();")).toBe(true);
-    expect(body.includes("await onSkip?.({ origin, county, name: parcelInfo?.label || addr.trim() || \"Untitled site\" });")).toBe(true);
+    // NEW-1 — the name is tidied (appraisal.js's tidyAddressLabel) before this call, not inline
+    // here; the guard below is about the AWAIT, not the exact tidying expression.
+    expect(body.includes("await onSkip?.({ origin, county, name: tidyAddressLabel(parcelInfo?.label || addr.trim()) || \"Untitled site\" });")).toBe(true);
   });
 
   // startBlankHere is reachable from four places; the guard living INSIDE the function (rather

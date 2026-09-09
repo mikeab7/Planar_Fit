@@ -87,7 +87,7 @@ import {
 import { elStyle, elToRingFeet, byZ } from "./lib/planStyle.js";
 import { STATUSES, STATUS_META, statusOf, roleOf } from "./lib/siteModel.js";
 import { countyAtPoint } from "./lib/jurisdiction.js";
-import { findAttr, situsAddress, siteNameFromParcel } from "./lib/appraisal.js";
+import { findAttr, situsAddress, siteNameFromParcel, tidyAddressLabel } from "./lib/appraisal.js";
 /* LAZY (B1064 tranche). The address-search parcel card renders only AFTER a search resolves a
  * lot — an inherently async moment, so there is nothing on screen for its chunk to hold up and
  * no layout to reserve (the card is absolutely positioned over the map, which is also why the
@@ -3081,7 +3081,10 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
         // NEW-1 — state-qualified; see `resolveCompCounty` above for why an unqualified name is a defect.
         county = ans?.name ? countyKeyForName(ans.name, ans.state) : null;
       } catch (_) { /* the planner resolves it from the origin on load */ }
-      await onSkip?.({ origin, county, name: parcelInfo?.label || addr.trim() || "Untitled site" });
+      // NEW-1 — `parcelInfo?.label`/`addr` can be a raw geocoder or county label carrying an
+      // upstream comma-joined defect (an empty city/state/zip whose separator still made it into
+      // the string) — see appraisal.js's `tidyAddressLabel` for the production evidence.
+      await onSkip?.({ origin, county, name: tidyAddressLabel(parcelInfo?.label || addr.trim()) || "Untitled site" });
     } finally {
       startBlankHereBusyRef.current = false;
     }
