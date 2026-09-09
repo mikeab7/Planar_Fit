@@ -54,6 +54,7 @@ import {
 } from "./lib/dashboardLayout.js";
 import { pickRecentPlans } from "./lib/recentPlans.js";
 import { loadDashboardLayout, saveDashboardLayout } from "./lib/dashboardPrefs.js";
+import { loadCompsRatePeriod, saveCompsRatePeriod } from "../../shared/comps/lib/compsRatePeriodPrefs.js";
 import { loadSinceLastHere, saveSinceLastHere } from "./lib/dashboardSinceLastHerePrefs.js";
 import { fetchSiteSummaries } from "./lib/dashboardSitesFetch.js";
 import { fetchAllCompsForCard, fetchCompsForMap } from "./lib/dashboardCompsFetch.js";
@@ -135,6 +136,22 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     });
     return () => { live = false; };
   }, [userId]);
+
+  // NEW-COMPS-CARD — the Comps card's own "per year / per month" toggle. A per-user preference,
+  // same account-scoped store as the layout above (`compsRatePeriodPrefs.js`), so it follows him
+  // across reloads and devices rather than resetting per visit. Loaded once per mount, same as
+  // the layout; the toggle writes straight through (no debounce needed — it's a single flip, not
+  // a drag gesture).
+  const [compsPeriod, setCompsPeriod] = useState("annual");
+  useEffect(() => {
+    let live = true;
+    loadCompsRatePeriod(userId).then(({ period }) => { if (live) setCompsPeriod(period); });
+    return () => { live = false; };
+  }, [userId]);
+  const changeCompsPeriod = (period) => {
+    setCompsPeriod(period);
+    saveCompsRatePeriod(userId, period);
+  };
 
   // Persist on every change, debounced — never on the initial load itself.
   useEffect(() => {
@@ -260,10 +277,10 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     needsAttention: { rows: needsAttentionRows },
     pursuitsTable: { rows: pursuitsRows, yieldBySite: yieldBySiteMap },
     goingQuiet: { rows: goingQuiet(projects) },
-    compsSummary: { data: buildCompsCardData(comps) },
+    compsSummary: { data: buildCompsCardData(comps, compsPeriod) },
     scheduleHealth: { rows: scheduleProjects ? summarizeScheduleHealth(scheduleProjects) : [] },
     sinceLastHere: { feed: sinceLastHere?.feed || null },
-  }), [projects, sites, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap, sinceLastHere]);
+  }), [projects, sites, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap, sinceLastHere, compsPeriod]);
 
   const openProject = (p) => onNavigate?.({ module: "site-planner", projectId: p.groupId, cross: false, org: false });
   const openSchedule = (p) => onNavigate?.({ module: "scheduler", projectId: p.linkedSiteId, cross: false, org: false });
@@ -291,7 +308,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     needsAttention: () => <NeedsAttentionCard {...cardData.needsAttention} onOpenTask={openTask} />,
     pursuitsTable: () => <PursuitsCard {...cardData.pursuitsTable} onOpenProject={openProject} />,
     goingQuiet: () => <GoingQuietCard {...cardData.goingQuiet} onOpenProject={openProject} />,
-    compsSummary: () => <CompsCard {...cardData.compsSummary} onOpenComp={openComp} onAddComp={addComp} />,
+    compsSummary: () => <CompsCard {...cardData.compsSummary} onOpenComp={openComp} onAddComp={addComp} onChangePeriod={changeCompsPeriod} />,
     scheduleHealth: () => <ScheduleHealthCard {...cardData.scheduleHealth} onOpenSchedule={openSchedule} />,
     sinceLastHere: () => (
       <SinceLastHereCard
