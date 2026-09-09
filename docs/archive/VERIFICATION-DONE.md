@@ -1,3 +1,36 @@
+### V1045104 — B1437584: Nebraska's real statewide parcel source (`gis.ne.gov/Enterprise/.../StatewideParcelsExternal`) genuinely covers the whole state ✅ **PASSED 2026-09-09 — measured live against production endpoints from the owner's own browser (gis.ne.gov is blocked from this sandbox's egress allowlist)**
+
+**Why this needed a real pass, and who ran it.** `gis.ne.gov` — both the retracted `/Agency/` host and the corrected `/Enterprise/` one — sits behind this build environment's egress allowlist (a `CONNECT tunnel failed, response 403`, confirmed directly this session), the same wall every other state `.gov` GIS host in `docs/STATEWIDE-PARCELS.md` sits behind. This is a `GIS endpoint behavior` LIVE-VERIFY class by name (`/CLAUDE.md`) — it cannot be confirmed from this sandbox. The owner ran the check himself, mid-session, from his own real browser, and reported the measured facts directly into this conversation; recorded here verbatim, the same standing this file already gives Hawaii/Maryland/Virginia/West Virginia/Rhode Island's owner-measured rows.
+
+**What was measured.**
+1. **Metadata**: 188ms response, `esriGeometryPolygon`, capabilities `Query,Extract`, `maxRecordCount` 2000.
+2. **Feature count**: 1,154,898 (the retracted `TaxParcelsDED` layer was 75,394 — a >15× difference, consistent with one covering the whole state and the other a 4-county metro cluster).
+3. **Fields**: `State_PID`, `Parcel_ID`, `Situs_Address`, `Ph_Full_Address`, `Legal_Description`, `Twn`, `Sect`, `Rng`, `Acres_Deeded`, `GIS_Acres`, `Subdivision`, `County_ID`.
+4. **Five point probes spread across the state, each returning a real parcel with a DISTINCT county** — the direct test of the defect this replaces (a query at Omaha against the old layer returned zero):
+   - Omaha (41.2565, -95.9345) → 945ms, `Parcel_ID` 0957321002, "244 S 15 ST", `County_ID` 055 (Douglas).
+   - Scottsbluff, far western panhandle (41.8666, -103.6672) → 157ms, "19 E 15TH ST", `County_ID` 157 (Scotts Bluff).
+   - Norfolk, north (42.0286, -97.4170) → 923ms, `County_ID` 119 (Madison).
+   - McCook, southwest (40.2019, -100.6254) → 283ms, "410 EAST B STREET", `County_ID` 145 (Red Willow).
+   - Lincoln (40.8136, -96.7026) → 1100ms, "701 O ST LINCOLN NE 68508", `County_ID` 109 (Lancaster).
+
+Five points spanning the panhandle to the eastern border and north to south, each answering with a real parcel in a DIFFERENT county, is exactly the shape of evidence that would have caught the retracted layer's defect (a query at Omaha, inside its claimed "statewide" coverage, returned zero) — and none of these five behave that way against the new layer.
+
+**One residual, honestly recorded, not a blocker.** A whole-layer `returnExtentOnly` request against this layer timed out at 12s (this specific op is slow on this specific layer — consistent with this session's own finding, in the sibling `B1437586`/`V1045105`, that some statewide ArcGIS services answer certain operations far slower than their feature count would predict). So there is no independently-converted layer extent on record for this source, the way there is for Florida/Tennessee/California — the five-point spread is the coverage evidence, and it is sufficient: it directly answers the question the extent-conversion check exists to answer (does this source's coverage match its claim), with real point-level ground truth rather than an inferred rectangle.
+
+**Result:** ✅ fully passed, nothing pending — archived directly (a one-off live check that fully passes with nothing pending moves straight here rather than sitting in `VERIFICATION.md`'s `## 🔲 Needs verification`).
+
+### V1045105 — B1437586: Florida/Tennessee/Ohio's statewide parcel queries measured directly against production and found to exceed the app's own 8-second hang-guard budget ✅ **PASSED 2026-09-09 — Claude, direct network measurement against the real production ArcGIS endpoints (all three hosts are reachable from this sandbox)**
+
+**Why this could be run here, not deferred.** Unlike most state `.gov` GIS hosts, Florida's (`services9.arcgis.com`), Tennessee's (`services1.arcgis.com`) and Ohio's (`services2.arcgis.com`) statewide parcel layers are hosted on Esri's own `*.arcgis.com` SaaS infrastructure, which this sandbox's egress allowlist reaches directly — so this is a genuine, non-simulated live measurement against the real production sources the app is actually wired to, not a mock standing in for one.
+
+**Method and result, in full detail on the backlog item (B1437586) — summarized here:**
+1. An unbudgeted `curl`-level ~7-mile envelope-intersect/attributes-only query timed out at 40s against Florida (0 bytes received) and took 21.1s to return zero features against Tennessee; the identical shape against California (13.1M features — more than Florida) answered in 1.75s with real data.
+2. Under the shipped instrument's own 8-second budget (`ENVELOPE_QUERY_BUDGET_MS`, mirroring the app's real `PARCEL_FETCH_TIMEOUT_MS`), re-run three times across this session: Florida hit the abort boundary every time (8000–8002ms); Ohio did too (8000–8001ms, a finding beyond what the dispatch named); Tennessee answered inside budget (2.5–4.2s) but returned **zero features every time** at a point (Nashville) its own declared extent claims to cover.
+3. Confirmed, by reading the app's actual source, that no runtime code change was needed: all three sources render through the ordinary vector display path already covered by `MapFinder.jsx`'s `DISPLAY_LOAD_TIMEOUT_MS` (8000ms) hang-guard and the click-lookup path's own `PARCEL_FETCH_TIMEOUT_MS` `AbortController` — both pre-existing, both already proven (B1427664) to degrade honestly rather than hang.
+4. `node ui-audit/probe-statewide-parcels.mjs` re-run twice in full (with and without the AGOL pass) this session, both times reproducing exactly these three flags and no others among the 29 wired states.
+5. `test/statewideCoverage.test.js`'s timing describe block (part of the 21 tests, all passing) replays each of these three measured shapes — fast/in-budget, aborted-at-budget, and slow-but-technically-successful-and-empty — as fixtures, so a future regression in the instrument itself would be caught without needing to re-hit the live endpoints.
+
+**Result:** ✅ fully passed, nothing pending — archived directly (a diagnostic live measurement that fully passes with nothing pending moves straight here rather than sitting in `VERIFICATION.md`'s `## 🔲 Needs verification`).
 ### V1041281 — B1433761: the 404 page renders in the shared dark brand, keeps its copy and destination, and all four marketing pages stay money-silent ✅ **PASSED 2026-09-09 — Claude, headless Chromium against a real built app (signed out, no external GIS, no real data — ATTEMPT-BEFORE-YOU-PARK)**
 
 **Why this could be run here, not deferred.** A restyle of a static, unauthenticated utility page (`public/404.html`) plus a CI-guard extension — no auth, no external GIS host, no real saved project. None of the five named `Blocker:` classes apply, so this is Claude-doable per ATTEMPT-BEFORE-YOU-PARK and must not be filed as needing a human pass.
