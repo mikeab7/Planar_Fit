@@ -11,9 +11,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
 import ModuleLoader from "../../shared/ui/ModuleLoader.jsx";
 import {
-  parseNavState, deriveCurrentProject, findBySiteId, findAllBySiteId, needsScheduleCarryIn,
+  parseNavState, deriveCurrentProject, findBySiteId, needsScheduleCarryIn,
   dashboardNavActions, shouldShowLinkPanel, shouldAdoptLinkedSiteIntoRoute, isPickShowing,
-  isGridMismatched, newProjectAction, labelMultiScheduleRows,
+  isGridMismatched, newProjectAction,
 } from "./lib/navState.js";
 import { reportClientEvent } from "../../shared/telemetry/clientErrors.js";
 import { scheduleSaveState } from "./lib/saveState.js";
@@ -23,6 +23,7 @@ import { resolveControlledId } from "../../shared/projects/projectModel.js";
 import LinkSchedulePanel from "./components/LinkSchedulePanel.jsx";
 import NewScheduleModal from "./components/NewScheduleModal.jsx";
 import ScheduleOwnerList from "./components/ScheduleOwnerList.jsx";
+import ScheduleCrumb from "./components/ScheduleCrumb.jsx";
 import AgendaView from "./components/AgendaView.jsx";
 
 export default function Scheduler({
@@ -464,55 +465,22 @@ export default function Scheduler({
   const routedSite = projectId != null ? (siteProjects.find((p) => p.id === projectId) || null) : null;
   const routedSiteName = routedSite ? routedSite.name : null;
   const linkedSchedule = findBySiteId(projects, projectId);
-  // B1112450/NEW-3 — when the routed site carries MORE than one linked schedule (B1080547), the
-  // crumb must name the ACTIVE one, not always the first-linked. `linkedSchedule` above (the
-  // FIRST match) is exactly what the breadcrumb used to show regardless of which schedule was
-  // actually on screen — the "crumb says Richfield, grid shows Richfield (2)" ambiguity B851
-  // exists to prevent, reintroduced here by B1080547 shipping without this. A site with exactly
-  // one linked schedule is unaffected: `activeLinkedSchedule` is just `linkedSchedule` again.
-  const linkedSchedules = findAllBySiteId(projects, projectId);
-  const activeLinkedSchedule = linkedSchedules.length > 1
-    ? (linkedSchedules.find((p) => p.id === activeId) || linkedSchedule)
-    : linkedSchedule;
 
-  // The breadcrumb's "current project". When the route carries a project, show THAT project — the
-  // schedule linked to it, or its name as last-known-good during the ~2 s iframe boot — never the
-  // iframe's transient active schedule (which may belong to a different project mid-carry-in: the
-  // B560 placeholder/flash). With no routed project, the iframe's active schedule IS the current.
-  //
-  // NEW-2 — the ROUTE outranks the embed's section. The old order tested `section === "reports"`
-  // FIRST, so whenever the embed was on its own Dashboard the crumb read "Select a project" even
-  // though the URL named one — the app knowing which project you are in and saying nothing. The
-  // Dashboard's genuine no-current-project state is the `projectId == null` case (pressing Dashboard
-  // clears the route), which the last branch still handles.
-  // ⛔ B748064 — a deliberate switcher pick WINS over the route-derived project, because it is the
-  // one case the route can never represent: Operations/Pursuits aren't tied to any site, so picking
-  // one can never move `projectId`. Gated on the embed actually having caught up to the pick
-  // (isPickShowing), so this can't flash the OLD project's name for the one round-trip before the
-  // embed reports back. See navState.js for the full story and Scheduler.jsx's own history below.
-  // (`pickShowing` itself is computed once, near the top of this component — see its own note.)
+  // B1435888 ("Schedule access: project and schedule become two separate breadcrumb levels") —
+  // the breadcrumb's Row-1 PROJECT crumb is now a plain, route-driven project identity, exactly
+  // like every other workspace's — never a schedule standing in for it (the old
+  // `activeLinkedSchedule || …` fallback this replaced). It no longer needs to reconcile against
+  // the embed's transient `activeId`/section at all: `ScheduleCrumb` (planSlot, below) is the
+  // SECOND, independent crumb that shows which schedule is open, so this one only ever answers
+  // "which project". `pickShowing`/`deriveCurrentProject` stay in use elsewhere (the empty-state
+  // and grid-mismatch render gates) — see their own call sites further down.
+  const currentProject = projectId != null && routedSiteName ? { id: projectId, name: routedSiteName } : null;
 
-  let currentProject;
-  if (pickShowing) {
-    currentProject = deriveCurrentProject(projects, activeId, section);
-  } else if (projectId != null) {
-    currentProject = activeLinkedSchedule || (routedSiteName ? { id: projectId, name: routedSiteName } : null);
-  } else if (section === "reports") {
-    currentProject = null; // Dashboard with no routed project: none is current
-  } else {
-    currentProject = deriveCurrentProject(projects, activeId, section);
-  }
-
-  // B1404352 — owner click-test, verbatim: switching Goose Creek to its "TAS Land Sale" schedule
-  // made the header read "planyr / Dashboard / TAS Land Sale" with Goose Creek gone entirely. This
-  // file's breadcrumb shows SCHEDULE names by design (see the file header) — fine while a project
-  // had exactly one, ambiguous now that B1080547 lets it have several with different names.
-  // labelMultiScheduleRows relabels only the rows belonging to a MULTI-schedule project (using the
-  // linkedSiteName each such row already carries), so `resolveCurrentName` picks up the combined
-  // "Goose Creek / TAS Land Sale" for the crumb AND the dropdown row — a project with just one
-  // schedule (the common case) renders exactly as before. See navState.js for why this can't be
-  // fixed by reassigning `currentProject.name` alone.
-  const breadcrumbProjects = labelMultiScheduleRows(projects);
+  // B1435888 — the SCHEDULE crumb (ScheduleCrumb, wired as `planSlot` below) renders whenever the
+  // embed is on its own projects section (never on its Dashboard/"reports" view, which has no
+  // schedule open) and has reported in at least once — so it never flashes "Select a schedule"
+  // during the ~2 s boot window `ready` already covers everywhere else in this file.
+  const showScheduleCrumb = ready && section === "projects";
 
   // The Schedule tab's EMPTY STATE (NEW-2): the route points at a site that has NO linked schedule
   // yet, so there is no grid to show — we render the create/link surface INSTEAD OF the iframe
@@ -626,12 +594,18 @@ export default function Scheduler({
         // the cloud write. The embedded app is the single source of truth — the badge only displays.
         saveState={saveState}
         onRetrySave={() => post({ type: "planar:save" })}
-        // The breadcrumb drives the EMBEDDED scheduler (its own projects), not the
-        // Site Planner: pick a project → switch to its Gantt; Dashboard → the reports
-        // overview; New project → add one in the scheduler.
+        // B1435888 — the PROJECT crumb is now a genuine, uncontrolled Site Planner project
+        // switcher (no `projects=` prop), exactly like Library/Notes/Review at project scope:
+        // its dropdown lists real projects ONLY, never a schedule. Picking one switches the
+        // routed project via `onProjectChange` — the existing carry-in effect above then
+        // opens that site's last-active (or first-linked) schedule automatically, the same
+        // mechanism that already runs when you arrive on Schedule from another workspace.
+        // Rename/Delete fall back to the uncontrolled site-store path (renaming/deleting the
+        // real project, correctly, for the first time from this module — see B1358128's note in
+        // ProjectBreadcrumb.jsx on why the OLD bridged handlers here only ever touched a
+        // schedule and silently left the project itself untouched).
         currentProject={currentProject}
-        projects={breadcrumbProjects}
-        onSelectProject={selectSchedule}
+        onSelectProject={(id) => onProjectChange?.(id)}
         onDashboard={goDashboard}
         // B1128272 — the wordmark stays the way OUT of Schedule (onGoDashboard, same as
         // every other module); the crumb above it stays IN Schedule (goDashboard, its
@@ -641,23 +615,37 @@ export default function Scheduler({
         // B1213312 — reworded from "go to the Site Planner map": see the org-scope branch above.
         logoDashboardTitle="Leave Schedule — go to the Dashboard"
         dashboardTitle="Schedule dashboard — reports for every project"
-        // "+ New schedule" opens the New-schedule dialog — it never creates anything by itself.
-        // It used to: standing on a project it auto-named the new schedule after that project and
-        // appended "(2)", "(3)", "(4)" on a collision, which is exactly how three empty duplicate
-        // schedules reached production with no prompt at any point. The dialog PRE-FILLS the name
-        // and PRE-SELECTS the owner (this project, or the Organization when none is routed) and
-        // lets him change both. See newProjectAction's and NewScheduleModal's own headers.
-        onNewProject={() => setNewSchedulePrompt(newProjectAction({ projectId, routedSiteName }))}
-        // Rename/delete a SCHEDULE project (B440) — bridged to the embedded app's own hs-v1
-        // record (not the Site store). The breadcrumb already confirmed the delete inline, so
-        // the embedded handler deletes without re-prompting + routes home on the active project.
-        onRenameProject={(id, name) => post({ type: "planar:nav-rename", id, name })}
-        onDeleteProject={(id) => post({ type: "planar:nav-delete", id })}
-        // NEW-2 (B1080546) — deep-copy a schedule's tasks into a new, distinctly-named project.
-        // Bridged to the embedded app's existing `duplicateProject` (already correct: strips the
-        // source's linkedSiteId/linkedSiteName rather than silently attaching the copy to a live
-        // Planyr project — the owner's standing rule that he decides when things are linked).
-        onDuplicateProject={(id) => post({ type: "planar:nav-duplicate", id })}
+        // "+ New project" now creates a genuine new SITE project — the same action every other
+        // workspace's breadcrumb offers (the org-scope branch below already used this). Creating
+        // a SCHEDULE moved to the new schedule crumb's own "+ New schedule in <project>" row.
+        onNewProject={onNewProject}
+        // B1435888 — the SCHEDULE crumb: a SECOND, independent breadcrumb level (planSlot — the
+        // same mechanism the Site Planner uses for its own Project/Plan pair), scoped to this
+        // project's own schedules + the Organization. Never collapsed into the project crumb
+        // above it, even when a schedule shares its project's name.
+        planSlot={showScheduleCrumb ? (
+          <ScheduleCrumb
+            schedules={projects}
+            activeId={activeId}
+            siteId={projectId}
+            siteName={routedSiteName}
+            onSelect={selectSchedule}
+            // "+ New schedule" opens the New-schedule dialog — it never creates anything by
+            // itself. It used to: standing on a project it auto-named the new schedule after
+            // that project and appended "(2)", "(3)", "(4)" on a collision, which is exactly how
+            // three empty duplicate schedules reached production with no prompt at any point.
+            // The dialog PRE-FILLS the name and PRE-SELECTS the owner (this project, or the
+            // Organization when none is routed) and lets him change both. See newProjectAction's
+            // and NewScheduleModal's own headers.
+            onCreate={() => setNewSchedulePrompt(newProjectAction({ projectId, routedSiteName }))}
+            // Rename/delete/duplicate a SCHEDULE (B440/B1080546) — bridged to the embedded app's
+            // own hs-v1 record. The row already confirms the delete inline, so the embedded
+            // handler deletes without re-prompting + routes home on the active schedule.
+            onRename={renameSchedule}
+            onDelete={deleteSchedule}
+            onDuplicate={(id) => post({ type: "planar:nav-duplicate", id })}
+          />
+        ) : null}
         // B388 — the embedded app's toolbar, lifted into the unified header (center = view +
         // review; right = zoom/export/save/history/contacts/automation/format/settings).
         toolbarCenter={(
