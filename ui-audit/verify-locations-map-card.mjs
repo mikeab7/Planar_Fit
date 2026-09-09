@@ -178,6 +178,19 @@ async function runTheme(colorScheme) {
         return [...document.querySelectorAll("span")].some((s) => s.title && s.title.startsWith("No location set"));
       });
       ok(`[${colorScheme}] the flagged "No Location Yet" project row is shown with its "no location" tag`, flaggedRowVisible);
+      // B1424624 — "No Location Yet" also carries "no boundary" (no parcel seeded for it either),
+      // so this fixture ALREADY exercises the two-chip squeeze this item fixed; nothing here
+      // previously checked that the row's own NAME survived it. Assert the name renders as more
+      // than a collapsed stub (the reported defect measured under 3px, not even one glyph).
+      const nameInfo = await page.evaluate(() => {
+        const panel = document.querySelector('[data-testid="map-sites-panel"]');
+        const row = panel && [...panel.querySelectorAll('div[title^="Open site"]')]
+          .find((r) => r.textContent && r.textContent.includes("No Location Yet"));
+        const nameSpan = row && row.querySelector("span");
+        return nameSpan ? { text: nameSpan.textContent, width: nameSpan.getBoundingClientRect().width } : null;
+      });
+      ok(`[${colorScheme}] "No Location Yet"'s own name renders as more than a truncation stub`,
+        !!nameInfo && nameInfo.width >= 20, JSON.stringify(nameInfo));
     }
   }
   await ctx.close();

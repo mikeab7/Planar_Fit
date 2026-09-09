@@ -6,24 +6,24 @@
   "surfaces": {
     "map-landing": {
       "light": {
-        "approvedAt": "2026-09-08",
-        "approvedCommit": "47de6bec",
-        "note": "B1368144 — the map toolbar goes ground-first (owner-chosen design, 2026-09-08): the Site/Comp segmented toggle and the 'Place comp' split button are removed, and the resting toolbar now reads address field, Select parcels, Draw, Drop a pin. The changed region (x446,y7 984x128 desktop) is exactly the top-centre toolbar pill and nothing else — the rail, the layers panel, the map and every other surface are byte-identical. A DELIBERATE picture change the owner chose from three mockups, not drift; PERCEPTUAL-PARITY's imperceptibility bar governs LOD-class changes where the picture is meant to stay the same, which this is not."
+        "approvedAt": "2026-09-09",
+        "approvedCommit": "bc9f975b",
+        "note": "B1424624: Sites-panel filter input now shows its full placeholder and the sort select shows its full option text (Largest/A–Z/Recent) instead of clipping — the intended visible change. The wide reported bounding box also includes one unrelated stray anti-aliased pixel on the header Sign-in button's corner (light theme only), confirmed by a local branch-vs-main diff isolating the real change from browser-revision noise. [CI-authored by run 34403054448 on bc9f975b1b1ddc625b99a8ccb2e54b3e4efc1f90]"
       },
       "dark": {
-        "approvedAt": "2026-09-08",
-        "approvedCommit": "47de6bec",
-        "note": "B1368144 — the map toolbar goes ground-first (owner-chosen design, 2026-09-08): the Site/Comp segmented toggle and the 'Place comp' split button are removed, and the resting toolbar now reads address field, Select parcels, Draw, Drop a pin. The changed region (x446,y7 984x128 desktop) is exactly the top-centre toolbar pill and nothing else — the rail, the layers panel, the map and every other surface are byte-identical. A DELIBERATE picture change the owner chose from three mockups, not drift; PERCEPTUAL-PARITY's imperceptibility bar governs LOD-class changes where the picture is meant to stay the same, which this is not."
+        "approvedAt": "2026-09-09",
+        "approvedCommit": "bc9f975b",
+        "note": "B1424624: Sites-panel filter input now shows its full placeholder and the sort select shows its full option text (Largest/A–Z/Recent) instead of clipping — the intended visible change. The wide reported bounding box also includes one unrelated stray anti-aliased pixel on the header Sign-in button's corner (light theme only), confirmed by a local branch-vs-main diff isolating the real change from browser-revision noise. [CI-authored by run 34403054448 on bc9f975b1b1ddc625b99a8ccb2e54b3e4efc1f90]"
       },
       "light--phone": {
-        "approvedAt": "2026-09-08",
-        "approvedCommit": "47de6bec",
-        "note": "B1368144 — the map toolbar goes ground-first (owner-chosen design, 2026-09-08): the Site/Comp segmented toggle and the 'Place comp' split button are removed, and the resting toolbar now reads address field, Select parcels, Draw, Drop a pin. The changed region (x446,y7 984x128 desktop) is exactly the top-centre toolbar pill and nothing else — the rail, the layers panel, the map and every other surface are byte-identical. A DELIBERATE picture change the owner chose from three mockups, not drift; PERCEPTUAL-PARITY's imperceptibility bar governs LOD-class changes where the picture is meant to stay the same, which this is not."
+        "approvedAt": "2026-09-09",
+        "approvedCommit": "bc9f975b",
+        "note": "B1424624: Sites-panel filter input now shows its full placeholder and the sort select shows its full option text (Largest/A–Z/Recent) instead of clipping — the intended visible change. The wide reported bounding box also includes one unrelated stray anti-aliased pixel on the header Sign-in button's corner (light theme only), confirmed by a local branch-vs-main diff isolating the real change from browser-revision noise. [CI-authored by run 34403054448 on bc9f975b1b1ddc625b99a8ccb2e54b3e4efc1f90]"
       },
       "dark--phone": {
-        "approvedAt": "2026-09-08",
-        "approvedCommit": "47de6bec",
-        "note": "B1368144 — the map toolbar goes ground-first (owner-chosen design, 2026-09-08): the Site/Comp segmented toggle and the 'Place comp' split button are removed, and the resting toolbar now reads address field, Select parcels, Draw, Drop a pin. The changed region (x446,y7 984x128 desktop) is exactly the top-centre toolbar pill and nothing else — the rail, the layers panel, the map and every other surface are byte-identical. A DELIBERATE picture change the owner chose from three mockups, not drift; PERCEPTUAL-PARITY's imperceptibility bar governs LOD-class changes where the picture is meant to stay the same, which this is not."
+        "approvedAt": "2026-09-09",
+        "approvedCommit": "bc9f975b",
+        "note": "B1424624: Sites-panel filter input now shows its full placeholder and the sort select shows its full option text (Largest/A–Z/Recent) instead of clipping — the intended visible change. The wide reported bounding box also includes one unrelated stray anti-aliased pixel on the header Sign-in button's corner (light theme only), confirmed by a local branch-vs-main diff isolating the real change from browser-revision noise. [CI-authored by run 34403054448 on bc9f975b1b1ddc625b99a8ccb2e54b3e4efc1f90]"
       }
     },
     "site-planner-header": {
