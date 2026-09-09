@@ -61,6 +61,15 @@ describe("mapMarkers", () => {
     // the marker's OWN record still carries the real, untouched name for anything that needs it
     expect(m.project.name).toBe(p.name);
   });
+
+  // B1407824 — the exact reported production case: the stored name FITS under the pin's own
+  // limit (nothing to cut for space), but itself dangles on a bare trailing comma. Confirms the
+  // map pin shows it cleaned up, not verbatim.
+  it("cleans a short name that itself dangles on a comma, even though nothing needed cutting for space", () => {
+    const p = { ...active("a", HERE), name: "ALUMAX RD, NASH," };
+    const [m] = mapMarkers([p], []);
+    expect(m.name).toBe("ALUMAX RD, NASH");
+  });
 });
 
 describe("missingLocationCount", () => {

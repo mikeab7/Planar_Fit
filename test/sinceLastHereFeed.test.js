@@ -69,6 +69,14 @@ describe("buildSinceLastHereFeed — plans", () => {
     expect(feed.rows[0].subline).toBe("Harris County · Pursuit");
   });
 
+  // B1407824 — the exact reported production case: the stored plan name FITS under the feed
+  // row's own limit (nothing to cut for space), but itself dangles on a bare trailing comma.
+  it("cleans a short plan name that itself dangles on a comma, even though nothing needed cutting for space", () => {
+    const sites = [{ id: "s1", group_id: "g1", site: "ALUMAX RD, NASH,", county: "bowie", status: "pursuit", created_at: new Date(NOW - DAY).toISOString(), updated_at: new Date(NOW - DAY).toISOString() }];
+    const feed = buildSinceLastHereFeed(baseArgs({ sites }));
+    expect(feed.rows[0].parts.map((p) => p.text).join("")).toBe("New plan ALUMAX RD, NASH");
+  });
+
   it("never reports a plan backfilled to the 1970 sentinel as 'created'", () => {
     const sites = [{ id: "s1", group_id: "g1", site: "Old Plan", county: "Harris", status: "pursuit", created_at: "1970-01-01T00:00:00.000Z", updated_at: new Date(NOW - DAY).toISOString() }];
     const feed = buildSinceLastHereFeed(baseArgs({ sites }));

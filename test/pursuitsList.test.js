@@ -78,6 +78,14 @@ describe("pursuitsTable", () => {
     expect(rows[0].name).not.toMatch(/[,.\-\s]…$/);
     expect(rows[0].name.endsWith("…")).toBe(true);
   });
+
+  // B1407824 — the exact reported production case: the stored name FITS under the Pursuit
+  // column's own limit (nothing to cut for space), but itself dangles on a bare trailing comma.
+  it("cleans a short name that itself dangles on a comma, even though nothing needed cutting for space", () => {
+    const projects = [{ ...base, groupId: "a", name: "ALUMAX RD, NASH,", county: "bowie" }];
+    const rows = pursuitsTable(projects, {}, { nowMs: NOW });
+    expect(rows[0].name).toBe("ALUMAX RD, NASH");
+  });
 });
 
 describe("quietDaysByGroupFromRecency", () => {
