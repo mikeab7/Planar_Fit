@@ -13,7 +13,7 @@
  */
 import { RADIUS } from "../../../shared/ui/radius.js";
 import { shortAge, dayKey, dayDividerLabel } from "../lib/dashboardDates.js";
-import { KIND_META } from "../lib/sinceLastHereFeed.js";
+import { KIND_META, compAddedSubline } from "../lib/sinceLastHereFeed.js";
 
 const MONO_FONT = "ui-monospace, monospace";
 const EMPTY = { fontSize: 12, color: "var(--text-secondary)", fontStyle: "italic" };
@@ -54,9 +54,20 @@ function openTarget(row, handlers) {
   return null;
 }
 
-function FeedRow({ row, now, handlers }) {
+// A "comp-added" row's rate line is recomputed HERE, at render time, against the CURRENT
+// `compsRatePeriod` — never trusted from the row's build-time `subline` — so flipping the Comps
+// card's "per year / per month" toggle updates this feed in the same click, rather than leaving it
+// on whatever period was current when the dashboard first loaded (sinceLastHereFeed.js's header,
+// FEED-3). Every other kind's `subline` is fixed at build time and read as-is.
+function feedRowSubline(row, compsRatePeriod) {
+  if (row.kind === "comp-added" && row.open?.comp) return compAddedSubline(row.open.comp, compsRatePeriod);
+  return row.subline;
+}
+
+function FeedRow({ row, now, handlers, compsRatePeriod }) {
   const meta = row.meta;
   const onOpen = openTarget(row, handlers);
+  const subline = feedRowSubline(row, compsRatePeriod);
   return (
     <div
       onClick={onOpen || undefined}
@@ -69,7 +80,7 @@ function FeedRow({ row, now, handlers }) {
       <div style={{ minWidth: 0, flex: 1 }}>
         <Sentence parts={row.parts} />
         <div style={{ marginTop: 2, fontFamily: MONO_FONT, fontSize: 10.5, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {row.subline}
+          {subline}
         </div>
       </div>
       {/* A snapshot-diffed schedule row knows only the interval its change fell in, never the
@@ -98,7 +109,7 @@ function groupByDay(rows, now) {
   return order.map((k) => ({ key: k, label: dayDividerLabel(byKey.get(k)[0].ts, now), rows: byKey.get(k) }));
 }
 
-export function SinceLastHereCard({ feed, now = Date.now(), onOpenProject, onOpenTask, onOpenSchedule, onOpenComp, onOpenNote }) {
+export function SinceLastHereCard({ feed, now = Date.now(), compsRatePeriod, onOpenProject, onOpenTask, onOpenSchedule, onOpenComp, onOpenNote }) {
   if (!feed || !feed.rows || !feed.rows.length) {
     return <div style={EMPTY}>Nothing happened since your last visit.</div>;
   }
@@ -116,7 +127,7 @@ export function SinceLastHereCard({ feed, now = Date.now(), onOpenProject, onOpe
               {g.label}
             </div>
           )}
-          {g.rows.map((row) => <FeedRow key={row.id} row={row} now={now} handlers={handlers} />)}
+          {g.rows.map((row) => <FeedRow key={row.id} row={row} now={now} handlers={handlers} compsRatePeriod={compsRatePeriod} />)}
         </div>
       ))}
       {feed.overflowCount > 0 && (

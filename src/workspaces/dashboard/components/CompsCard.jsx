@@ -24,17 +24,12 @@ import Chip from "../../../shared/ui/Chip.jsx";
 import { pinFallbackText, siteplanLocationText } from "../../../shared/comps/lib/compLocationText.js";
 import {
   TYPE_LABEL, compSizeSf, relativeTimeLabel, countyEntry, compScaleLayout, MIN_PEERS_FOR_SCALE,
+  formatRateValue as fmtRateValue,
 } from "../lib/compsCardModel.js";
 
 const MUTED = { fontSize: 12, color: "var(--text-secondary)" };
 const EMPTY = { fontSize: 12, color: "var(--text-secondary)", fontStyle: "italic" };
 const UPPER_LABEL = { fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-secondary)" };
-
-function fmtRateValue(v) {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const decimals = Math.abs(v) < 10 ? 2 : 0;
-  return `$${v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
-}
 
 /* PeriodToggle — the small, quiet "per year / per month" switch (NEW-COMPS-CARD, the period
  * toggle). Flipping it is what re-normalizes the featured rate, the peer scale, both tick labels
