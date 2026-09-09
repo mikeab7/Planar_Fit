@@ -3920,23 +3920,32 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
             ? { top: 8, left: 8, right: 8, transform: "none", maxWidth: "none", minWidth: 0 }
             : { top: MAP_OVERLAY_TOP_PX, left: "50%", transform: "translateX(-50%)", maxWidth: "calc(100% - 540px)", minWidth: 300 }),
         }}>
-          {/* B831779 (NEW-4) — the address field is now a live-suggestion combobox; the red "Go"
-              pill is gone (see PlaceSearchField.jsx for the full behaviour contract). */}
-          <PlaceSearchField
-            value={addr}
-            onChange={setAddr}
-            narrow={narrow}
-            busy={busy && !selectMode}
-            center={() => (mapRef.current ? mapRef.current.getCenter() : null)}
-            placeholder={narrow ? "Type an address…" : "Type an address, city or place…"}
-            onCommit={commitAddressHit}
-            onCommitRaw={(text) => { if (!(busy && !selectMode)) goAddress(text); }}
-            onDropPinHere={dropPinFromSearch}
-            dropPinLabel="Drop a pin here"
-          />
+          {/* B1430384 (NEW-1) — the address field earns its place only OUTSIDE Select-parcels mode:
+              while picking lots off the map, typing an address does nothing, so it is hidden and the
+              bar's space goes to the parcel-selection controls instead. `addr` lives in this
+              component's own state (not the field's), so unmounting it here never loses what the
+              owner typed — re-entering the field on exit restores the same text. */}
+          {!selectMode && (
+            <>
+              {/* B831779 (NEW-4) — the address field is now a live-suggestion combobox; the red "Go"
+                  pill is gone (see PlaceSearchField.jsx for the full behaviour contract). */}
+              <PlaceSearchField
+                value={addr}
+                onChange={setAddr}
+                narrow={narrow}
+                busy={busy}
+                center={() => (mapRef.current ? mapRef.current.getCenter() : null)}
+                placeholder={narrow ? "Type an address…" : "Type an address, city or place…"}
+                onCommit={commitAddressHit}
+                onCommitRaw={(text) => { if (!busy) goAddress(text); }}
+                onDropPinHere={dropPinFromSearch}
+                dropPinLabel="Drop a pin here"
+              />
 
-          {/* Divider */}
-          <span style={{ width: 1, height: 22, background: PAL.chromeLine, flex: "none", margin: "0 8px" }} />
+              {/* Divider */}
+              <span style={{ width: 1, height: 22, background: PAL.chromeLine, flex: "none", margin: "0 8px" }} />
+            </>
+          )}
 
           {/* Right section — STATE dependent, never mode dependent (NEW-1, 2026-09-08). Four
               states, in the order the user meets them: AT REST (point at ground: Select parcels ·
