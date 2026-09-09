@@ -27,7 +27,7 @@ import AppHeader, { useNarrow } from "../../shared/ui/AppHeader.jsx";
 import { notesSaveState } from "./lib/notesSaveState.js";
 import NotesTree from "./components/NotesTree.jsx";
 import {
-  addPage, adoptDeletedOrphans, adoptUnreachable, allPageIds, ancestorIds, commitTitle, copyPageWithin, deleteNode, displayTitle, emptyTree, expiredTrashIds, findPage,
+  adoptDeletedOrphans, adoptUnreachable, allPageIds, ancestorIds, commitTitle, copyPageWithin, deleteNode, displayTitle, emptyTree, expiredTrashIds, findPage,
   firstPageId, migrate, movePage, pagesInScope, purgeTrashEntry, recentPages, renameNode, restoreNode,
   setPageProject, setPageOrgScope, subpagesPhrase, subtreePageIds, touchPage, trashEntries, trashPageIds,
   NO_PROJECT_LABEL, ORG_GROUP_LABEL, SCOPE_ALL, SCOPE_ORG, SCOPE_PROJECT,
@@ -39,7 +39,7 @@ import { isQuickOpenChord, quickOpenResults, rankQuickOpen } from "./lib/notesQu
 import { groupTasksByProject } from "./lib/notesTasks.js";
 import { listProjects, warmProjects, onProjectsChanged, ensureProjectExists } from "../../shared/projects/projects.js";
 import {
-  clearNotesStorageError, collectOpenTasks, knownBinnedPages, markPagesBinned, markPagesRestored, notesConflictFor, notesConflictLine,
+  clearNotesStorageError, collectOpenTasks, createPage, knownBinnedPages, markPagesBinned, markPagesRestored, notesConflictFor, notesConflictLine,
   notesScopeLabel, notesStorageLine, onNotesConflict, onNotesStorageError, onNotesSyncState,
   collectBinFacts, ignoreDuplicate, onNotesPagesChanged, purgePages, readIgnoredDuplicates, readNoteFiles,
   readNoteImages, readPage, readTreeRaw,
@@ -830,9 +830,16 @@ export default function Notes({
    * downloaded) for this page. An unknown/blank id is silently a blank page — never an error,
    * since "no template" is the default, common case. */
   const handleAddPage = useCallback((templateId) => {
-    const r = addPage(treeNow(), { projectId: projectId || null, orgScope });
     const tpl = templateId ? templateById(templateId) : null;
-    if (tpl) writePage(r.pageId, tpl.buildDoc());
+    /* ⛔ B1405008 — THE BODY IS WRITTEN BEFORE THE ENTRY IS EVER VISIBLE. `createPage`
+     * (notesStore.js) writes the page's body synchronously as part of creating it, so there
+     * is no window in which the tree can be persisted (and the entry become clickable in the
+     * sidebar) with nothing behind it — see that function's header for the full defect this
+     * closes. A body write that fails is a real failure (LOUD-FAILURE, already surfaced by
+     * the storage-error banner) and must not leave a phantom entry either, so nothing here
+     * persists the tree or navigates when `r.ok` is false. */
+    const r = createPage(treeNow(), { projectId: projectId || null, orgScope }, tpl ? tpl.buildDoc() : undefined);
+    if (!r.ok) return;
     persistTree(r.tree);
     setActivePageId(r.pageId);
     setQuery("");
@@ -850,9 +857,13 @@ export default function Notes({
   /** A page UNDER another page — the whole point of the collapse, and reachable by direct
    *  action (the row's menu) rather than by a mode. */
   const handleAddSubpage = useCallback((parentId) => {
-    const r = addPage(treeNow(), { parentId });
+    // Same reasoning as handleAddPage above: the body is written as part of creating the
+    // page, before the tree (and the new row) is ever persisted.
+    const r = createPage(treeNow(), { parentId });
+    if (!r.ok) return;
     persistTree(r.tree);
-    if (r.pageId) { setActivePageId(r.pageId); setMobileShowList(false); }
+    setActivePageId(r.pageId);
+    setMobileShowList(false);
   }, [persistTree, treeNow]);
 
   /** Re-file a TOP-LEVEL page into a project, or out of every project (B1374, B1420). */
