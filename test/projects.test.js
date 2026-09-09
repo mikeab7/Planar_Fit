@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, shortenDisplayName, findProjectAtOrigin, distanceFeetBetween, SAME_GROUND_FT } from "../src/shared/projects/projectModel.js";
+import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, shortenDisplayName, findProjectAtOrigin, distanceFeetBetween, SAME_GROUND_FT, hasSavedProjectRecord } from "../src/shared/projects/projectModel.js";
 import { listProjects } from "../src/shared/projects/projects.js";
 import { setActiveUser } from "../src/workspaces/site-planner/lib/activeUser.js";
 
@@ -280,6 +280,38 @@ describe("resolveControlledId — resolves a switcher row's id to what a control
   it("null-safe on an empty or missing list", () => {
     expect(resolveControlledId([], "g1")).toBeNull();
     expect(resolveControlledId(undefined, "g1")).toBeNull();
+  });
+});
+
+// B1442592 ("An empty new project is never written to the server") — a lazily-created project (the
+// "+ New project" button, never edited) has no public.sites row and no local plan record, so it
+// can only ever show up here via withCurrentProject's synthetic placeholder. This is the pure
+// decision the delete confirmation uses to stop promising "moves to Recently deleted" for a
+// project that has nothing anywhere to move.
+describe("hasSavedProjectRecord — does this project id actually have a saved record behind it (B1442592)", () => {
+  const registry = [
+    { id: "g1", name: "Grand Port" },
+    { id: "g2", name: "Goose Creek" },
+  ];
+  it("true for an id present in the real registry", () => {
+    expect(hasSavedProjectRecord("g1", registry)).toBe(true);
+  });
+  it("false for an id absent from the registry — the lazily-created, never-edited case", () => {
+    expect(hasSavedProjectRecord("g9", registry)).toBe(false);
+  });
+  it("MUST be asked of the real registry, never a list already unioned with the synthetic current-project placeholder", () => {
+    // withCurrentProject would make g9 answer true here — that's exactly the false positive
+    // this function exists to avoid, which is why callers must pass listProjects(), not
+    // withCurrentProject(listProjects(), current).
+    const unioned = withCurrentProject(registry, { id: "g9", name: "Untitled site" });
+    expect(hasSavedProjectRecord("g9", unioned)).toBe(true); // demonstrates the trap...
+    expect(hasSavedProjectRecord("g9", registry)).toBe(false); // ...which asking the real registry avoids
+  });
+  it("false for a missing id, and never throws on junk", () => {
+    expect(hasSavedProjectRecord(null, registry)).toBe(false);
+    expect(hasSavedProjectRecord(undefined, registry)).toBe(false);
+    expect(hasSavedProjectRecord("g1", [null, undefined, {}])).toBe(false);
+    expect(hasSavedProjectRecord("g1")).toBe(false);
   });
 });
 

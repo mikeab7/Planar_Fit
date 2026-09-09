@@ -68,7 +68,7 @@ import {
   listDeletedProjects, restoreDeletedProject, purgeDeletedProject, purgeExpiredDeletedProjects,
   DELETED_RETENTION_DAYS, activeUid,
 } from "../projects/projects.js";
-import { resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId as resolveControlledIdPure } from "../projects/projectModel.js";
+import { resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId as resolveControlledIdPure, hasSavedProjectRecord } from "../projects/projectModel.js";
 
 // Crumbs sit on the chrome bar, which now themes WITH the app (B318) — so these are
 // chrome tokens, not the retired warm-dark hexes (white-on-light was the B341 bug).
@@ -597,6 +597,23 @@ export default function ProjectBreadcrumb({
     return () => { live = false; };
   }, [menuFor?.confirm, menuFor?.id]);
 
+  /* B1442592 ("An empty new project is never written to the server") — a project born through the
+   * Site Planner's LAZY "New project" flow (storage.js's `newBlankSite`/`newSiteFromMap` headers;
+   * the root CLAUDE.md's "Project creation is deliberately LAZY" owner constraint) gets no
+   * `public.sites` row — and no local plan record either — until its first real edit. Until then
+   * it can only ever appear here via `withCurrentProject`'s synthetic "the project you're standing
+   * in" placeholder, so `listProjects()` (the real, saved registry `refresh()` reads into
+   * `internalProjects`) never contains its id. The confirmation below used to promise "It moves to
+   * Recently deleted" unconditionally — false for exactly this project, which has nothing anywhere
+   * to move. This is confirmed live against the real RLS/soft-delete path in
+   * `db/test/sites_soft_delete_rls.test.sql` (a genuinely saved project DOES get `deleted_at`
+   * written; a never-saved id matches zero rows everywhere) — so the fix here is UI honesty, not a
+   * delete-path bug. Scoped to uncontrolled mode: a controlled (Schedule) row's id lives in a
+   * different namespace `listProjects()` was never going to contain, so this must never fire there.
+   * `hasSavedProjectRecord` (projectModel.js) is the pure decision; `listProjects()` here — never
+   * `internalProjects`, which already includes the synthetic placeholder — is the real registry. */
+  const menuTargetUnsaved = !!(menuFor && menuFor.confirm && !controlled && !hasSavedProjectRecord(menuFor.id, listProjects()));
+
   const doDelete = (id, { moveNotes = false } = {}) => {
     /* ⛔ LOUD-FAILURE, B1358128 — a MISSING id is a defect in this component, not a project that
      * happens not to exist. Passing it on reached `deleteSiteGroup(undefined)`, which finds no
@@ -1109,7 +1126,18 @@ export default function ProjectBreadcrumb({
                   {/* B1303825 — a destructive confirmation must always name its target; a falsy
                       `menuFor.name` (never expected, but not provably impossible — `openManageMenu`
                       snapshots `p.name` at click time) must never render as a blank "Delete ?". */}
-                  Delete <strong style={{ color: "var(--text-primary)" }}>{menuFor.name || "this project"}</strong>? It moves to Recently deleted — you can restore it for {DELETED_RETENTION_DAYS} days.
+                  {/* B1442592 — a project that was never actually saved (lazy "New project" creation;
+                      see menuTargetUnsaved's own header above) has nothing anywhere to move to
+                      Recently deleted, so the confirmation must not promise that trip. */}
+                  {menuTargetUnsaved ? (
+                    <>
+                      <strong style={{ color: "var(--text-primary)" }}>{menuFor.name || "This project"}</strong> hasn't been saved yet — there's nothing on the server (or this device) to delete. Closing it just leaves it behind; it won't be in Recently deleted.
+                    </>
+                  ) : (
+                    <>
+                      Delete <strong style={{ color: "var(--text-primary)" }}>{menuFor.name || "this project"}</strong>? It moves to Recently deleted — you can restore it for {DELETED_RETENTION_DAYS} days.
+                    </>
+                  )}
                   {/* NEW-3 — say what ELSE is filed here, in as many words, before it goes.
                       Absent when there is nothing to say (PANEL-BREVITY); an unknown count is
                       NAMED as unknown, never rendered as a confident zero. */}
@@ -1146,7 +1174,7 @@ export default function ProjectBreadcrumb({
                     data-testid="project-delete-confirm"
                     onClick={() => doDelete(menuFor.id)}
                     style={{ ...btnSm, background: "var(--danger, #dc2626)", color: "#fff" }}
-                  >Delete</button>
+                  >{menuTargetUnsaved ? "Close" : "Delete"}</button>
                 </div>
               </div>
             )}
