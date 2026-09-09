@@ -1,22 +1,20 @@
 /* PursuitsCard — the Dashboard's "Pursuits" card (B1161793, NEW-2, Direction C's second real
  * content card — replacing the placeholder "Pursuits by activity" card, per the owner's
- * approved design). A table of open pursuits sorted by soonest upcoming contractual date.
+ * approved design). A table of open pursuits.
  *
- * Columns, left to right, per the owner's amendment: Pursuit (name, county underneath) / Yield /
- * Next (the nearest contractual date's label, then its date + countdown on a second line) /
- * Quiet for. Acres was explicitly dropped ("Yield is what he compares two deals on; acreage is a
- * detail you look up once you are inside the deal") and the separate "In" column was folded into
- * Next's second line, per the same correction.
+ * Columns, left to right: Pursuit (name, county underneath) / Yield / Quiet for. Acres was
+ * explicitly dropped early in this card's design ("Yield is what he compares two deals on;
+ * acreage is a detail you look up once you are inside the deal").
  *
- * B1411504 — when nobody has entered a deal date yet, the table falls back to an alphabetical
- * order (pursuitsList.js) and this card says so above the header row, rather than let a plain
- * name-order list masquerade as the "soonest date" sort it's built to be.
+ * ⛔ B1342848 (owner instruction, 2026-09-09: "remove the deal date from pursuits") — the "Next"
+ * column (the nearest contractual-date field + countdown) and its sort are gone; see
+ * pursuitsList.js's header for why and for what this supersedes. The table now sorts
+ * alphabetically, unconditionally, so there's no "no deal dates set yet" banner to show either —
+ * an alphabetical list needs no disclaimer the way a fallback pretending to be a date sort did.
  */
-import { formatShortDate } from "../lib/dashboardDates.js";
-import { nextLineTone, isQuietEmphasized, allPursuitsUndated } from "../lib/pursuitsList.js";
+import { isQuietEmphasized } from "../lib/pursuitsList.js";
 
 const EMPTY = { fontSize: 12, color: "var(--text-secondary)", fontStyle: "italic" };
-const TONE_COLOR = { danger: "var(--danger-text)", accent: "var(--accent)", muted: "var(--text-secondary)" };
 const dayWord = (n) => (n === 1 ? "day" : "days");
 
 const thStyle = (align) => ({
@@ -32,26 +30,6 @@ function formatSf(sqft) {
   return `${Math.round(sqft).toLocaleString()} SF`;
 }
 
-function NextCell({ next }) {
-  if (!next) {
-    return (
-      <div>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>Nothing scheduled</div>
-        <div style={{ fontSize: 10.5, color: "var(--text-secondary)" }}>no date set</div>
-      </div>
-    );
-  }
-  const tone = nextLineTone(next.days);
-  return (
-    <div>
-      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{next.label}</div>
-      <div style={{ fontSize: 10.5, fontWeight: tone === "muted" ? 500 : 700, color: TONE_COLOR[tone] }}>
-        {formatShortDate(next.date)} - {next.days} {dayWord(next.days)}
-      </div>
-    </div>
-  );
-}
-
 function QuietCell({ days }) {
   if (days == null) return <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>—</span>;
   const emphasized = isQuietEmphasized(days);
@@ -64,23 +42,13 @@ function QuietCell({ days }) {
 
 export function PursuitsCard({ rows, yieldBySite, onOpenProject }) {
   if (!rows || !rows.length) return <div style={EMPTY}>No open pursuits right now.</div>;
-  // B1411504 — when no pursuit has a contractual date, the table is sorted alphabetically
-  // (pursuitsList.js's own tie-break) rather than by "soonest date" — say so, rather than let a
-  // name-order list read as if it meant something about urgency. See that module's header.
-  const allUndated = allPursuitsUndated(rows);
   return (
     <div style={{ overflowX: "auto" }}>
-      {allUndated && (
-        <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>
-          No deal dates set yet — sorted alphabetically.
-        </div>
-      )}
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
             <th style={thStyle("left")}>Pursuit</th>
             <th style={thStyle("right")}>Yield</th>
-            <th style={thStyle("left")}>Next</th>
             <th style={thStyle("right")}>Quiet for</th>
           </tr>
         </thead>
@@ -99,7 +67,6 @@ export function PursuitsCard({ rows, yieldBySite, onOpenProject }) {
                 {r.county && <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--text-secondary)" }}>{r.county}</div>}
               </td>
               <td style={{ ...tdStyle("right"), fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap" }}>{formatSf(yieldBySite?.[r.siteId])}</td>
-              <td style={tdStyle("left")}><NextCell next={r.next} /></td>
               <td style={{ ...tdStyle("right"), whiteSpace: "nowrap" }}><QuietCell days={r.quietDays} /></td>
             </tr>
           ))}

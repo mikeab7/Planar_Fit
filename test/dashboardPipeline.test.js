@@ -11,7 +11,7 @@ describe("groupProjectsByGroupId", () => {
       { id: "p2", group_id: "g1", site: "Goose Creek", county: "chambers", status: "active", role: "pursuit", updated_at: daysAgo(1) },
     ];
     const out = groupProjectsByGroupId(rows);
-    expect(out).toEqual([{ groupId: "g1", siteId: "p2", name: "Goose Creek", county: "chambers", status: "active", role: "pursuit", updatedAt: daysAgo(1), planCount: 2, origin: null, feasibilityExpiry: null, loiDate: null, closingDate: null }]);
+    expect(out).toEqual([{ groupId: "g1", siteId: "p2", name: "Goose Creek", county: "chambers", status: "active", role: "pursuit", updatedAt: daysAgo(1), planCount: 2, origin: null }]);
   });
 
   it("uses the MOST RECENTLY UPDATED plan as the group's representative status/name/county", () => {
@@ -26,7 +26,7 @@ describe("groupProjectsByGroupId", () => {
 
   it("a plan with no group_id falls back to its own id (never dropped)", () => {
     const rows = [{ id: "solo", group_id: null, site: "Solo Plan", status: "pursuit", role: "pursuit", updated_at: daysAgo(1) }];
-    expect(groupProjectsByGroupId(rows)).toEqual([{ groupId: "solo", siteId: "solo", name: "Solo Plan", county: null, status: "pursuit", role: "pursuit", updatedAt: daysAgo(1), planCount: 1, origin: null, feasibilityExpiry: null, loiDate: null, closingDate: null }]);
+    expect(groupProjectsByGroupId(rows)).toEqual([{ groupId: "solo", siteId: "solo", name: "Solo Plan", county: null, status: "pursuit", role: "pursuit", updatedAt: daysAgo(1), planCount: 1, origin: null }]);
   });
 
   it("carries the representative plan's origin (geo anchor) through, or null when unset", () => {
@@ -46,10 +46,10 @@ describe("groupProjectsByGroupId", () => {
     expect(groupProjectsByGroupId(null)).toEqual([]);
   });
 
-  it("carries the representative plan's own id (siteId) and contractual date fields through", () => {
-    const rows = [{ id: "p9", group_id: "g9", site: "Grand Port", status: "active", role: "pursuit", updated_at: daysAgo(1), feasibilityExpiry: "2026-09-20", loiDate: null, closingDate: "2026-11-01" }];
+  it("carries the representative plan's own id (siteId) through", () => {
+    const rows = [{ id: "p9", group_id: "g9", site: "Grand Port", status: "active", role: "pursuit", updated_at: daysAgo(1) }];
     const out = groupProjectsByGroupId(rows);
-    expect(out[0]).toMatchObject({ siteId: "p9", feasibilityExpiry: "2026-09-20", loiDate: null, closingDate: "2026-11-01" });
+    expect(out[0]).toMatchObject({ siteId: "p9" });
   });
 });
 
