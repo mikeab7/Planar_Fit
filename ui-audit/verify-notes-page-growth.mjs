@@ -92,6 +92,7 @@ async function measureCase(doc, { viewport = { width: 1191, height: 900 }, theme
       allAnchorsInsideSheet: allInside,
       sheetWidth: sheetRect ? Math.round(sheetRect.width) : null,
       matAlignItems: mat ? getComputedStyle(mat).alignItems : null,
+      leftGutter: (sheetRect && mat) ? Math.round(sheetRect.left - mat.getBoundingClientRect().left) : null,
       matScrollWidth: mat?.scrollWidth ?? null,
       matClientWidth: mat?.clientWidth ?? null,
       storedAnchors: stored,
@@ -194,15 +195,31 @@ for (const [name, doc] of Object.entries(cases)) {
   const { state, errs } = await measureCase(doc);
   ok(name, state.allAnchorsInsideSheet && errs.length === 0,
     `sheet ${state.sheetWidth}px, mat align=${state.matAlignItems}, scroll ${state.matScrollWidth}/${state.matClientWidth}${errs.length ? `, errors: ${errs.join(" | ")}` : ""}`);
-  /* ⛔ ANY GROWTH AT ALL LEFT-ALIGNS, NOT ONLY GROWTH THAT OUTGROWS THE WHOLE PANE — the bug
-   * this generalised check exists to catch, measured live during this fix's own development:
-   * centring redistributes a grown sheet's extra width onto BOTH edges, so placing one box near
-   * the margin shifted the WHOLE PAGE (title included) 48px left in the same gesture that grew
-   * it 96px wider — "the page jumped," not "the page grew," the exact class VIEWPORT-STABLE
-   * forbids. A sheet still at its ordinary 580px card stays centred, unchanged. */
+  /* ⛔ AMENDED (NOTES-FREE-PLACEMENT round 2, owner report 2026-09-08) — AND THE OLD RULE'S OWN
+   * REASON IS KEPT BELOW BECAUSE THIS MUST NOT REINTRODUCE IT.
+   * This used to assert that ANY growth left-aligns the sheet, on the grounds that centring
+   * redistributes a grown sheet's extra width onto both edges, so placing one box near the margin
+   * shifted the WHOLE PAGE (title included) 48px left in the same gesture that grew it — "the page
+   * jumped," not "the page grew". That jump is real and is still forbidden; what changed is that
+   * it is now prevented by MEASUREMENT (the editor folds the body's own measured shift into the
+   * scroller before paint) rather than by abandoning centring.
+   * ⛔ WHY THE BLUNT RULE HAD TO GO: a left-aligned sheet sits FLUSH against the pane, so the grey
+   * margin on the LEFT becomes zero — measured at every window width — and with no left margin
+   * there is nothing to place a note in and nowhere to drag one to. That made the entire left half
+   * of "the page grows in four directions" unreachable on the shipped build, which is what the
+   * owner found by hand. So: centre while it FITS, left-align only once it genuinely outgrows the
+   * pane, and keep a real gutter either way. The gutter is asserted by
+   * `verify-notes-left-margin-reachable`, which starts every case from an already-grown page. */
+  /* ⛔ THE PROPERTY IS THE GUTTER, NOT THE ALIGNMENT KEYWORD. Three different alignment rules have
+   * now stood here (centre-until-grown, centre-while-it-fits, always-left-with-a-pinned-gutter),
+   * and each was written down as `alignItems === "..."`, which is an implementation detail that
+   * says nothing about whether the page is usable. What both defects actually came down to is
+   * whether there is grey to the LEFT of the page — at zero there is nothing to place a note in
+   * and nowhere to drag one to. So that is what is asserted, and it survives the next rule too. */
   if (state.sheetWidth > NATURAL_SHEET_WIDTH) {
-    ok(`${name} — grown, so it left-aligns instead of centring (no shift on already-placed content)`,
-      state.matAlignItems === "flex-start", `sheet ${state.sheetWidth}px, align=${state.matAlignItems}`);
+    ok(`${name} — grown, and the page still has a usable margin beside it`,
+      state.leftGutter >= 40,
+      `left gutter ${state.leftGutter}px · sheet ${state.sheetWidth}px in a ${state.matClientWidth}px pane`);
   }
 }
 

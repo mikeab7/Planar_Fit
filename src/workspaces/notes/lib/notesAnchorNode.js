@@ -276,7 +276,10 @@ export const NoteAnchor = Node.create({
           },
           content: body,
         });
-        return (typing ? c.focus(at + 2) : c).run();
+        /* ⛔ AND THE CARET LANDS IN THE NEW BOX WITHOUT SCROLLING TO IT (NEW-10). The box is placed
+         * exactly where the person pressed, so it is already on screen by construction; scrolling
+         * to it can only move the view away from what they were looking at. */
+        return (typing ? c.focus(at + 2, { scrollIntoView: false }) : c).run();
       },
 
       /** ⛔ AND NOT ONE BLANK LINE LEFT BEHIND. Appending a block at the very end leaves a
@@ -707,7 +710,11 @@ export const NoteAnchor = Node.create({
          * surface for that defect, which is why this branch is shared by all of them rather than
          * living on the one handle that was reported. */
         if (!done.moved) {
-          if (pos != null) editor.chain().focus().setTextSelection(pos + 1).run();
+          /* ⛔ AND IT DOES NOT SCROLL (NEW-10). This is a press on a handle that did not drag, so
+           * it forwards to the box — the caret moves, the view must not. Tiptap's `focus()` scrolls
+           * the selection into view by default, which on a box placed far outside the column hauls
+           * the whole page. */
+          if (pos != null) editor.chain().focus(null, { scrollIntoView: false }).setTextSelection(pos + 1).run();
           return;                                   // …and it still writes nothing
         }
         /* ⛔ COMMIT THE GESTURE'S OWN NUMBER, NEVER THE DOM'S (B434417). This used to read

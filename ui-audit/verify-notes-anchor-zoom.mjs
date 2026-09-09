@@ -137,6 +137,11 @@ async function blankPoint({ dx = 420, dy = 220 } = {}) {
 
 await page.goto(`${BASE}#/notes`, { waitUntil: "domcontentloaded" });
 
+/* ⛔ EVERY PRESS IN THIS FILE IS NOW FOLLOWED BY A KEYSTROKE (NEW-8, owner decision 2026-09-08).
+ * A press arms a caret and creates nothing; the note comes into existence on the first character.
+ * The PROPERTY this harness exists for is unchanged and is the owner's own acceptance test —
+ * *"stored left equals click x minus editor left, for EVERY step, no clamping band anywhere"* —
+ * and it is asserted on exactly the same coordinates. Only the moment the block appears moved. */
 /* ════ 1. THE PLACEMENT — the assertion the last two rounds did not make ═══════════════ */
 console.log("\n1 · Double-click in blank space starts a block THERE (NEW-2)");
 await seed();
@@ -144,6 +149,8 @@ await seed();
 const before = await storedDoc();
 const at = await blankPoint();
 await page.mouse.dblclick(at.x, at.y);
+await pacedWait(page, 250);
+await page.keyboard.type("A");                 // NEW-8: the keystroke is what makes the block
 await pacedWait(page, 350);
 
 ok("a block appeared", await tb("note-anchor").count() > 0);
@@ -238,6 +245,11 @@ const firstLine = await page.evaluate(() => {
   return { x: Math.round(r.left + 30), y: Math.round(r.top + r.height / 2) };
 });
 const anchorsBefore = anchorsIn(await storedDoc()).length;
+/* ⛔ NO KEYSTROKE HERE, DELIBERATELY, and it is the one press in this file that must not have
+ * one: this section is double-click-to-select-a-WORD inside the body, not a placement. Adding the
+ * NEW-8 committing keystroke here typed over the very selection being asserted, and the harness
+ * correctly reported "a word is selected" as false — a defect in the harness's own edit, not in
+ * the app. */
 await page.mouse.dblclick(firstLine.x, firstLine.y);
 await pacedWait(page, 300);
 ok("a word is selected", (await page.evaluate(() => String(window.getSelection()))).trim().length > 0,
@@ -307,6 +319,8 @@ ok("⛔ AND ZOOMING DID NOT MOVE THE ANCHORED BLOCK'S STORED POSITION — it is 
 console.log("\n8 · The placement is still right at a zoom level ≠ 100%");
 const at2 = await blankPoint({ dx: 300, dy: 160 });
 await page.mouse.dblclick(at2.x, at2.y);
+await pacedWait(page, 200);
+await page.keyboard.type("C");                 // NEW-8
 await pacedWait(page, 400);
 const boxes = await tb("note-anchor").all();
 const last = await boxes[boxes.length - 1].boundingBox();
@@ -333,7 +347,7 @@ const clickAtDoc = (docX, docY) => page.evaluate(([dx, dy]) => {
   const r = dom.getBoundingClientRect();
   const scale = r.width / (dom.offsetWidth || 1) || 1;
   return { x: Math.round(r.left + dx * scale), y: Math.round(r.top + dy * scale) };
-}, [docX, docY]).then(async (p) => { await page.mouse.dblclick(p.x, p.y); await pacedWait(page, 200); return p; });
+}, [docX, docY]).then(async (p) => { await page.mouse.dblclick(p.x, p.y); await pacedWait(page, 150); await page.keyboard.type("s"); await pacedWait(page, 200); return p; });
 
 /** The block THIS gesture made — the newest, which is the last in document order because
  *  `addNoteAnchorAt` inserts before the document's trailing text block. Reading

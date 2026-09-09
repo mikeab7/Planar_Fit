@@ -86,6 +86,17 @@ const SHEET_PAD_TOP = { narrow: 18, wide: 30 };
 /* The gap under the title band, before the body starts. */
 const TITLE_BAND_GAP = 16;
 
+/* ⛔ THE STRIP OF GREY THAT MUST ALWAYS EXIST BESIDE THE PAGE (NOTES-FREE-PLACEMENT round 2).
+ * A page that has outgrown the pane is left-aligned so its own left edge is reachable at scroll 0
+ * — that part of B1273296's rule is right and is kept. What it must NOT do is put the page flush
+ * against the pane, because the grey margin IS the surface you place a note on and drag one into;
+ * at zero width the whole left half of "the page grows in four directions" becomes unreachable.
+ * The number is chosen against the GESTURE, not against taste: it has to be comfortably wider
+ * than a box's own grip and than the 4px slop that separates a press from a drag, and about the
+ * width of the natural gutter on a small laptop, so a grown page still reads as a page on a desk
+ * rather than as a different layout. */
+const MAT_GUTTER = 72;
+
 /* ⛔ THE PAGE TITLE IS A RATIO OF THE BODY, NOT A PIXEL NUMBER (NOTES-FREE-PLACEMENT / NEW-6,
  * owner report 2026-09-08: *"42px against 15px body, 2.8x, on a 580px column… it is the one
  * element still shouting"*).
@@ -132,6 +143,16 @@ const EDITOR_CSS = `
    ⛔ NO BACKTICKS IN A COMMENT INSIDE THIS TEMPLATE LITERAL — one backtick ends EDITOR_CSS and
    the module stops parsing. This file's own PRINT_CSS sibling in lib/notesPrint.js carries the
    identical warning, so this is a re-statement of a known trap, not a new discovery of one. */
+/* ⛔ WHILE A PLACEMENT IS ARMED THE EDITOR HOLDS FOCUS BUT DRAWS NO CARET (NEW-8). It has to
+   hold focus to receive the keystroke that makes the note; what it must not do is show a second
+   caret somewhere else in the document, because the only caret on screen should be the one where
+   the press landed. */
+.planyr-note .ProseMirror[data-pending-place="1"] { caret-color: transparent; }
+/* The armed caret itself: a plain text caret, blinking at the rate every editor uses. It is
+   painted on the mat rather than in the document because there is nothing in the document to
+   attach it to — that is precisely what has not happened yet. */
+.planyr-note .planyr-pending-caret { position: absolute; z-index: 4; width: 2px; pointer-events: none; background: var(--text-primary); animation: planyr-caret-blink 1.06s steps(1) infinite; }
+@keyframes planyr-caret-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
 .planyr-note .ProseMirror { outline: none; min-height: 46vh; color: var(--text-primary); line-height: var(--note-line, 1.15); font-size: ${NOTE_BODY_FONT_PX}px; tab-size: 4; overflow-wrap: anywhere; }
 /* ⛔ REAL VERTICAL RHYTHM (B1203504) — read this before touching a margin below.
    Before this, every block here — paragraphs, lists, all four heading levels, blockquote,
@@ -1138,15 +1159,11 @@ export default function NoteEditor({
    * keystroke. Same reasoning as the callback refs above. */
   const runSlashRef = useRef(null);
 
-  /* ⛔ THE OFFER TO PUT BACK AN EMPTY NOTE THE PRUNE TOOK (NEW-3). The handler lives in a ref for
-   * the same reason `runSlashRef` does: `useEditor`'s option object must not change identity, or
-   * the editor rebuilds mid-keystroke and loses the keystroke. */
-  const [discardedAnchor, setDiscardedAnchor] = useState(null);
-  const noteDroppedRef = useRef(null);
-  noteDroppedRef.current = (boxes) => {
-    const last = Array.isArray(boxes) && boxes.length ? boxes[boxes.length - 1] : null;
-    if (last) setDiscardedAnchor({ ...last, at: Date.now() });
-  };
+  /* ⛔ THE "Empty note discarded" OFFER IS GONE (NEW-9, owner decision 2026-09-08, reversing his
+   * own NEW-3 of the day before). It was a correct fix to the wrong problem — it announced the
+   * discarding of a box that should never have been created. NEW-8 stops the press creating one,
+   * so on that path there is nothing left to announce. `dropEmptyAnchors` keeps its `onDropped`
+   * hook (it costs nothing and the command is the only place that knows), with no caller. */
 
   const editor = useEditor({
     extensions,
@@ -1222,10 +1239,10 @@ export default function NoteEditor({
      * is deliberately given the box's own coordinates rather than a boolean: an offer to undo
      * that re-created the box somewhere else would be a different bug wearing an apology. */
     onSelectionUpdate: ({ editor: ed }) => {
-      ed.commands.dropEmptyAnchors({ keep: anchorPosAtSelection(ed.state), onDropped: noteDroppedRef.current });
+      ed.commands.dropEmptyAnchors({ keep: anchorPosAtSelection(ed.state) });
     },
     onBlur: ({ editor: ed }) => {
-      ed.commands.dropEmptyAnchors({ onDropped: noteDroppedRef.current });
+      ed.commands.dropEmptyAnchors();
     },
   });
 
@@ -1496,6 +1513,127 @@ export default function NoteEditor({
     });
   }, [editor, pageId, readOnly]);
 
+  /* ═══ A PRESS ARMS A CARET; THE FIRST KEYSTROKE MAKES THE NOTE (NEW-8) ═══════════════════
+   *
+   * ⛔ THE OWNER'S MODEL, IN HIS WORDS: *"just because I click outside of the page, it shouldn't
+   * automatically open the page up to it. Only once I actually type something."* So a press in
+   * the margin puts a CURSOR there and changes nothing else — no node, no page growth, no scroll,
+   * and nothing to discard if you wander off. The note comes into existence, and the page grows to
+   * contain it, on the first character.
+   *
+   * ⛔ IT IS OUR OWN CARET, DRAWN, because there is nothing in the document to put a real one in
+   * — that is the entire point. The editor still holds FOCUS (it has to receive the keystroke),
+   * so its own caret is hidden while this is armed (`data-pending-place` in EDITOR_CSS) and there
+   * is exactly one caret on screen.
+   *
+   * ⛔ WHAT COMMITS AND WHAT CANCELS IS DECIDED BY WHETHER THERE IS CONTENT, not by a key list
+   * that will rot. A character or a paste makes a note; anything that produces no content —
+   * Escape, Enter, an arrow, Backspace, a click elsewhere — simply forgets the point, silently,
+   * because nothing has happened yet and there is nothing to report. */
+  const [pendingPlace, setPendingPlace] = useState(null);
+  const pendingRef2 = useRef(null);
+  pendingRef2.current = pendingPlace;
+
+  const cancelPendingPlace = useCallback(() => {
+    setPendingPlace((p) => (p ? null : p));
+  }, []);
+
+  /** Turn the armed point into a real box holding `text`. Returns false if nothing was armed. */
+  const commitPendingPlace = useCallback((text) => {
+    const at = pendingRef2.current;
+    if (!at || !editor || editor.isDestroyed) return false;
+    setPendingPlace(null);
+    /* ⛔ TWO COMMANDS RATHER THAN ONE `content:` ARGUMENT, DELIBERATELY. `addNoteAnchorAt` only
+     * puts the caret INSIDE the new box on its no-content path, and a box you have just started
+     * typing into must hold the caret — otherwise the second character goes somewhere else. The
+     * pair is dispatched synchronously, so ProseMirror's history groups them into ONE undo step;
+     * that is asserted rather than assumed in `verify-notes-pending-caret`. */
+    editor.commands.addNoteAnchorAt({ x: at.x, y: at.y, w: at.w });
+    if (text) editor.commands.insertContent(text);
+    return true;
+  }, [editor]);
+
+  /* ⛔ THE FIRST KEYSTROKE, CAUGHT BEFORE THE EDITOR SEES IT. Bound on `window` in CAPTURE, for
+   * the same reason the rest of this module's global bindings are: the editor's DOM holds focus
+   * while a placement is armed, so a keydown bound on the editor would arrive only after
+   * ProseMirror had already inserted the character somewhere in the document. Capture on window
+   * gets there first, and this handler exists only while something is armed — there is no
+   * standing global key binding to leak into ordinary typing (the property
+   * `test/notesKeyScope.test.js` sweeps for). */
+  useEffect(() => {
+    if (!pendingPlace || !editor || editor.isDestroyed) return undefined;
+    const onKey = (e) => {
+      if (e.defaultPrevented) return;
+      /* A shortcut is not typing. Ctrl/Cmd chords keep their ordinary meaning and leave the
+       * armed point alone, so Ctrl+Z after an accidental press still undoes what came before. */
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      /* ⛔ A REAL FIELD OUTRANKS AN ARMED CARET. Nothing here is focused (see `placeBlockAt`), but
+       * the page title IS a plain input a keystroke can legitimately be meant for — so if focus is
+       * sitting in one, the armed point is forgotten and the key is left alone. Without this, the
+       * one global binding this module adds would eat a character meant for the title, which is
+       * the exact key-leaking family `test/notesKeyScope.test.js` sweeps for. */
+      const active = document.activeElement;
+      /* ⛔ THE EDITOR ITSELF IS NOT ONE OF THOSE FIELDS, AND EXCLUDING IT IS LOAD-BEARING. The
+       * first version of this guard matched any `isContentEditable` element — which is what the
+       * editor becomes the moment the FIRST note is committed, because the caret then lives inside
+       * it. So every placement after the first one was silently cancelled: press, type, nothing.
+       * Caught by the owner's own acceptance harness, whose 20px sweep produced one block instead
+       * of sixteen. Only a field OUTSIDE the document outranks an armed caret. */
+      const dom = editor.view.dom;
+      const inEditor = active === dom || (active instanceof Node && dom.contains(active));
+      if (active && !inEditor && (active.tagName === "INPUT" || active.tagName === "TEXTAREA"
+        || active.tagName === "SELECT" || active.isContentEditable)) {
+        cancelPendingPlace();
+        return;
+      }
+      const printable = e.key.length === 1;
+      if (printable) {
+        e.preventDefault();
+        e.stopPropagation();
+        commitPendingPlace(e.key);
+        return;
+      }
+      /* Anything that produces no content forgets the point. Silently: nothing was created, so
+       * there is nothing to announce — which is the whole of NEW-9. */
+      if (["Escape", "Enter", "Tab", "Backspace", "Delete", "ArrowLeft", "ArrowRight", "ArrowUp",
+        "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(e.key)) {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); }
+        cancelPendingPlace();
+      }
+    };
+    const onPaste = (e) => {
+      const text = e.clipboardData?.getData("text/plain") || "";
+      if (!text) { cancelPendingPlace(); return; }
+      e.preventDefault();
+      e.stopPropagation();
+      commitPendingPlace(text);
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    window.addEventListener("paste", onPaste, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", onKey, { capture: true });
+      window.removeEventListener("paste", onPaste, { capture: true });
+    };
+  }, [pendingPlace, editor, commitPendingPlace, cancelPendingPlace]);
+
+  /* The attribute the stylesheet above keys the hidden native caret off. Written straight to the
+   * editor's own element rather than through React, which does not own it. */
+  useLayoutEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    const dom = editor.view.dom;
+    if (pendingPlace) dom.setAttribute("data-pending-place", "1");
+    else dom.removeAttribute("data-pending-place");
+  }, [editor, pendingPlace]);
+
+  /* The armed caret is forgotten the moment the note loses focus — closing the tab, clicking the
+   * rail, switching page. Nothing was created, so there is nothing to clean up but the drawing. */
+  useEffect(() => {
+    if (!pendingPlace || !editor || editor.isDestroyed) return undefined;
+    const drop = () => cancelPendingPlace();
+    editor.on("blur", drop);
+    return () => { editor.off("blur", drop); };
+  }, [pendingPlace, editor, cancelPendingPlace]);
+
   /* ⛔ THE CARET GOES WHERE YOU PRESSED — a real positioned node at the press point.
    *
    * Read `lib/notesAnchorNode.js`'s header for the three earlier rounds and why padding
@@ -1527,11 +1665,48 @@ export default function NoteEditor({
       y: (clientY - box.top) / scale,
       width: dom.offsetWidth,
     });
-    /* ⛔ AND THIS DROP SAYS SO TOO (NEW-3). It is the one that fires in his own repro — create a
-     * note in the margin, then press somewhere else, which both discards the first and places a
-     * second. Leaving this call site silent while the blur/Escape ones announce themselves would
-     * reproduce the exact complaint through the exact gesture that produced it. */
-    editor.chain().dropEmptyAnchors({ onDropped: noteDroppedRef.current }).addNoteAnchorAt(point).run();
+    /* ⛔ A PRESS ARMS A CARET. IT DOES NOT CREATE ANYTHING (NEW-8, owner report 2026-09-08:
+     * *"just because I click outside of the page, it shouldn't automatically open the page up to
+     * it. Only once I actually type something. And also, if I click somewhere and then don't type
+     * anything, I shouldn't get the notice."*).
+     *
+     * ⛔ THIS SUPERSEDES THE WHOLE PROVISIONAL-BLOCK MECHANISM FOR THIS PATH, and it is a simpler
+     * rule than the one it replaces rather than another layer on top. Four earlier rounds fought
+     * the consequences of committing a node on the press — an empty box that draws nothing and
+     * still takes the press (B357008), a prune at the storage seam to stop one reaching a file
+     * (`notesAnchorPrune.js`), and finally a toast to admit the prune had happened (B1370546).
+     * Every one of those exists only because the node was created too early. Nothing is created
+     * now until there is something to put in it, so: no empty box, nothing to prune on this path,
+     * nothing to announce, and no page growth for a pointer that merely went somewhere.
+     *
+     * The point is remembered, a caret is drawn there, and `commitPendingPlace` below turns it
+     * into a real box on the first character. A press that types nothing leaves the document
+     * BYTE-IDENTICAL — which is the property `verify-notes-anchor-soak` has always asserted, now
+     * true by construction instead of by cleanup. */
+    /* The caret is drawn in the MAT's own frame, so its position is captured here — at the moment
+     * of the press, from the press's own coordinates — rather than re-derived later from document
+     * space. Nothing grows or reflows on a press any more (that is NEW-8's whole point), so this
+     * reading cannot go stale between arming and the first keystroke. Its height is the editor's
+     * real line height, read from the browser, so the caret matches the text it is about to make
+     * at any zoom and any type size. */
+    const mat = noteRootRef.current?.querySelector('[data-testid="note-mat"]');
+    const matRect = mat?.getBoundingClientRect();
+    const lineH = Math.round(parseFloat(getComputedStyle(dom).lineHeight) || 0)
+      || Math.round(parseFloat(getComputedStyle(dom).fontSize) * 1.2) || 18;
+    const caret = matRect
+      ? { left: Math.round(clientX - matRect.left), top: Math.round(clientY - matRect.top - lineH / 2), height: lineH }
+      : null;
+    if (!caret) return;                       // unmeasured — never guess where to draw a caret
+    setPendingPlace({ ...point, caret });
+    /* ⛔ AND IT DELIBERATELY DOES NOT FOCUS THE EDITOR (NEW-10). The first version called
+     * `dom.focus({ preventScroll: true })` here so the keystroke would reach ProseMirror — and
+     * MEASURED, on a long scrolled note, that press moved the view from scrollTop 500 to 138 and
+     * pulled the title back on screen. `preventScroll` is not honoured for this contenteditable in
+     * Chromium, so focusing it scrolls it into view, which is precisely the defect being fixed.
+     * Nothing needs focus: the keystroke is caught by a capture listener on `window` while a
+     * placement is armed, and the commands that build the note do not require the editor to be
+     * focused. The caret lands inside the new box at commit time — with scrolling declined there
+     * too. */
   }, [editor]);
 
   /* ═══ SELECT SEVERAL BOXES AND MOVE THEM TOGETHER (B421494) ══════════════════════════════
@@ -1851,6 +2026,10 @@ export default function NoteEditor({
     const el = e.target;
     if (!(el instanceof Element)) return;
     if (el.closest("input, textarea, select, button, a")) return;
+    /* ⛔ ANY PRESS FORGETS AN ARMED CARET (NEW-8). Clicking a second spot re-arms there — the
+     * blank-space branch below does that on its way through — and clicking anything else simply
+     * drops it. Silently, in every case: nothing was created, so nothing has to be undone. */
+    cancelPendingPlace();
 
     /* ⛔ A PRESS INSIDE AN ANCHORED BLOCK IS A PRESS ON CONTENT. This was the owner's ORIGINAL
      * complaint — *"it keeps wanting to just go to wherever there is text on the left"* — and
@@ -1944,8 +2123,14 @@ export default function NoteEditor({
       if (inBlock.getAttribute("data-empty") !== "1") return;   // it has words; the browser is right
       e.preventDefault();
       const pos = editor.view.posAtDOM(inBlock, 0);
-      if (Number.isFinite(pos)) editor.chain().focus().setTextSelection(pos + 1).run();
-      else editor.commands.focus();
+      /* ⛔ A PRESS NEVER SCROLLS THE VIEW (NEW-10, owner report 2026-09-08: *"when I do click
+       * elsewhere, it moves the whole screen, and it shouldn't do that at all"* — he watched the
+       * mat scroll the page title off the top after placing something). Tiptap's `focus()` calls
+       * `tr.scrollIntoView()` by default, which drags the scroller to wherever the caret lands;
+       * on a page with a box placed far outside the column that is a long way. The caret still
+       * goes where it was put — only the scrolling is declined, on every press-driven path. */
+      if (Number.isFinite(pos)) editor.chain().focus(null, { scrollIntoView: false }).setTextSelection(pos + 1).run();
+      else editor.commands.focus(null, { scrollIntoView: false });
       return;
     }
 
@@ -1979,7 +2164,8 @@ export default function NoteEditor({
       // the first line) the sheet forwards the press, which is what B1368 was for.
       if (el.closest(".ProseMirror") || el.closest("[contenteditable]")) return;
       e.preventDefault();
-      editor.chain().focus().setTextSelection(hit.pos).run();
+      // …and the same here — see the note above. This is the press that lands beside a line.
+      editor.chain().focus(null, { scrollIntoView: false }).setTextSelection(hit.pos).run();
       return;
     }
 
@@ -1989,7 +2175,7 @@ export default function NoteEditor({
     e.preventDefault();
     e.stopPropagation();
     if (!beginBlankGesture(e)) placeBlockAt(e.clientX, e.clientY);
-  }, [editor, placeBlockAt, beginBlankGesture, beginGroupDrag, clearSelection]);
+  }, [editor, placeBlockAt, beginBlankGesture, beginGroupDrag, clearSelection, cancelPendingPlace]);
 
   /* ---- HOW BIG THE WRITING IS (NEW-3) ----------------------------------------------------
    *
@@ -2024,6 +2210,11 @@ export default function NoteEditor({
    * `0` is the ordinary state and costs nothing. */
   const [sheetGrowLeft, setSheetGrowLeft] = useState(0);
   const [sheetGrowTop, setSheetGrowTop] = useState(0);
+  /* How much grey sits to the LEFT of the page — the gutter a centred ungrown page would have,
+   * floored so it never disappears. Measured in the same pass as the growth, from the same
+   * numbers, and it is a function of the PANE only, never of the sheet's grown width, which is
+   * what makes the page's left edge unable to move. */
+  const [matPadX, setMatPadX] = useState(0);
   /* The title + metadata band's own height, measured rather than assumed: it is what sits between
    * the sheet's top padding and the body's own origin, so it is exactly how far ABOVE the body a
    * box may reach before the sheet itself has to grow. Measuring the band (content the effect
@@ -2032,6 +2223,8 @@ export default function NoteEditor({
   const titleBandRef = useRef(null);
   /** Where the body sat the last time the page's growth changed — see the compensation effect. */
   const growAnchorRef = useRef(null);
+  /** …and the gutter that reading was taken under, so a gutter change re-bases rather than scrolls. */
+  const growPadRef = useRef(null);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
 
@@ -2261,7 +2454,14 @@ export default function NoteEditor({
        * stored width 180→660, and the very next measure re-clamped the RENDER to 256). The page
        * growing to hold a box and a box's own resize handles staying reachable are not the same
        * fact, and only the first of them is what NOTES-PAGE-GROWTH is about. */
-      const paneWidth = scrollerRef.current?.clientWidth || dom.clientWidth;
+      /* ⛔ THE PANE IS MEASURED ON ITS BORDER BOX (`offsetWidth`), NOT ITS CONTENT BOX
+       * (`clientWidth`) — because this effect now writes PADDING onto that very element, and
+       * `clientWidth` excludes padding. Reading it would make the pane appear to shrink by the
+       * gutter this effect just added, which recomputes a smaller gutter, and so on: the exact
+       * feedback loop `fitAnchorBox`'s header warns about, arriving through a new door. Measured
+       * before it was fixed: a block rendered at x=1007, and after a reload the same block sat at
+       * 959 — 48px adrift, from nothing but the loop settling differently on the two paths. */
+      const paneWidth = scrollerRef.current?.offsetWidth || dom.clientWidth;
       const blocks = nodes.map((el) => {
         const x = parseFloat(el.getAttribute("data-anchor-x")) || parseFloat(el.style.left) || 0;
         const w = parseFloat(el.getAttribute("data-anchor-w")) || parseFloat(el.style.width);
@@ -2307,9 +2507,26 @@ export default function NoteEditor({
        * (which would rewrap his words as a side effect of moving a box). */
       const contentW = Math.max(naturalPageWidth, needX);
       const grow = growLeft > 0 || needX > naturalPageWidth;
-      setSheetGrowWidth(grow ? growLeft + padX + contentW : null);
+      const totalSheetWidth = grow ? growLeft + padX + contentW : naturalSheetWidth;
+      setSheetGrowWidth(grow ? totalSheetWidth : null);
       setSheetGrowLeft(growLeft);
       setSheetGrowTop(growTop);
+      /* ⛔ THE PAGE'S LEFT EDGE IS PINNED WHERE CENTRING WOULD HAVE PUT AN *UNGROWN* PAGE, AND
+       * GROWTH ONLY EVER EXTENDS RIGHTWARD FROM IT.
+       *
+       * This is the third rule this one line has carried, and the first two each fixed one defect
+       * by causing another, so both are named here.
+       *   round 1  centre until anything grows, then flush LEFT. Killed the jump; made the left
+       *            gutter ZERO on every grown page, so there was nothing to press in and nowhere
+       *            to drag to — the owner's "nothing is created at all".
+       *   round 2a centre whenever it fits. Restored the gutter; brought the jump straight back,
+       *            because centring splits the new width across BOTH edges — measured by his own
+       *            acceptance harness at 48px, a block rendering 48px left of the point pressed.
+       * The pin does both: the gutter is exactly the one a centred ungrown page has, so nothing
+       * looks different until something grows, and the left edge cannot move because it is not a
+       * function of the sheet's width at all. Growth is spent on the right, where there is nothing
+       * to disturb, and the scroller carries whatever does not fit. */
+      setMatPadX(Math.max(MAT_GUTTER, Math.round((paneWidth - naturalSheetWidth) / 2)));
     };
     measure();
     /* Re-measured as the text inside a block reflows, which is the half that matters: the
@@ -2349,15 +2566,45 @@ export default function NoteEditor({
     const dom = editor && !editor.isDestroyed ? editor.view.dom : null;
     const sc = scrollerRef.current;
     if (!dom || !sc) return;
-    const at = { left: dom.offsetLeft, top: dom.offsetTop };
+    /* ⛔ THE POSITION IS READ IN THE SCROLLER'S OWN CONTENT SPACE, AND THE FIRST VERSION OF THIS
+     * READ `dom.offsetLeft` INSTEAD — WHICH IS ALWAYS 0 HERE, so the delta was always 0 and this
+     * effect never once fired (NOTES-FREE-PLACEMENT round 2). `offsetLeft` is measured against
+     * `offsetParent`, and the body's offsetParent is a wrapper inside the sheet, not the scroller
+     * — so it reads 0 no matter how far the sheet's own padding pushes the words sideways.
+     * Measured on the real gesture: the sheet's padding-left went 40px → 236px while `offsetLeft`
+     * stayed 0 both times, and the words moved 196px right under the reader.
+     * ⛔ THIS IS THE FAILURE MODE THE REPO KEEPS PAYING FOR — a guard that passes while the
+     * mechanism behind it is dead. It passed its own harness because every case there had the
+     * sheet CENTRED and growing rightward, where there is no shift to compensate; nothing pointed
+     * it at the one scene it exists for. Hence `verify-notes-left-margin-reachable`, which starts
+     * every case from an already-grown page.
+     * The rect-based form below is scroll-INDEPENDENT (the live `scrollLeft` is added back in), so
+     * two readings differ only by a real layout shift — never by the scrolling this then does. */
+    const scRect = sc.getBoundingClientRect();
+    const domRect = dom.getBoundingClientRect();
+    const at = {
+      left: Math.round(domRect.left - scRect.left + sc.scrollLeft),
+      top: Math.round(domRect.top - scRect.top + sc.scrollTop),
+    };
     const was = growAnchorRef.current;
+    const lastPad = growPadRef.current;
     growAnchorRef.current = at;
+    growPadRef.current = matPadX;
     if (!was) return;                       // first measurement: nothing to hold steady against
+    /* ⛔ A CHANGE IN THE GUTTER IS A RE-BASE, NOT A SHIFT TO HIDE — and getting this wrong scrolled
+     * the page sideways on EVERY load. `matPadX` starts at 0 and the measurement effect sets it on
+     * the first pass, so the body legitimately moves by the whole gutter between this effect's
+     * first two runs; compensating for that scrolled the scroller by exactly the gutter, leaving
+     * the sheet flush against the pane again — the very defect the gutter exists to fix, restored
+     * one frame later, and invisible except on a reload. Measured: scrollLeft 0 → 276, sheet left
+     * 544 → 268. So a run where the gutter itself changed only re-records the baseline.
+     * Growth is the only thing this compensates, which is all it was ever for. */
+    if (lastPad !== matPadX) return;
     const dx = at.left - was.left;
     const dy = at.top - was.top;
     if (dx) sc.scrollLeft += dx;
     if (dy) sc.scrollTop += dy;
-  }, [editor, sheetGrowWidth, sheetGrowLeft, sheetGrowTop]);
+  }, [editor, sheetGrowWidth, sheetGrowLeft, sheetGrowTop, matPadX]);
 
   /* ---- PASTE JUST THE TEXT (B36051) ------------------------------------------------------
    *
@@ -2557,7 +2804,7 @@ export default function NoteEditor({
              It does NOT stop propagation: Escape's other job here — releasing the next Tab —
              still has to happen. */
           if (e.key === "Escape" && editor && !editor.isDestroyed) {
-            editor.commands.dropEmptyAnchors({ onDropped: noteDroppedRef.current });
+            editor.commands.dropEmptyAnchors();
             return;
           }
           if (!(e.key === "V" || e.key === "v") || !e.shiftKey || !(e.ctrlKey || e.metaKey)) return;
@@ -2633,7 +2880,30 @@ export default function NoteEditor({
            there, and the pane-overflow case (this same rule, one door further) is already
            subsumed — a sheet wide enough to outgrow the pane was already wide enough to have
            grown at all. */
-        style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column", alignItems: (narrow || sheetGrowWidth != null || sheetGrowTop > 0) ? "flex-start" : "center", position: "relative" }}
+        /* ⛔ SUPERSEDED, AND THE COMMENT ABOVE IS KEPT BECAUSE IT NAMES A REAL DEFECT THIS MUST NOT
+           REINTRODUCE (NOTES-FREE-PLACEMENT round 2, owner report 2026-09-08).
+           The rule above — stop centring the MOMENT anything has grown the page — closed the jump
+           it describes and opened a worse one: a grown sheet sits FLUSH against the pane's left
+           edge, so the grey margin on the left becomes ZERO. Measured at every width, on the
+           deployed build: ungrown, the sheet sits inside 276 of grey on each side; grown, the left
+           gutter is 0 and `elementFromPoint` at the mat's own left edge answers `note-sheet`. With
+           no left margin there is nothing to double-click in (the owner's "nothing is created at
+           all") and nowhere to drag a box into (his "it lands at left: 18px"). The page could grow
+           leftward in the model and you could not GET there.
+           ⛔ THE JUMP IS NOW HANDLED BY MEASUREMENT RATHER THAN BY ABANDONING CENTRING — the
+           layout effect above folds the body's own measured `offsetLeft` change into the scroller
+           in the same frame, which did not exist when the rule above was written. So the sheet
+           centres whenever it FITS (grown or not) and only left-aligns once it genuinely outgrows
+           the pane, and even then it keeps a real gutter to work in. */
+        style={{
+          flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column",
+          /* Always left-aligned, with the gutter doing the work centring used to do. On an ungrown
+             page the two are pixel-for-pixel the same thing; the difference only shows once
+             something grows, and the difference is that nothing moves. */
+          alignItems: "flex-start", position: "relative",
+          paddingLeft: narrow ? undefined : matPadX,
+          paddingRight: narrow ? undefined : matPadX,
+        }}
       >
         <PasteOptions
           offer={pasteAt && pasteOffer ? { ...pasteOffer, ...pasteAt } : null}
@@ -2876,63 +3146,24 @@ export default function NoteEditor({
             ) : null}
           </div>
         </div>
-        {/* ⛔ AN EMPTY NOTE IS NOT DESTROYED IN SILENCE (NOTES-FREE-PLACEMENT / NEW-3). It is
-            still discarded — `notesAnchorPrune.js`'s header is four rounds of the owner's own
-            reports on why an empty box may not survive — but the discard now SAYS so and offers
-            to put it back at the coordinates it had. Placed on the mat rather than in the app's
-            global toast rail because it belongs to this page and to the gesture that just
-            happened, and because the only thing it can act on is this editor. */}
-        {discardedAnchor ? (
+        {/* ⛔ THE ARMED CARET (NEW-8). A press in the margin draws this and nothing else; the note
+            itself does not exist until the first character. Positioned in the mat's own frame,
+            which is why the mat is `position: relative`.
+            ⛔ THE "Empty note discarded" TOAST THAT USED TO BE HERE IS GONE (NEW-9, owner
+            decision 2026-09-08, reversing his own NEW-3 of the day before). It was a correct fix
+            to the wrong problem: it announced the discarding of something that should never have
+            been created. With the press no longer creating anything there is nothing to announce.
+            ⛔ SAID PLAINLY, because he asked to be told rather than have the toast left in as
+            insurance: one path can still produce an empty box — emptying an EXISTING note's text
+            and clicking away. That box is one you made and then emptied yourself, it is visibly
+            outlined the whole time, and the prune at the storage seam still takes it, silently, as
+            it did before B1370546 existed. No toast covers that case any more. */}
+        {pendingPlace ? (
           <div
-            data-testid="note-anchor-discarded"
-            style={{
-              position: "absolute", zIndex: 6, left: "50%", bottom: 18, transform: "translateX(-50%)",
-              display: "flex", alignItems: "center", gap: 10, maxWidth: "min(92%, 420px)",
-              padding: "7px 10px 7px 12px", borderRadius: RADIUS.control,
-              border: "1px solid var(--border-default)", background: "var(--surface-raised)",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.10)", // design-exempt: no shadow-color token yet repo-wide (matches note-sheet's own card shadow)
-              color: "var(--text-secondary)", fontSize: 12.5, fontWeight: 600,
-            }}
-          >
-            <span>Empty note discarded</span>
-            {/* ⛔ STYLED FROM THIS FILE'S OWN MIRRORED SCALE, NOT FROM controls.jsx — the notes
-                module deliberately does not import that module (it would hoist a third shared
-                chunk onto the Site route; `test/notesModule.test.js` fails the build on it), so
-                every control here follows NoteToolbar's established local convention. */}
-            <button
-              type="button"
-              data-testid="note-anchor-discarded-undo"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                const at = discardedAnchor;
-                setDiscardedAnchor(null);
-                if (!editor || editor.isDestroyed || !at) return;
-                /* Back where it was, with the caret INSIDE it — which is what spares it from the
-                   very next prune (keep). An undo that restored the box and let it be taken
-                   again on the next selection change would be worse than none. */
-                editor.commands.addNoteAnchorAt({ x: at.x, y: at.y, w: at.w });
-              }}
-              style={{
-                height: 26, padding: "0 10px", borderRadius: RADIUS.control,
-                border: "1px solid var(--accent-notes)", background: "transparent",
-                color: "var(--accent-notes-text)", font: "inherit", fontSize: 11.5,
-                fontWeight: 700, cursor: "pointer",
-              }}
-            >Undo</button>
-            <button
-              type="button"
-              aria-label="Dismiss"
-              title="Dismiss"
-              data-testid="note-anchor-discarded-close"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setDiscardedAnchor(null)}
-              style={{
-                height: 24, width: 24, borderRadius: RADIUS.control,
-                border: "1px solid var(--border-default)", background: "transparent",
-                color: "var(--text-secondary)", font: "inherit", fontSize: 12, cursor: "pointer",
-              }}
-            >✕</button>
-          </div>
+            data-testid="note-pending-caret"
+            className="planyr-pending-caret"
+            style={{ left: pendingPlace.caret.left, top: pendingPlace.caret.top, height: pendingPlace.caret.height }}
+          />
         ) : null}
       </div>
 

@@ -247,16 +247,34 @@ async function soak(label, { width, height, zoomSteps }) {
    * whole history; the fixture has to make the point genuinely free. */
   await seedPage(page);
   const f2 = await DRIVER.frame(page);
+  /* ⛔ REWRITTEN FOR NEW-8 (owner decision 2026-09-08), and the case it is about is UNCHANGED —
+   * only the moment a block appears moved. A press now arms a caret and creates nothing; the block
+   * comes into existence on the first character. So this section presses, PROVES nothing was
+   * created, then types — which is a strictly stronger version of what it used to check, because
+   * "an abandoned press leaves nothing behind" is now a property of the gesture rather than of a
+   * cleanup running afterwards. */
   const spot = { x: 40, y: f2.blankFrom + 40 };
   const c1 = await DRIVER.clientOf(page, spot.x, spot.y);
+  const bytesBefore = await storedDoc(page);
   await page.mouse.click(c1.x, c1.y);
   await pacedWait(page, 250);
+  ok(`${label} · ⛔ THE PRESS ALONE CREATED NOTHING — no block, and the document is untouched`,
+    (await DRIVER.blocks(page)).length === 0 && (await storedDoc(page)) === bytesBefore,
+    `${(await DRIVER.blocks(page)).length} block(s)`);
+  ok(`${label} · …and a caret is drawn where the press landed`,
+    await page.evaluate(() => !!document.querySelector('[data-testid="note-pending-caret"]')), "caret");
+  await page.keyboard.type("FIRST");
+  await pacedWait(page, 400);
   const afterFirst = await DRIVER.blocks(page);
   const provisional = afterFirst.find((b) => b.left === spot.x && b.top === spot.y);
-  ok(`${label} · the press on a genuinely free point made exactly one block`,
+  ok(`${label} · the first keystroke made exactly one block, at the point pressed`,
     afterFirst.length === 1 && !!provisional, `${afterFirst.length} blocks`);
-  ok(`${label} · ⛔ AN EMPTY BLOCK SAYS SO ON THE PAGE — it can never be an invisible obstacle`,
-    !!provisional && provisional.empty, provisional ? `data-empty=${provisional.empty}` : "absent");
+  /* ⛔ THE "AN EMPTY BLOCK SAYS SO ON THE PAGE" ASSERTION IS RETIRED, NOT WEAKENED (NEW-8). It
+   * existed because a press committed an empty block that drew nothing and still took the press,
+   * so the block had to be outlined to stop it becoming an invisible obstacle. A press no longer
+   * creates one, so on this path there is no empty block to outline. The outline itself is kept in
+   * the app for the one path that can still empty a box — deleting its words — and that path is
+   * unchanged. */
   /* …and pressing INSIDE it reaches it rather than doing nothing. This is the exact gesture
    * that failed: the second attempt at a spot you already tried. */
   await page.mouse.click(c1.x + 6, c1.y + 6);
@@ -264,8 +282,14 @@ async function soak(label, { width, height, zoomSteps }) {
   await page.keyboard.type("SECOND");
   await pacedWait(page, 400);
   const after2 = await DRIVER.blocks(page);
+  /* ⛔ THE EXPECTED TEXT CHANGED WITH THE MODEL, AND THE CASE DID NOT (NEW-8). Under the old rule
+   * the first press committed an EMPTY block, so a second press at the same spot could only ever
+   * find "SECOND" in it. The block now has to be typed into to exist at all, so it already holds
+   * "FIRST" — and the property being guarded is the one that matters and is unchanged: the second
+   * press lands in the block that is there, makes no new one, and its characters go into it. */
   ok(`${label} · ⛔ A SECOND PRESS AT THE SAME SPOT TYPES INTO IT — the "intermittent" failure`,
-    after2.length === 1 && after2[0].text === "SECOND" && after2[0].left === spot.x && after2[0].top === spot.y,
+    after2.length === 1 && after2[0].text.includes("SECOND") && after2[0].text.includes("FIRST")
+      && after2[0].left === spot.x && after2[0].top === spot.y,
     after2.length ? `${after2.length} block(s): ${JSON.stringify(after2.map((b) => b.text))} at ${after2[0].left},${after2[0].top}` : "the press did nothing");
 
   await ctx.close();
