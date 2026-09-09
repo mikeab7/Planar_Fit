@@ -10,6 +10,7 @@
  */
 import React from "react";
 import { NUM_FONT, TABULAR_NUMS } from "../../../shared/theme/typography.js";
+import { RADIUS } from "../../../shared/ui/radius.js";
 import { groundReadout } from "../lib/groundReadout.js";
 import { GROUND_EL_TITLE } from "./useGroundElevation.js";
 
@@ -24,7 +25,9 @@ export default function CursorChip({ ll, el, prop = null, style = {} }) {
         display: "flex", alignItems: "baseline", gap: 0,
         fontFamily: NUM_FONT, fontSize: 11, color: "rgba(255,255,255,0.82)",
         background: "rgba(0,0,0,0.42)", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)",
-        padding: "3px 8px", borderRadius: 5, lineHeight: 1.4, fontVariantNumeric: TABULAR_NUMS,
+        // B1434240 (NEW-1, map control radii) — was a bare `5`, the repo's map-chip scale is
+        // RADIUS.md (8, same as the Leaflet zoom stack + locate control this chip floats beside).
+        padding: "3px 8px", borderRadius: RADIUS.md, lineHeight: 1.4, fontVariantNumeric: TABULAR_NUMS,
         whiteSpace: "nowrap", boxSizing: "border-box", ...style,
       }}
     >

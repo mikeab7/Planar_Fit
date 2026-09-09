@@ -835,10 +835,16 @@ kbd {
   background-color: var(--surface-overlay);
   color: var(--chrome-muted);
 }
+/* B1434240 (NEW-1, map control radii) — the graphic scale bar was the one floating map
+ * control still at Leaflet's un-rounded vendor default (a bare rectangle) while the zoom
+ * stack and locate control beside it already carry the app's chip radius (B427411/NEW-3
+ * above). Same token, same reasoning: chrome we place should read from the one radius
+ * scale rather than a vendor default. */
 :root .leaflet-container .leaflet-control-scale-line {
   background: var(--surface-overlay);
   border-color: var(--border-default);
   color: var(--chrome-text);
+  border-radius: var(--radius-md);
 }
 :root .leaflet-container .leaflet-control-attribution {
   background: var(--surface-overlay);
