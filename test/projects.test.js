@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, findProjectAtOrigin, distanceFeetBetween, SAME_GROUND_FT } from "../src/shared/projects/projectModel.js";
+import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, shortenDisplayName, findProjectAtOrigin, distanceFeetBetween, SAME_GROUND_FT } from "../src/shared/projects/projectModel.js";
 import { listProjects } from "../src/shared/projects/projects.js";
 import { setActiveUser } from "../src/workspaces/site-planner/lib/activeUser.js";
 
@@ -388,6 +388,101 @@ describe("listProjects — pursuit-only by default (NEW-1)", () => {
       fresh: { id: "fresh", groupId: "fresh", site: "Fresh site", role: "pursuit", updatedAt: 60 },
     }));
     expect(listProjects().map((p) => p.id).sort()).toEqual(["fresh", "legacy"]);
+  });
+});
+
+// B1407824 — a truncated project/plan name was rendering with a dangling trailing comma and no
+// ellipsis ("ALUMAX RD, NASH,") on five Dashboard surfaces (the Locations map pin, the Pursuits
+// table, the Recent plans tile caption, and the Since-you-were-last-here feed's plan rows).
+// `shortenDisplayName` is the ONE shared place that decides how a name shortens for all of them —
+// and, per the production evidence surfaced by the sibling B1399568 fix below (the exact same
+// stored value, read straight off two real `sites` rows), the reported name is not actually long:
+// it's exactly "ALUMAX RD, NASH," with nothing more ever following, so a length-only truncate can
+// never fix it — there's nothing left to cut. This function does two different things accordingly.
+describe("shortenDisplayName", () => {
+  // The adjacent-case table the fix was built against, one row per case.
+  it("a name shorter than the limit, with no dangling punctuation, is returned untouched", () => {
+    expect(shortenDisplayName("Short Name", 20)).toBe("Short Name");
+  });
+
+  it("a name exactly at the limit is returned untouched — fits exactly, not 'cut'", () => {
+    expect(shortenDisplayName("ExactlyTenChars!", 16)).toBe("ExactlyTenChars!");
+  });
+
+  it("a name cut mid-word is shortened cleanly — a mid-word cut IS an ordinary shortened name", () => {
+    expect(shortenDisplayName("Alumax Road Industrial Park", 10)).toBe("Alumax Roa…");
+  });
+
+  it("a name cut immediately after a comma trims the comma before marking it shortened", () => {
+    expect(shortenDisplayName("ALUMAX RD, NASH, TX 75569", 16)).toBe("ALUMAX RD, NASH…");
+  });
+
+  it("a name that FITS but itself dangles on a comma is cleaned, with no ellipsis — nothing was cut, there's nothing left to shorten it to", () => {
+    // The exact reported production string, confirmed elsewhere in this file (see
+    // findProjectAtOrigin's own fixture below) to be the real, complete stored value — not a
+    // truncated prefix of something longer. A length-based cut can't fix this; only cleanup can.
+    expect(shortenDisplayName("ALUMAX RD, NASH,", 16)).toBe("ALUMAX RD, NASH");
+    expect(shortenDisplayName("ALUMAX RD, NASH,", 100)).toBe("ALUMAX RD, NASH");
+  });
+
+  it("a name cut immediately after a period trims the period before marking it shortened", () => {
+    expect(shortenDisplayName("Building A. Extra text here", 11)).toBe("Building A…");
+  });
+
+  it("a name cut immediately after a hyphen trims the hyphen before marking it shortened", () => {
+    expect(shortenDisplayName("Alumax-Rd-Extension", 10)).toBe("Alumax-Rd…");
+  });
+
+  it("a name cut immediately after a space trims the space before marking it shortened", () => {
+    expect(shortenDisplayName("Foo Bar Baz Qux", 8)).toBe("Foo Bar…");
+  });
+
+  it("one long word with no separators — nothing to trim back to, so it just cuts and marks it", () => {
+    expect(shortenDisplayName("Supercalifragilisticexpialidocious", 10)).toBe("Supercalif…");
+  });
+
+  it("a run of several trailing separators is trimmed in full, not just the last one", () => {
+    expect(shortenDisplayName("Foo Bar, , TX", 9)).toBe("Foo Bar…");
+  });
+
+  it("a fitting name's trailing SPACE is left alone — plain whitespace isn't 'broken text'", () => {
+    expect(shortenDisplayName("Trailing Space  ", 20)).toBe("Trailing Space  ");
+  });
+
+  it("null/empty/undefined never throw and never fabricate a mark", () => {
+    expect(shortenDisplayName(null, 10)).toBe("");
+    expect(shortenDisplayName(undefined, 10)).toBe("");
+    expect(shortenDisplayName("", 10)).toBe("");
+  });
+
+  // RED-PROOF — no name this function returns may end on a dangling comma, period or hyphen, and
+  // every name it genuinely SHORTENED (cut for space) must carry the one visible mark that it was.
+  // Run across a spread of inputs and limits so this is a property of the function, not one lucky
+  // case — including the "fits but dangles" shape the naive length-only design above couldn't
+  // reach at all.
+  it("RED-PROOF: never ends on a comma/period/hyphen, and every space-driven cut is visibly marked", () => {
+    const names = [
+      "ALUMAX RD, NASH, TX 75569",
+      "ALUMAX RD, NASH,", // fits under every maxLen tried below — the reported case itself
+      "Building A. Extra text here",
+      "Alumax-Rd-Extension Industrial",
+      "Foo Bar Baz Qux Industrial Park",
+      "Supercalifragilisticexpialidocious",
+      "St. Louis, MO - Industrial Park",
+      "One,Two,Three,Four,Five,Six,Seven",
+    ];
+    for (const name of names) {
+      for (let maxLen = 1; maxLen <= name.length + 2; maxLen++) {
+        const out = shortenDisplayName(name, maxLen);
+        expect(out).not.toMatch(/[,.\-]$/); // never ends on a dangling comma/period/hyphen
+        if (name.length <= maxLen) {
+          expect(out.endsWith("…")).toBe(false); // nothing was cut for space — no mark
+          continue;
+        }
+        expect(out.endsWith("…")).toBe(true); // genuinely shortened — always visibly marked
+        expect(out.slice(0, -1)).not.toMatch(/\s$/); // and never on a dangling space either
+      }
+    }
   });
 });
 

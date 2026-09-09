@@ -12,6 +12,14 @@
  * map component consumes this, never re-derives it.
  */
 
+import { shortenDisplayName } from "../../../shared/projects/projectModel.js";
+
+// B1407824 — a pin's own label plate has no fixed width (LocationsMapCard.jsx's divIcon markup
+// carries no max-width/overflow rule), so an unshortened long name would run the plate off the
+// map's edge or straight into a neighbouring pin. Shortened here, once, so the label paint AND
+// its own width-collision math (labelBoxFor in LocationsMapCard.jsx) measure the same string.
+const MAP_LABEL_MAX_CHARS = 22;
+
 const ACTIVE_STATUSES = new Set(["active"]);
 const OPEN_STATUSES = new Set(["active", "pursuit", "onhold"]);
 
@@ -36,7 +44,7 @@ export function mapMarkers(projects, comps) {
     if (!hasOrigin(p.origin)) continue;
     out.push({
       kind: ACTIVE_STATUSES.has(p.status) ? "active" : "pursuit",
-      id: p.groupId, lat: p.origin.lat, lon: p.origin.lon, name: p.name, project: p,
+      id: p.groupId, lat: p.origin.lat, lon: p.origin.lon, name: shortenDisplayName(p.name, MAP_LABEL_MAX_CHARS), project: p,
     });
   }
   for (const c of comps || []) {

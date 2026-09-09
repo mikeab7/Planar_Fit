@@ -69,6 +69,25 @@ describe("pursuitsTable", () => {
     expect(pursuitsTable([], {})).toEqual([]);
   });
 
+  // B1407824 — the Pursuit column shortens a long name at this pure model layer rather than
+  // leaving it to the cell's own CSS clamp (which has no idea where a comma/period/hyphen sits).
+  // See test/projects.test.js for shortenDisplayName's own case table; this just proves the wire.
+  it("shortens a long pursuit name, never on a dangling comma", () => {
+    const projects = [{ ...base, groupId: "a", name: "ALUMAX RD, NASHVILLE, TX 75569", county: "bowie" }];
+    const rows = pursuitsTable(projects, {}, { nowMs: NOW });
+    expect(rows[0].name.length).toBeLessThan("ALUMAX RD, NASHVILLE, TX 75569".length);
+    expect(rows[0].name).not.toMatch(/[,.\-\s]…$/);
+    expect(rows[0].name.endsWith("…")).toBe(true);
+  });
+
+  // B1407824 — the exact reported production case: the stored name FITS under the Pursuit
+  // column's own limit (nothing to cut for space), but itself dangles on a bare trailing comma.
+  it("cleans a short name that itself dangles on a comma, even though nothing needed cutting for space", () => {
+    const projects = [{ ...base, groupId: "a", name: "ALUMAX RD, NASH,", county: "bowie" }];
+    const rows = pursuitsTable(projects, {}, { nowMs: NOW });
+    expect(rows[0].name).toBe("ALUMAX RD, NASH");
+  });
+
   // B1411504 — confirmed on the owner's real portfolio: every open pursuit has all three
   // contractual-date fields unset, so `next` is null on every row and the OLD comparator's
   // `ad==null && bd==null → return 0` left Array.sort's stability to present raw insertion order

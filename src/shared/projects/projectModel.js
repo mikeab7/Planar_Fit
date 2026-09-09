@@ -7,6 +7,44 @@
  * any workspace without dragging in the localStorage/Supabase chain.
  */
 
+/* B1407824 — a name shortened for a tight display spot (a map pin label, a table cell, a tile
+ * caption) must never just cut to a length and stop: a plain `name.slice(0, n)` can land the cut
+ * immediately after a comma, period, hyphen or space, and the result reads as broken text
+ * ("ALUMAX RD, NASH,") rather than as a shortened name — no ellipsis, no sign anything was cut.
+ * Five Dashboard surfaces (the Locations map pin, the Pursuits table, the Recent plans tile
+ * caption, and the Since-you-were-last-here feed's plan rows) each show a project/plan name in a
+ * space too tight for the full string; this is the ONE place that decides how a name shortens, so
+ * none of the five has to reimplement the rule.
+ *
+ * ⛔ THE OWNER-REPORTED NAME IS NOT ACTUALLY LONG — it's exactly "ALUMAX RD, NASH," and nothing
+ * more (confirmed against production evidence surfaced by the sibling B1399568 fix, which read the
+ * same stored value straight off two real `sites` rows). Nothing shortens it for SPACE, because
+ * 16 characters fits comfortably in every one of this repo's name-display slots; the dangling
+ * comma is the stored value's own trailing character, in full. A length-only truncate can never
+ * fix that — there is nothing left to cut. So this function does two DIFFERENT things and only one
+ * of them is "shortening": (1) a name over `maxLen` is cut, trimmed back past any trailing run of
+ * comma/period/hyphen/whitespace, then marked with a single trailing "…" — a shortened name is
+ * always both clean AND visibly identifiable as shortened, and a cut landing MID-WORD (nothing
+ * separator-like to trim) is left exactly as cut, which reads as an ordinary shortened name, not
+ * as broken text; (2) a name AT OR UNDER `maxLen` — nothing to cut — still has any trailing
+ * comma/period/hyphen stripped (never a mark, because nothing was hidden — this is cleanup, not
+ * shortening), because a name that just stops on a bare comma with nothing ever following it reads
+ * as broken regardless of how it got that way, and there is no more text this function could ever
+ * append to make it whole. A trailing SPACE alone is left alone in this branch — plain whitespace
+ * at the end of a fitting name is not "broken text" the way a dangling punctuation mark is. */
+const TRAILING_SEPARATOR_RE = /[,.\-\s]+$/;
+const TRAILING_PUNCTUATION_RE = /[,.\-]+$/;
+
+export function shortenDisplayName(name, maxLen) {
+  const s = name == null ? "" : String(name);
+  if (s.length <= maxLen) return s.replace(TRAILING_PUNCTUATION_RE, "") || s;
+  const cut = s.slice(0, maxLen);
+  const trimmed = cut.replace(TRAILING_SEPARATOR_RE, "");
+  // A pathological name that is nothing but separators for the first `maxLen` characters would
+  // otherwise trim to "" — fall back to the raw cut rather than hand back an empty label.
+  return `${trimmed || cut}…`;
+}
+
 // How long a deleted project stays in the "Recently deleted" bin before it's purged for good.
 // Canonical here (a pure, dependency-free constant) rather than in storage.js, so a caller that
 // only needs the NUMBER — the breadcrumb's confirmation copy — never has to import the engine
