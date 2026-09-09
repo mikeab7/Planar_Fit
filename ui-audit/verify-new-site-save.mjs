@@ -54,13 +54,13 @@ check("clean start — no sites in the store", before.count === 0, `count=${befo
 
 // --- Create a brand-new site via the app's own "Start blank" path (the newBlankSite path). ---
 // NEW-1 (map "Start blank" consolidation) — "Start blank" is no longer a standalone button; it's
-// the secondary option behind the "Select parcels" split button's caret.
-const caretBtn = page.locator('[data-testid="map-start-blank-menu-btn"]').first();
+// the toolbar's first-class "Draw" button (NEW-1, 2026-09-08 — the ground-first toolbar).
+const caretBtn = page.locator('[data-testid="map-toolbar-draw"]').first();
 const haveCaret = await caretBtn.isVisible().catch(() => false);
 check('"Select parcels" caret is reachable on boot', haveCaret);
 if (haveCaret) {
   await caretBtn.click(); await page.waitForTimeout(200);
-  const startItem = page.locator('[data-testid="map-start-blank-menu-item"]').first();
+  const startItem = page.locator('[data-testid="map-toolbar-draw"]').first();
   await startItem.click(); await page.waitForTimeout(2500);
 }
 const newId = await currentSite(page);

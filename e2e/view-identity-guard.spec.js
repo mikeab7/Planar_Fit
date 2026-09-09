@@ -30,8 +30,7 @@ async function startBlank(page) {
   // The app now lands on a Dashboard route first (B1213312/B1213313) — open the Site module
   // before reaching the map's "Start blank" affordance.
   await openModule(page, "site-planner");
-  await page.getByTestId("map-start-blank-menu-btn").click();
-  await page.getByTestId("map-start-blank-menu-item").click();
+  await page.getByTestId("map-toolbar-draw").click();
   await expect(canvas(page)).toBeVisible();
 }
 

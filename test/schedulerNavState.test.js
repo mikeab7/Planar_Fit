@@ -264,24 +264,47 @@ describe("isGridMismatched — the route↔grid mismatch is made IMPOSSIBLE TO S
   });
 });
 
-describe("newProjectAction — '+ New project' while routed links + names it, never mints an orphan (NEW-1/B1080545)", () => {
-  it("routed on a project with no schedule yet: create + link + name after the project", () => {
-    expect(newProjectAction({ projectId: "rf", routedSiteName: "Richfield", projects: [] }))
-      .toEqual({ type: "create-linked", name: "Richfield", siteId: "rf", siteName: "Richfield" });
+describe("newProjectAction — '+ New schedule' ASKS. It never names a schedule or picks an owner", () => {
+  /* ⛔ RED-PROOF. Every assertion in this block FAILS on current main, where newProjectAction
+   * returns `{ type: "create-linked", name: "Richfield (2)", … }` — a schedule created, named and
+   * owned without anyone being asked. That behaviour is why production carries three empty
+   * schedules called "Goose Creek (2)", "(3)" and "(4)": three presses, three duplicates, no
+   * prompt at any point. The old block asserted the auto-naming as the CORRECT behaviour, which is
+   * why nothing here caught it; these are its replacement, not an addition beside it. */
+
+  it("never creates anything — the only action is to open the dialog", () => {
+    for (const args of [
+      { projectId: "rf", routedSiteName: "Richfield" },
+      { projectId: null, routedSiteName: null },
+      { projectId: "rf", routedSiteName: null },
+      {},
+    ]) {
+      const a = newProjectAction(args);
+      expect(a.type).toBe("prompt");
+      // No name is decided here, by any path. A `name` in this result is the defect itself.
+      expect(a.name).toBeUndefined();
+    }
   });
 
-  it("routed on a project that ALREADY has a schedule (NEW-3): a disambiguated name, never a second identical one", () => {
-    const projects = sanitizeProjects([{ id: 1, name: "Richfield", linkedSiteId: "rf" }]);
-    expect(newProjectAction({ projectId: "rf", routedSiteName: "Richfield", projects }))
-      .toEqual({ type: "create-linked", name: "Richfield (2)", siteId: "rf", siteName: "Richfield" });
+  it("⛔ NEVER produces a '(2)'-style auto-name for a project that already has a schedule", () => {
+    const a = newProjectAction({ projectId: "rf", routedSiteName: "Richfield" });
+    expect(JSON.stringify(a)).not.toMatch(/\(\d+\)/);
+    expect(JSON.stringify(a)).not.toMatch(/create-linked/);
   });
 
-  it("not routed (Operations/Pursuits-style, or org/dashboard): unchanged generic creation", () => {
-    expect(newProjectAction({ projectId: null, routedSiteName: null, projects: [] })).toEqual({ type: "new" });
+  it("pre-selects the routed project as the owner, as a suggestion the dialog can change", () => {
+    expect(newProjectAction({ projectId: "rf", routedSiteName: "Richfield" }))
+      .toEqual({ type: "prompt", siteId: "rf", siteName: "Richfield" });
   });
 
-  it("routed but the site name hasn't resolved yet: falls back to generic rather than naming a raw id (B560 defence)", () => {
-    expect(newProjectAction({ projectId: "rf", routedSiteName: null, projects: [] })).toEqual({ type: "new" });
+  it("outside a routed project it pre-selects nothing — the dialog opens on the Organization", () => {
+    expect(newProjectAction({ projectId: null, routedSiteName: null }))
+      .toEqual({ type: "prompt", siteId: null, siteName: null });
+  });
+
+  it("a routed project whose name hasn't resolved pre-selects nothing (B560 — never name a raw id)", () => {
+    expect(newProjectAction({ projectId: "rf", routedSiteName: null }))
+      .toEqual({ type: "prompt", siteId: null, siteName: null });
   });
 });
 
@@ -363,14 +386,26 @@ describe("Scheduler.jsx — the ROUTE outranks the embed's section", () => {
     expect(block.indexOf("if (projectId != null)")).toBeLessThan(block.indexOf('section === "reports"'));
   });
 
-  // NEW-1/B1080545 — "+ New project" must route through newProjectAction (never a bare
-  // planar:nav-new post unconditionally) so a routed project can never mint an orphan.
-  it('onNewProject decides via newProjectAction, not a bare "planar:nav-new" post', () => {
-    const i = SRC.indexOf("onNewProject={() => {");
-    expect(i).toBeGreaterThan(-1);
-    const block = SRC.slice(i, i + 400);
-    expect(block).toMatch(/newProjectAction\(\{ projectId, routedSiteName, projects \}\)/);
-    expect(block).toMatch(/planar:nav-create-linked/);
+  // "+ New schedule" must OPEN THE DIALOG, never post a create straight into the iframe. Also
+  // red-proof: on main this block reads `post(action.type === "create-linked" ? … )` and creates.
+  it('onNewProject opens the New-schedule dialog rather than creating a schedule', () => {
+    const i = SRC.indexOf("onNewProject={() => setNewSchedulePrompt(");
+    expect(i, '"+ New" must route through setNewSchedulePrompt').toBeGreaterThan(-1);
+    const block = SRC.slice(i, i + 200);
+    expect(block).toMatch(/newProjectAction\(\{ projectId, routedSiteName \}\)/);
+    // The create post must NOT be reachable from this handler — the dialog owns it now.
+    expect(block).not.toMatch(/planar:nav-create-linked/);
+  });
+
+  // The dialog is the ONE creation path: the empty state's own Create routes through it too, so
+  // the two paths cannot drift into one that requires an owner and one that does not.
+  it("the New-schedule dialog is the only thing that posts a create", () => {
+    const posts = SRC.match(/planar:nav-create-linked/g) || [];
+    expect(posts.length).toBe(1);
+    const i = SRC.indexOf("planar:nav-create-linked");
+    // ...and it sits inside NewScheduleModal's onCreate, which validated name + owner first.
+    expect(SRC.slice(Math.max(0, i - 900), i)).toMatch(/<NewScheduleModal/);
+    expect(SRC.slice(Math.max(0, i - 400), i)).toMatch(/ownerKind/);
   });
 
   // NEW-2/B1080546 — Duplicate is reachable from the shell breadcrumb (the in-iframe project list

@@ -66,11 +66,12 @@ async function runOnce(label) {
   let out = { label, pass: false, detail: "" };
   try {
     await page.goto(BASE, { waitUntil: "load" });
-    // NEW-1 — "Start blank" is the secondary option behind the "Select parcels" split button's caret.
-    const startCaret = page.getByTestId("map-start-blank-menu-btn");
+    // NEW-1 (2026-09-08) — "Start blank" is the map toolbar's first-class "Draw" button now; it
+  // was promoted out of the "Select parcels" caret menu when that toolbar went ground-first.
+    const startCaret = page.getByTestId("map-toolbar-draw");
     await startCaret.waitFor({ state: "visible", timeout: 20000 });
     await startCaret.click();
-    await page.getByTestId("map-start-blank-menu-item").click();
+    await page.getByTestId("map-toolbar-draw").click();
     await page.waitForTimeout(1000);
 
     const switchAt = Date.now();

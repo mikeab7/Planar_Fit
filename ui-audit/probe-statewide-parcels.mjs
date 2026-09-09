@@ -45,13 +45,25 @@
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import {
+  searchState, makeOrgResolver, classifyPublisher, looksParcelShaped,
+  serviceLayerUrl, assessKnownGood,
+} from "./lib/agolParcelSearch.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const DOC_PATH = join(ROOT, "docs", "STATEWIDE-PARCELS.md");
 const TIMEOUT_MS = 15000;
 const JSON_OUT = process.argv.includes("--json");
-const NO_WRITE = process.argv.includes("--no-write") || JSON_OUT;
+const NO_WRITE = process.argv.includes("--no-write") || JSON_OUT || process.argv.includes("--agol-only");
+/* NEW-2 — the AGOL organization pass runs by default; `--no-agol` skips it (it costs ~200 extra
+ * arcgis.com requests, which is fine for an on-demand instrument and pointless when you only want
+ * to re-verify the endpoints already wired). */
+const NO_AGOL = process.argv.includes("--no-agol");
+/* `--agol-only` runs pass 2 alone (no `.gov` re-probe) for a quick discovery sweep. It NEVER
+ * writes the doc: with pass 1 skipped, every pass-1 cell would be hollowed out, and a doc that
+ * loses measured rows because someone ran a faster flag is worse than no refresh at all. */
+const AGOL_ONLY = process.argv.includes("--agol-only");
 
 /* ---------------------------------------------------------------------------------------------
  * CANDIDATES — one entry per state + DC, filled from a live web-search + curl research pass
@@ -76,8 +88,16 @@ export const CANDIDATES = {
     sources: [{ name: "Parcel Polygon — County Assessor Mapping Program (CAMP), Arkansas GIS Office", url: "https://gis.arkansas.gov/arcgis/rest/services/FEATURESERVICES/Planning_Cadastre/FeatureServer/6", cite: "gis.arkansas.gov/product/parcel-polygon-county-assessor-mapping-program-polygon" }],
     note: "Rich schema (id/owner/situs/area/value all present) confirmed via ArcGIS Hub's cached item metadata (2,117,780 features) — gis.arkansas.gov itself is blocked in this sandbox." },
   AZ_UNUSED: undefined,
-  CA: { name: "California", assessingUnit: "county", sources: [],
-    noSource: "Only a static 2014 file-geodatabase download exists (UC Davis ICE, mirrored via LA County ArcGIS Hub) — 51 of 58 counties, PARNO only (no owner/situs/area/value), not a live REST service. No free live statewide equivalent to Colorado's." },
+  CA: { name: "California", wired: true, assessingUnit: "county",
+    sources: [{ name: "California Statewide Parcels Public View (CAL FIRE — CA Dept. of Forestry & Fire Protection, org ITS.CALFIRE)", url: "https://bz1uwWPKUInZBK94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/rest/services/CA_Statewide_Parcels_Public_view/FeatureServer/0", cite: "arcgis.com item 2061fbc963464c5198ec064100802624", pass: "agol" }],
+    // ⛔ RETRACTED OUTRIGHT, 2026-09-08 (NEW-1), not softened. This row previously read
+    // `no-free-source` / `Candidate: none found`, with the note: "Only a static 2014
+    // file-geodatabase download exists (UC Davis ICE, mirrored via LA County ArcGIS Hub) — 51 of
+    // 58 counties, PARNO only, not a live REST service. No free live statewide equivalent to
+    // Colorado's." Every operative clause of that is FALSE. A live, public, official REST Feature
+    // Service exists, published by a state agency, covering the whole state, last modified
+    // 2026-07-13 — and it was reachable from this very sandbox the entire time.
+    note: "MEASURED FROM THIS SANDBOX (HTTP 200) and independently from the owner's own browser, 2026-09-08. 13,138,000 parcels — the largest source in counties.js, ~21% above Florida's 10.8M, which the same wiring already handles (nothing ever fetches a layer whole: the display layer is viewport-queried and gated at PARCEL_MINZOOM, and a truncated draw is reported loudly). Polygon, 21 fields: PARCEL_APN, FIPS_CODE, PARCEL_DMP_ID, COUNTYNAME, SITE_ADDR/CITY/STATE/ZIP, FullStreetAddress, Search_PARCELAPN. NO owner and NO appraised value — attribute-light, the same standing already given to Hawaii, New Hampshire and Virginia. ⛔ FOUND BY THE AGOL PASS (NEW-2), NOT BY A .gov PROBE: the prior 'no free source' finding came from searching California's own .gov GIS hosts, which this sandbox cannot reach, and never searching California's state-agency ArcGIS Online organization, which it can. That blind spot is what NEW-2 closes systematically." },
   CO: { name: "Colorado", assessingUnit: "county", sources: [], alreadyWired: true,
     note: "Already wired (co_statewide) — Colorado Public Parcels composite, gis.colorado.gov. Not re-probed here; that host is blocked in this sandbox (as expected — production reaches it fine)." },
   CT: { name: "Connecticut", wired: true, assessingUnit: "town/municipal (no functioning county government); CT OPM GIS Office aggregates via the regional Councils of Government under CGS §4d-90–92",
@@ -188,8 +208,13 @@ export const CANDIDATES = {
     noSource: "The Tax Lot layer the state's own 'Oregon Parcel Viewer' web app points to returns a real HTTP 400 'Invalid URL' — the service has been retired/unpublished, a genuine dead reference rather than a sandbox block. Every other candidate host (gis.odf.oregon.gov, ormap.net, data.oregon.gov) is blocked. Needs a fresh live search, not just a re-probe of this URL." },
   PA: { name: "Pennsylvania", assessingUnit: "county (67 autonomous assessing authorities)", sources: [],
     noSource: "RETRACTED, corrected 2026-09-08 from the owner's own browser (not this sandbox): PASDA's service directory carries 170 services and EXACTLY ONE parcel service, ErieCountyParcels — county-only. There is no statewide PA parcel mosaic on PASDA. This replaces the prior 'high-confidence follow-up candidate' framing, which is now a confirmed no." },
-  RI: { name: "Rhode Island", assessingUnit: "town/municipal — RI abolished county government in 1842; 39 towns/cities each run their own independent Tax Assessor", sources: [],
-    noSource: "RIGIS (the state GIS clearinghouse) publishes parcel-data STANDARDS and a per-town completion tracker, not a merged statewide layer. No aggregation found." },
+  RI: { name: "Rhode Island", wired: true, verify: "live", blocker: "risegis.ri.gov", assessingUnit: "town/municipal — RI abolished county government in 1842; 39 towns/cities each run their own independent Tax Assessor",
+    sources: [{ name: "Tax Parcels (RIGIS — the RI state GIS clearinghouse, org RIGIS_ADMIN / RIDEM Map Room)", url: "https://risegis.ri.gov/hosting/rest/services/RIDEM/Tax_Parcels/MapServer/0", cite: "arcgis.com item 9d73d1a7615b4c09a7b8e019ed37d77d — measured live in the owner's own browser, 2026-09-08", pass: "agol" }],
+    // ⛔ RETRACTED OUTRIGHT, 2026-09-08 (NEW-1), not softened. This row previously read
+    // `no-free-source` / `Candidate: none found`, with the note: "RIGIS publishes parcel-data
+    // STANDARDS and a per-town completion tracker, not a merged statewide layer. No aggregation
+    // found." The merged statewide layer exists and is published by RIGIS itself.
+    note: "MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-08), not this sandbox — risegis.ri.gov is a state .gov host this environment's egress allowlist blocks (the CONNECT tunnel never opens). 'Tax Parcels', polygon, 394,167 parcels, published by RIGIS_ADMIN — the state clearinghouse ITSELF, not a town and not a third-party rehost. Fields: PlatLot (RI's own parcel identifier — with no counties since 1842, each of the 39 towns keys parcels by plat + lot), Acres, E911 and E911_Type (address), TownCode, IMP_sqft, Last_UPD. NO owner, NO appraised value — the same attribute-light standing already given to Hawaii, New Hampshire and Virginia. ⛔ FOUND BY THE AGOL PASS (NEW-2): the item is discoverable on ArcGIS Online (searchable from this sandbox) even though the service it points at is not reachable from here." },
   SC: { name: "South Carolina", assessingUnit: "county (46 counties, elected/appointed Assessor)", sources: [],
     noSource: "The only statewide DNR/RFA service found (SC_County_Parcel_Viewers) is a lookup TABLE of links to each county's own separate viewer, not aggregated geometry; RFA's own page describes its aggregated parcels as available only via 'secure' (non-public) REST services." },
   SD: { name: "South Dakota", assessingUnit: "county", sources: [],
@@ -269,7 +294,13 @@ async function fetchJson(url, { timeout = TIMEOUT_MS } = {}) {
 // Field-name heuristics, reported as WHICH field matched — never a claim about what the field
 // means. Mirrors the app's own idField/addrField "hint, not authority" convention (counties.js).
 const FIELD_PATTERNS = {
-  parcelId: /parcel.?id|\bapn\b|(?:^|_)pin(?:_|$)|prop.?id|acctid|account|parcelnb|parcelnum|gispid|statepar|stateid|(?:^|_)pid(?:_|$)/i,
+  /* NEW-2 correction, 2026-09-08: `PARCEL_APN` (California) and `PlatLot` (Rhode Island) both
+   * read as `parcelId=absent` in this doc while plainly BEING the parcel identifier — `\bapn\b`
+   * cannot match inside `PARCEL_APN` because an underscore is a word character, so there is no
+   * word boundary before "APN". A doc that reports a real id column as absent understates a
+   * source and is exactly the kind of quiet wrong number this repo keeps closing; the app's own
+   * live field auto-detect was never affected (these are reporting hints, not authority). */
+  parcelId: /parcel.?id|parcel.?apn|\bapn\b|_apn(?:_|$)|platlot|(?:^|_)pin(?:_|$)|prop.?id|acctid|account|parcelnb|parcelnum|gispid|statepar|stateid|(?:^|_)pid(?:_|$)/i,
   owner: /owner/i,
   situsAddress: /situs|site.?add|prop.?add|premisead|full.?address|prop_loc/i,
   landArea: /acre|sqfoot|lot_size|land.?area/i,
@@ -306,6 +337,111 @@ async function probeSource(src) {
     fieldNames,
     fields: matchFields(fieldNames),
   };
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * NEW-2 — THE SECOND RESOLUTION PASS: official state ArcGIS Online organizations.
+ *
+ * Pass 1 (everything above) resolves a state's candidate from that STATE'S OWN `.gov` GIS host.
+ * This environment reaches `*.arcgis.com` and cannot reach most state `.gov` domains, so pass 1 is
+ * structurally blind to any state that publishes the same dataset to its own ArcGIS Online
+ * ORGANIZATIONAL ACCOUNT — and several do. New York was rescued by exactly that route and it was
+ * recorded as a one-off workaround for one state rather than as a method. A hand-run of this pass
+ * over 13 `no-free-source` states returned two real, live, official statewide layers (California,
+ * Rhode Island), both of which this file had on record as `Candidate: none found`.
+ *
+ * THE SHAPE, and every step of it is a measurement rather than an inference:
+ *   1. search ArcGIS Online for parcel-shaped public Feature/Map Services naming the state;
+ *   2. drop items whose TITLE names a known false lead (a leases register, state-TRUST land, a
+ *      substantial-damage layer) — cheap triage, not the verdict;
+ *   3. resolve each surviving item's ORGANIZATION and classify the publisher into three tiers
+ *      (official / review / excluded — see lib/agolParcelSearch.mjs for why the middle tier is
+ *      the whole point, and why a two-way filter silently discards real state sources);
+ *   4. MEASURE what survives — geometry type, field list, feature count — because a layer id is a
+ *      guess (Hawaii's statewide mosaic is layer 25; New Hampshire's polygons are layer 1) and
+ *      because a parcel-shaped title is not a parcel layer (Oregon's "State Parcels" resolves to
+ *      146 POINTS of facility leases).
+ *
+ * ⛔ IT REFUSES TO PRINT A SCORE IF ITS OWN KNOWN-GOOD ARMS FAIL. A search-and-filter pipeline
+ * tightened one notch too far returns a clean, confident ZERO for every state, and nothing
+ * downstream can tell that apart from a world with nothing in it. `assessKnownGood` is checked
+ * FIRST, every run.
+ * -------------------------------------------------------------------------------------------- */
+
+/* A statewide parcel layer is big. Below this, a "statewide" candidate is almost always one town,
+ * one county, or a sample — reported, never silently dropped. The floor is set beneath the
+ * smallest real statewide source on record (Vermont, 339,251) with room to spare. */
+const STATEWIDE_COUNT_FLOOR = 100_000;
+
+const PARCELISH_FIELD = /parcel|\bapn\b|platlot|\bpin\b|taxlot|tms|gispid|acct/i;
+
+/* Measure one shortlisted AGOL candidate and say plainly what it is. Never a verdict on its own —
+ * the caller reports every measured candidate, and a human decides what gets wired. */
+async function measureAgolCandidate(item, layerId = 0) {
+  const url = serviceLayerUrl(item, layerId);
+  if (!url) return { url: null, measured: false, why: "item carries no Feature/Map Service URL" };
+  const meta = await fetchJson(`${url}?f=json`);
+  if (!meta.ok || !meta.json)
+    return { url, measured: false, blocked: !!meta.blocked, status: meta.status, why: meta.blocked ? "host blocked by this sandbox's egress policy" : `no JSON (${meta.status})` };
+  const fieldNames = Array.isArray(meta.json.fields) ? meta.json.fields.map((f) => f.name) : [];
+  const geometryType = meta.json.geometryType || (meta.json.type === "Table" ? "table" : null);
+  let featureCount = null;
+  const c = await fetchJson(`${url}/query?where=1%3D1&returnCountOnly=true&f=json`);
+  if (c.ok && c.json && typeof c.json.count === "number") featureCount = c.json.count;
+  const polygon = geometryType === "esriGeometryPolygon";
+  const parcelish = fieldNames.some((f) => PARCELISH_FIELD.test(f));
+  const bigEnough = featureCount != null && featureCount >= STATEWIDE_COUNT_FLOOR;
+  return {
+    url, measured: true, geometryType, featureCount, fieldNames, fields: matchFields(fieldNames),
+    polygon, parcelish, bigEnough,
+    // "plausible" is a SHORTLISTING verdict, never a wiring decision: it says this is worth a
+    // human's five minutes, not that it is correct. Each failing property is named so the reason
+    // survives into the doc (a POINT layer and a 146-feature layer are very different findings).
+    plausible: polygon && parcelish && bigEnough,
+  };
+}
+
+/* Run the AGOL pass for one state. Returns every candidate it looked at, with its tier and — for
+ * anything that survived triage — its measurement. Nothing is discarded silently. */
+async function agolPassForState(abbr, cfg, orgName, { maxProbe = 6 } = {}) {
+  const stateName = cfg.name;
+  const raw = await searchState(stateName, { fetchJson });
+  const looked = [];
+  let probed = 0;
+  for (const item of raw) {
+    if (!looksParcelShaped(item)) continue;
+    /* The org lives on the ITEM DETAIL, not reliably on the search hit — measured 2026-09-08:
+     * the search result for Rhode Island's own RIGIS_ADMIN item carries `orgId: null`, so
+     * classifying off search results alone would have left the state's own publisher unresolved. */
+    let orgId = item.orgId || "";
+    if (!orgId) {
+      const det = await fetchJson(`https://www.arcgis.com/sharing/rest/content/items/${item.id}?f=json`);
+      orgId = (det.json && det.json.orgId) || "";
+      if (det.json && det.json.url && !item.url) item.url = det.json.url;
+    }
+    const org = await orgName(orgId);
+    const cls = classifyPublisher({ owner: item.owner, orgName: org, orgId, title: item.title, stateName, stateAbbr: abbr });
+    const row = { id: item.id, title: item.title, owner: item.owner, orgId, orgName: org, url: item.url, foundBy: item.foundBy, ...cls };
+    // Only OFFICIAL and REVIEW candidates are worth the two requests to measure; `excluded` is a
+    // positive finding (a vendor, a county) and is recorded with its reason, unmeasured.
+    if (cls.tier !== "excluded" && probed < maxProbe) { row.measure = await measureAgolCandidate(item); probed++; }
+    looked.push(row);
+  }
+  return looked;
+}
+
+async function runAgolPass(results) {
+  const orgName = makeOrgResolver({ fetchJson });
+  const out = {};
+  for (const [abbr, cfg] of Object.entries(CANDIDATES)) {
+    out[abbr] = await agolPassForState(abbr, cfg, orgName);
+    const hits = out[abbr].filter((r) => r.tier === "official" && r.measure && r.measure.plausible);
+    const rev = out[abbr].filter((r) => r.tier === "review" && r.measure && r.measure.plausible);
+    const wired = results[abbr] && (results[abbr].wired || results[abbr].alreadyWired);
+    const flag = hits.length && !wired ? "  ⚑ NEW OFFICIAL HIT, STATE NOT WIRED" : "";
+    console.error(`[agol] ${abbr} — ${out[abbr].length} looked at · ${hits.length} official+plausible · ${rev.length} review+plausible${flag}`);
+  }
+  return out;
 }
 
 function verdictFor(state) {
@@ -347,7 +483,132 @@ function fmtFields(f) {
   return parts.join(", ");
 }
 
-function buildMarkdown(results, probedAt) {
+/* NEW-2 — the AGOL pass's own section. Reports EVERY official-or-review candidate it measured,
+ * including in states already wired (a second, better source is a real finding) and including
+ * candidates it could not positively classify — `review` rows exist precisely so a filter cannot
+ * silently retire a real state source, which is how California and Rhode Island were lost. */
+function agolSection(results, agol, knownGood) {
+  const lines = [];
+  lines.push("## Pass 2 — official state ArcGIS Online organizations (NEW-2)");
+  lines.push("");
+  lines.push("> Pass 1 above resolves each state's candidate from that STATE'S OWN `.gov` GIS host. This environment reaches");
+  lines.push("> `*.arcgis.com` and cannot reach most state `.gov` domains, so pass 1 is structurally blind to a state that");
+  lines.push("> publishes the same dataset to its own ArcGIS Online ORGANIZATIONAL ACCOUNT. New York was rescued by exactly");
+  lines.push("> that route and it was filed as a one-off workaround rather than a method; running it properly found");
+  lines.push("> **California** (13.1M parcels, CAL FIRE) and **Rhode Island** (394k parcels, RIGIS) — both of which this");
+  lines.push("> document previously recorded as `no-free-source` / `Candidate: none found`.");
+  lines.push(">");
+  lines.push("> Publishers are sorted into THREE tiers, never two. **official** — a verified state organization, or an org whose");
+  lines.push("> name both names the state and names a government body. **review** — parcel-shaped, published by somebody this pass");
+  lines.push("> cannot positively classify; SURFACED for a human, never dropped. **excluded** — a commercial vendor (Regrid /");
+  lines.push("> LandGrid and similar are filtered in every state; the owner has declined paid data) or a positively-identified");
+  lines.push("> county, city, school or university. The middle tier is the point: an organization's display NAME is not a reliable");
+  lines.push("> signal — New York's is \"ShareGIS NY\" and Rhode Island's \"RIDEM - Map Room\", so a two-way filter DISCARDS two of");
+  lines.push("> the three state publishers this repo has verified, and each discard reads downstream as an authoritative \"nothing");
+  lines.push("> exists here\".");
+  lines.push("");
+  if (knownGood && knownGood.vacuous) {
+    lines.push("> ### ⛔ THIS RUN IS VACUOUS — NO SCORE IS REPORTED");
+    lines.push("> The pass's own known-good arms did not report their known answers, so it measured its own filter rather than the");
+    lines.push("> world. Failures:");
+    for (const f of knownGood.failures) lines.push(`> - ${f}`);
+    lines.push("");
+    return lines.join("\n");
+  }
+  if (!agol) {
+    lines.push("_Not run in this pass (`--no-agol`). Re-run `npm run probe:parcels` to refresh it._");
+    lines.push("");
+    return lines.join("\n");
+  }
+  lines.push("Known-good arms all reported their known answers, so the counts below are real (see `ui-audit/lib/agolParcelSearch.mjs`).");
+  lines.push("");
+  lines.push("| State | Tier | Publisher (org) | Item | Measured | Wired already? |");
+  lines.push("|---|---|---|---|---|---|");
+  let officialNew = 0, reviewNew = 0, unmeasuredLeads = 0;
+  const unlinked = [];
+  const row = (abbr, r, measured, wired) =>
+    `| ${abbr} | ${r.tier} | ${r.owner} (${r.orgName || "org unresolved"}) | ${measured.link || r.title} | ${measured.desc} | ${wired ? "yes" : "**no**"} |`;
+  for (const abbr of Object.keys(agol).sort()) {
+    const wired = !!(results[abbr] && (results[abbr].wired || results[abbr].alreadyWired));
+    for (const r of agol[abbr]) {
+      if (r.tier === "excluded") continue;
+      const m = r.measure;
+      let cell;
+      if (!m || !m.measured) {
+        // A candidate this pass could not measure is still REPORTED — an unmeasured official
+        // publisher in an unwired state is exactly the kind of lead that must not evaporate.
+        if (r.tier !== "official" || wired) continue;
+        cell = { desc: `not measured — ${(m && m.why) || "no service URL"}` };
+        cell.unmeasured = true;
+      } else {
+        if (!m.plausible) continue; // measured and positively NOT a statewide parcel polygon layer
+        cell = { link: `[${r.title}](${m.url})`, desc: `${m.featureCount != null ? m.featureCount.toLocaleString() : "?"} features, ${m.geometryType}` };
+      }
+      /* ⛔ CROSS-STATE SEARCH NOISE IS BUCKETED, NEVER DROPPED, AND NEVER COUNTED. ArcGIS Online
+       * ranks by relevance, not geography, so a search for one state routinely returns another
+       * state's (or another country's) layer — measured on the first full run: Florida's cadastral
+       * layer answered a Washington search, Canada's parcel mapping answered Maine and DC. Rolling
+       * those into the headline count would inflate it with nonsense. But dropping them silently is
+       * how a real source disappears: Rhode Island's own layer is titled `Tax_Parcels` and published
+       * by "RIDEM - Map Room", and links to its state through neither its title nor its org name. */
+      if (r.stateLink === "none") { unlinked.push(row(abbr, r, cell, wired)); continue; }
+      /* ⛔ AN UNMEASURED LEAD IS COUNTED SEPARATELY, never folded into the headline. It is a
+       * publisher and a title and nothing else — no geometry, no field list, no feature count —
+       * so calling it "plausible" would be claiming a measurement that was never taken. */
+      if (!wired) { if (cell.unmeasured) unmeasuredLeads++; else if (r.tier === "official") officialNew++; else reviewNew++; }
+      lines.push(row(abbr, r, cell, wired));
+    }
+  }
+  lines.push("");
+  lines.push(`**${officialNew} official + MEASURED-plausible candidate(s) in states NOT yet wired · ${reviewNew} needing a publisher review · ${unmeasuredLeads} official lead(s) that could not be measured at all.**`);
+  lines.push("Each one is a FILED lead, not a wiring decision: a candidate is wired only after its layer id, coverage and");
+  lines.push("licence are checked by hand — a layer id is a guess (Hawaii's statewide mosaic is layer 25, New Hampshire's");
+  lines.push("polygons are layer 1) and a parcel-shaped title is not a parcel layer (Oregon's \"State Parcels\" resolves to 146");
+  lines.push("POINTS of facility leases).");
+  lines.push("");
+  /* ⛔ A NULL FROM THIS PASS IS A FINDING AND IS RECORDED AS ONE. Several states are on record as
+   * declined for reasons that had nothing to do with reachability, and every one of those
+   * declines predates this pass — so each rests on the same incomplete `.gov`-only search that
+   * lost California and Rhode Island. Printing "pass 2 re-checked it and found nothing" is what
+   * stops the next session re-deriving the same null, and what makes it visible if a later run
+   * turns one of them green. */
+  const RECHECKED = ["MI", "IA", "ID", "OK", "OR", "MO", "GA"];
+  lines.push("### States previously declined for NON-reachability reasons — re-checked by pass 2");
+  lines.push("");
+  lines.push("Every one of these declines predates this pass and therefore rested on the same `.gov`-only search that lost");
+  lines.push("California and Rhode Island. Re-checked here so the null is on the record rather than re-derived next time.");
+  lines.push("");
+  lines.push("| State | Prior reason for the decline | Pass 2 result |");
+  lines.push("|---|---|---|");
+  for (const abbr of RECHECKED) {
+    const rows = agol[abbr] || [];
+    const off = rows.filter((r) => r.tier === "official" && r.measure && r.measure.plausible && r.stateLink !== "none").length;
+    const rev = rows.filter((r) => r.tier === "review" && r.measure && r.measure.plausible && r.stateLink !== "none").length;
+    const verdict = off ? `**${off} official + plausible — LOOK AT THIS**` : rev ? `nothing official; ${rev} review-tier candidate(s) above` : "nothing — decline stands";
+    const prior = (results[abbr] && (results[abbr].noSource || results[abbr].note) || "").split(".")[0];
+    lines.push(`| ${abbr} | ${prior}. | ${rows.length} looked at · ${verdict} |`);
+  }
+  lines.push("");
+  lines.push("### Unlinked hits — recorded, not counted, not dropped");
+  lines.push("");
+  lines.push("Candidates a state's search returned that carry NO positive link to that state — neither the publisher's");
+  lines.push("organization nor the item's own title names it. Almost always ArcGIS Online relevance noise (it ranks by");
+  lines.push("relevance, not geography), so they are kept out of the count above. They are listed rather than discarded");
+  lines.push("because the link test is not sound in one direction: Rhode Island's own statewide layer is titled");
+  lines.push("`Tax_Parcels` and published by \"RIDEM - Map Room\", and would fail it too.");
+  lines.push("");
+  if (!unlinked.length) {
+    lines.push("_None this run._");
+  } else {
+    lines.push("| State searched | Tier | Publisher (org) | Item | Measured | Wired already? |");
+    lines.push("|---|---|---|---|---|---|");
+    for (const u of unlinked) lines.push(u);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+function buildMarkdown(results, probedAt, agol = null, knownGood = null) {
   const lines = [];
   lines.push("# STATEWIDE-PARCELS.md — free statewide parcel GIS probe (NEW-1)");
   lines.push("");
@@ -365,15 +626,24 @@ function buildMarkdown(results, probedAt) {
   lines.push("> covering different halves of the state. That is an INTEGRATION gap, never a DATA gap; its Candidate cell always names the");
   lines.push("> real service(s), with a real clickable URL when one is on record.");
   lines.push(">");
-  lines.push("> **Hawaii, Maryland, Nebraska, New Hampshire, Virginia, West Virginia, Mississippi, Pennsylvania and Kansas were");
-  lines.push("> additionally measured LIVE FROM THE OWNER'S OWN BROWSER on 2026-09-08 — a real, unrestricted network, never this");
+  lines.push("> **Hawaii, Maryland, Nebraska, New Hampshire, Virginia, West Virginia, Mississippi, Pennsylvania, Kansas and");
+  lines.push("> RHODE ISLAND were additionally measured LIVE FROM THE OWNER'S OWN BROWSER on 2026-09-08 — a real, unrestricted network, never this");
   lines.push("> sandbox.** Their per-state notes below say so explicitly; do not read their `blocked-in-sandbox`/`host-error`");
   lines.push("> reachability columns (a property of THIS sandbox's own probe run) as evidence the sandbox itself ever reached them —");
   lines.push("> it did not, and cannot. Virginia and West Virginia were previously declined (B1345824 round 1) on a mistaken reading");
   lines.push("> of this exact blind spot — their official hosts were never actually unreachable, only unreachable FROM HERE.");
+  lines.push(">");
+  lines.push("> **⛔ CALIFORNIA AND RHODE ISLAND were, until 2026-09-08, recorded here as `no-free-source` with `Candidate: none");
+  lines.push("> found`. BOTH FINDINGS WERE FALSE, and they are retracted outright rather than softened** — see their per-state");
+  lines.push("> notes. California's claimed \"only a static 2014 file-geodatabase, 51 of 58 counties, not a live REST service\" was");
+  lines.push("> wrong in every operative clause (a live, public, official 13,138,000-parcel Feature Service exists, and was");
+  lines.push("> reachable FROM THIS SANDBOX the whole time); Rhode Island's claimed \"RIGIS publishes standards and a per-town");
+  lines.push("> tracker, not a merged statewide layer\" was wrong too (the merged layer exists and RIGIS itself publishes it).");
+  lines.push("> Both were found by **pass 2** below — searching states' own official ArcGIS Online ORGANIZATIONS rather than only");
+  lines.push("> their `.gov` GIS hosts. The `Found by` column records which pass produced every candidate in the table.");
   lines.push("");
-  lines.push("| State | Assessing unit | Verdict | Candidate | Reachable here | Feature count | Geometry | Fields | Wired? |");
-  lines.push("|---|---|---|---|---|---|---|---|---|");
+  lines.push("| State | Assessing unit | Verdict | Candidate | Found by | Reachable here | Feature count | Geometry | Fields | Wired? |");
+  lines.push("|---|---|---|---|---|---|---|---|---|---|");
   const wired = [];
   for (const abbr of Object.keys(results).sort()) {
     const s = results[abbr];
@@ -395,11 +665,18 @@ function buildMarkdown(results, probedAt) {
     const isWired = s.alreadyWired || s.wired;
     if (isWired) wired.push(abbr);
     const wireCol = s.alreadyWired ? "✅ (already)" : s.wired ? (s.verify === "live" ? `✅ (Verify: live — ${s.blocker})` : "✅") : "—";
-    lines.push(`| ${s.name} (${abbr}) | ${s.assessingUnit} | ${s.verdict} | ${cand} | ${reach} | ${fc} | ${geom} | ${fields} | ${wireCol} |`);
+    /* NEW-2 — WHICH PASS FOUND THIS CANDIDATE, so a future reader can tell a `.gov` hit from an
+     * ArcGIS-Online-organization hit without re-deriving it. `gov` is the original pass (the
+     * state's own GIS host / a web-search research pass); `agol` is the second pass over official
+     * state ArcGIS Online organizations, which is the one that found California and Rhode Island
+     * after both had been recorded as `Candidate: none found`. */
+    const foundBy = src ? (src.pass === "agol" ? "agol" : "gov") : "—";
+    lines.push(`| ${s.name} (${abbr}) | ${s.assessingUnit} | ${s.verdict} | ${cand} | ${foundBy} | ${reach} | ${fc} | ${geom} | ${fields} | ${wireCol} |`);
   }
   lines.push("");
   lines.push(`**${wired.length} states wired** (incl. TX/CO already live): ${wired.sort().join(", ")}.`);
   lines.push("");
+  lines.push(agolSection(results, agol, knownGood));
   lines.push("## Per-state notes (research context this probe can't measure itself)");
   lines.push("");
   for (const abbr of Object.keys(results).sort()) {
@@ -412,13 +689,23 @@ function buildMarkdown(results, probedAt) {
 }
 
 async function main() {
-  const results = await probeAll();
+  /* ⛔ THE VACUITY CHECK RUNS FIRST, BEFORE ANY NETWORK CALL. If the publisher classifier no
+   * longer reports its own known answers, this run cannot distinguish "found nothing" from
+   * "filtered everything away", and it must say so instead of printing a score. */
+  const knownGood = assessKnownGood();
+  if (knownGood.vacuous) {
+    console.error("⛔ AGOL pass is VACUOUS — its known-good arms did not report their known answers:");
+    for (const f of knownGood.failures) console.error("   " + f);
+    console.error("   No AGOL score will be reported. Fix lib/agolParcelSearch.mjs before trusting this run.");
+  }
+  const results = AGOL_ONLY ? Object.fromEntries(Object.entries(CANDIDATES).map(([k, v]) => [k, { abbr: k, ...v, sources: [] }])) : await probeAll();
+  const agol = (NO_AGOL || knownGood.vacuous) ? null : await runAgolPass(results);
   const probedAt = new Date().toISOString().slice(0, 10);
   if (JSON_OUT) {
-    console.log(JSON.stringify({ probedAt, results }, null, 2));
+    console.log(JSON.stringify({ probedAt, knownGood, results, agol }, null, 2));
     return;
   }
-  const md = buildMarkdown(results, probedAt);
+  const md = buildMarkdown(results, probedAt, agol, knownGood);
   if (!NO_WRITE) {
     writeFileSync(DOC_PATH, md, "utf8");
     console.log(`Wrote ${DOC_PATH}`);

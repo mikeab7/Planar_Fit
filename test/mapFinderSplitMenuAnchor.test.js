@@ -42,21 +42,31 @@ function anchoredMenuTagFor(src, anchorRefName) {
   return clean.slice(tagStart, tagEnd + 1);
 }
 
-describe("Map finder split-button menu anchor (source guard)", () => {
-  it("'Select parcels' caret menu (startBlankMenuBtnRef) anchors below-right, not below-left", () => {
-    const tag = anchoredMenuTagFor(readFileSync(SRC, "utf8"), "startBlankMenuBtnRef");
-    expect(tag).toMatch(/placement="below-right"/);
-    expect(tag).not.toMatch(/placement="below-left"/);
+describe("Map finder split-button menus — REMOVED, and they stay removed (NEW-1, 2026-09-08)", () => {
+  /* ⛔ Both menus this file was written for are GONE. The map toolbar went ground-first: you point
+   * at ground first (Select parcels · Draw · Drop a pin) and a decide bar then asks what it is,
+   * with all three verbs live at once. "Start blank" became the first-class "Draw" button and the
+   * three comp anchors became ordinary two-step paths, so neither caret nor either menu exists.
+   * The source guard below is INVERTED rather than deleted: B1074768's real risk was a menu
+   * anchored so it hangs off its own control, and the cheapest permanent form of that guarantee is
+   * that these two controls do not come back. The pure placement math beneath it is kept as-is —
+   * it proves `placeMenu`, which every OTHER AnchoredMenu in the app still relies on. */
+  it("neither caret button nor its menu exists in MapFinder any more", () => {
+    const code = stripComments(readFileSync(SRC, "utf8"));
+    for (const gone of ["startBlankMenuBtnRef", "placeCompMenuBtnRef", "startBlankMenuOpen", "placeCompMenuOpen"]) {
+      expect(code, `${gone} came back`).not.toContain(gone);
+    }
   });
 
-  it("'Place comp' caret menu (placeCompMenuBtnRef) anchors below-right, not below-left", () => {
-    const tag = anchoredMenuTagFor(readFileSync(SRC, "utf8"), "placeCompMenuBtnRef");
-    expect(tag).toMatch(/placement="below-right"/);
-    expect(tag).not.toMatch(/placement="below-left"/);
+  it("the toolbar's own first-class Draw button is what replaced the caret's one menu item", () => {
+    const code = stripComments(readFileSync(SRC, "utf8"));
+    expect(code).toContain('data-testid="map-toolbar-draw"');
+    expect(code).toContain("startBlankHere()");
   });
 
-  // Proven against a known-broken fixture first (WRONG-CASE / DRIVER-SCROLL-IS-NOT-APP-SCROLL §6):
-  // the extractor must actually catch the pre-fix shape, not just fail to find anything.
+  // Proven against a known-broken fixture (WRONG-CASE / DRIVER-SCROLL-IS-NOT-APP-SCROLL §6): the
+  // extractor the pure-math half still documents must actually catch the pre-fix shape, not merely
+  // fail to find anything. Kept so the reasoning that produced B1074768's fix stays legible.
   it("extractor catches the pre-fix shape on a planted broken fixture", () => {
     const broken = `
       <AnchoredMenu open={startBlankMenuOpen} onClose={() => setStartBlankMenuOpen(false)}
@@ -69,7 +79,12 @@ describe("Map finder split-button menu anchor (source guard)", () => {
   });
 });
 
-describe("Map finder split-button menu anchor (pure placement math, measured planyr.io rects)", () => {
+/* The rects below were measured live on deployed planyr.io at 1600×465 while these two controls
+ * still existed. They are kept verbatim as a REGRESSION FIXTURE for `placeMenu` itself — real
+ * numbers from a real split control, which is exactly the geometry (a narrow trailing caret whose
+ * right edge is the whole control's right edge) that any future split button in this app would
+ * reproduce. This half is not about the map toolbar any more; it is about the placement math. */
+describe("AnchoredMenu placement math (pure, measured planyr.io split-control rects)", () => {
   // Site mode — "Select parcels" ▾ caret, measured live (viewport 1600×465):
   //   primary x887.3 w109.0 right 996.3 · caret x996.3 w22.0 right 1018.3 · control 887.3→1018.3
   const siteCaret = { left: 996.3, top: 72.9, right: 1018.3, bottom: 102.9, width: 22.0, height: 30 };

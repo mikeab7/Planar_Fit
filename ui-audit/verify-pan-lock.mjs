@@ -52,8 +52,7 @@ try {
   if (vis !== "visible") throw new Error(`document.visibilityState is "${vis}" — samples would be meaningless`);
 
   await page.getByRole("button", { name: /Site/i }).first().click().catch(() => {});
-  await page.getByTestId("map-start-blank-menu-btn").first().click();
-  await page.getByTestId("map-start-blank-menu-item").first().click();
+  await page.getByTestId("map-toolbar-draw").first().click();
   const svg = page.getByTestId("planner-canvas");
   await svg.waitFor({ state: "visible", timeout: 20000 });
 

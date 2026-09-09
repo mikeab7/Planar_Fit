@@ -655,16 +655,24 @@ export default function CompsPanel({
   // anchor (set by that row's "＋ Location" button) so a plain "Drop a pin"/"Comp from parcel"
   // click routes its result to that row instead of opening a fresh one.
   const [gridRows, setGridRows] = useState([]);
+  // ⛔ NEW-2 (owner report, 2026-09-08) — which grid row the user is actually working on, reported
+  // up by `CompEntryGrid`. A map pick prefers THIS row over the topmost-unlocated rule below; see
+  // the pendingAnchor effect for why that rule alone put his parcel on a row he could not see.
+  const [activeGridRowId, setActiveGridRowId] = useState(null);
+  // What the sheet SAYS about a pick that landed — "Location added to row 2." A pick that answers
+  // a row other than the one on screen must never be silent again.
+  const [gridLocationNote, setGridLocationNote] = useState(null);
+  const [gridSelectRowId, setGridSelectRowId] = useState(null);
   const [armedRowId, setArmedRowId] = useState(null);
   const [gridSaving, setGridSaving] = useState(false);
   const [gridSaveError, setGridSaveError] = useState(null);
   // ⛔ HARDENING-13 (B986096, owner P0 live-test, "clicking [Location] arms pin placement") —
   // arming a row used to only set `armedRowId`; the map's OWN "am I placing a pin right now" state
-  // (`placingCompPin`, owned entirely inside MapFinder) was a SEPARATE switch the user still had to
+  // (`placingPin`, owned entirely inside MapFinder) was a SEPARATE switch the user still had to
   // flip by hand via the toolbar's "Drop a pin" button — so "click Location, then click the map"
   // silently did nothing, because the map was never told to start listening for that click. This
   // wrapper arms BOTH in one call; disarming (id === null, the Escape/Cancel path) only clears the
-  // row side — the map's own Cancel/Escape already owns turning `placingCompPin` back off.
+  // row side — the map's own Cancel/Escape already owns turning `placingPin` back off.
   const armRow = (id) => { setArmedRowId(id); if (id) onArmMapPin?.(); else onDisarmMapPin?.(); };
   // B849233/NEW-2 — the KML-import draft staging area. `armedRowId` above is a SINGLE slot
   // shared with the grid: it names either a grid row's `_id` or a draft's real uuid, and the
@@ -773,7 +781,7 @@ export default function CompsPanel({
   // the grid IS the create surface now (B849232/NEW-1 replaces the old single-comp create form;
   // editing an already-saved comp still uses the field form below).
   // ⛔ HARDENING-12 (B986096, owner P0 live-test) — "the toolbar pin ignores the row and makes a
-  // new one." The map toolbar's "Drop a pin"/"Comp from parcel" buttons arm the MAP directly, a
+  // new one." The map toolbar's own pin/parcel buttons arm the MAP directly, a
   // SEPARATE mechanism from the grid's own per-row arming above (`armedRowId`) — a user reaching
   // for the toolbar while a pasted row is still waiting for a location never touched a row's
   // Location cell, so `armedRowId` was null and every pick appended a fresh orphan row instead of
@@ -786,6 +794,11 @@ export default function CompsPanel({
     // soft, non-blocking flag on the row's Location cell (comps.js's `anchorCountyFlag`) instead
     // of a silent null — cleared automatically the moment a later pick DOES carry one.
     const locFlag = anchorCountyFlag(pendingAnchor);
+    // The sheet's row numbers are 1-based and are what the user reads off the screen.
+    const noteFor = (rowId) => {
+      const i = gridRows.findIndex((r) => r._id === rowId);
+      return i === -1 ? null : `Location added to row ${i + 1}.`;
+    };
     if (armedRowId) {
       if (gridRows.some((r) => r._id === armedRowId)) {
         // NEW-2 — picking a location for an armed row is a real edit to that row; mark it
@@ -797,13 +810,29 @@ export default function CompsPanel({
           if (locFlag) cellFlags.location = locFlag; else delete cellFlags.location;
           return { ...r, draft: { ...r.draft, anchor: pendingAnchor }, cellFlags, touched: true };
         }));
+        setGridLocationNote(noteFor(armedRowId));
+        setGridSelectRowId(armedRowId);
       } else {
         setDraftAnchors((m) => ({ ...m, [armedRowId]: pendingAnchor }));
       }
       setArmedRowId(null);
     } else {
-      const openTarget = view === "grid" ? gridRows.find((r) => !r.draft.anchor) : null;
+      // ⛔ NEW-2 (owner report, 2026-09-08) — HARDENING-12's rule below ("fill the TOPMOST row
+      // still missing a location") was the right fix for ITS report ("the toolbar pin ignores the
+      // row and makes a new one") and is deliberately KEPT as the fallback. What it could not do
+      // is prefer the row the user is on, because nothing told it which that was: with NEW-1's
+      // unfilled phantom row sitting above the row he was filling, his parcel silently attached to
+      // the phantom, the row on screen went on reporting "missing a Location", and Save stayed
+      // blocked. The active row now wins whenever it genuinely needs a location; the topmost rule
+      // still answers every case where it does not (nothing focused, focus elsewhere in the app,
+      // the active row already anchored).
+      const activeRow = gridRows.find((r) => r._id === activeGridRowId);
+      const openTarget = view === "grid"
+        ? ((activeRow && !activeRow.draft.anchor) ? activeRow : gridRows.find((r) => !r.draft.anchor))
+        : null;
       if (openTarget) {
+        setGridLocationNote(noteFor(openTarget._id));
+        setGridSelectRowId(openTarget._id);
         setGridRows((rows) => rows.map((r) => {
           if (r._id !== openTarget._id) return r;
           const cellFlags = { ...r.cellFlags };
@@ -811,7 +840,10 @@ export default function CompsPanel({
           return { ...r, draft: { ...r.draft, anchor: pendingAnchor }, cellFlags, touched: true };
         }));
       } else {
-        setGridRows((rows) => [...rows, draftFromParsedRow({ draft: emptyDraft(pendingAnchor), cellFlags: locFlag ? { location: locFlag } : {} })]);
+        const appended = draftFromParsedRow({ draft: emptyDraft(pendingAnchor), cellFlags: locFlag ? { location: locFlag } : {} });
+        setGridRows((rows) => [...rows, appended]);
+        setGridLocationNote(`Location added to row ${gridRows.length + 1} — a new row.`);
+        setGridSelectRowId(appended._id);
         setView("grid");
       }
     }
@@ -962,7 +994,11 @@ export default function CompsPanel({
   };
 
   // B849232/NEW-1 — the paste-grid create surface.
-  const openGrid = () => { setGridRows([]); setArmedRowId(null); setGridSaveError(null); setView("grid"); };
+  const openGrid = () => {
+    setGridRows([]); setArmedRowId(null); setGridSaveError(null);
+    setActiveGridRowId(null); setGridLocationNote(null); setGridSelectRowId(null);
+    setView("grid");
+  };
   const closeGrid = () => { setView("list"); setArmedRowId(null); };
   const saveGridRows = async (readyRows) => {
     if (!readyRows.length) return;
@@ -1079,8 +1115,10 @@ export default function CompsPanel({
               <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--text-secondary)" }}>Comps</span>
               {/* B849232/NEW-1 — the paste-grid, not the map pin tool, is the everyday way in now:
                   Michael enters comps in batches from broker emails, most of which don't start
-                  with a map click at all. The map's "Place comp" split button still works — it
-                  opens the grid pre-seeded with one row (see the pendingAnchor effect above).
+                  with a map click at all. The map is still a way in — NEW-1 (2026-09-08) turned
+                  its "Place comp ▾" split button into ground-first: point at ground (a pin or a
+                  parcel), then pick "Log a comp" on the decide bar. That opens the grid pre-seeded
+                  with one row exactly as before (see the pendingAnchor effect above).
                   B848304 — renamed from "＋ New comps": that name read as the primary CREATE
                   action and competed with the map's own comp-placement entry point for the same
                   job. This button's real job is bulk paste from a broker email or a spreadsheet
@@ -1120,7 +1158,7 @@ export default function CompsPanel({
             )}
             {kmlImportError && <div style={{ padding: "6px 14px 0", fontSize: 10.5, color: "var(--danger-text)" }}>{kmlImportError}</div>}
             <SummaryStrip comps={comps} />
-            {comps.length === 0 && <div style={{ padding: 14, fontSize: 12, color: "var(--text-secondary)" }}>No comps yet. Paste a few from a broker email with “＋ Paste comps” above, or use “Place comp” on the map.</div>}
+            {comps.length === 0 && <div style={{ padding: 14, fontSize: 12, color: "var(--text-secondary)" }}>No comps yet. Paste a few from a broker email with “＋ Paste comps” above, or point at the map and choose “Log a comp”.</div>}
             {comps.map((c) => <CompRow key={c.id} comp={c} onOpen={openDetail} overlaysById={overlaysById} />)}
 
             {/* B1066368 — "Recently deleted", mirroring SitePlansSection.jsx's own trash disclosure
@@ -1163,6 +1201,10 @@ export default function CompsPanel({
         {view === "grid" && (
           <CompEntryGrid
             rows={gridRows} onRowsChange={setGridRows}
+            onActiveRowChange={setActiveGridRowId}
+            selectRowId={gridSelectRowId}
+            locationNote={gridLocationNote}
+            onDismissLocationNote={() => setGridLocationNote(null)}
             armedRowId={armedRowId} onArm={armRow}
             onFocusAnchor={(anchor) => onFocusAnchor?.(anchor)}
             onSave={saveGridRows} onCancel={closeGrid}

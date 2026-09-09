@@ -28,7 +28,7 @@ async function openMap(page) {
   });
   await page.goto("/#/");
   // The map view owns the "Select parcels" split button, whose caret holds "Start blank" (NEW-1).
-  await expect(page.getByTestId("map-start-blank-menu-btn")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("map-toolbar-draw")).toBeVisible({ timeout: 30_000 });
   await page.waitForTimeout(1500); // let the Leaflet map and its layer probes settle
 }
 
@@ -39,8 +39,7 @@ test.describe("NEW-4 · a county outage offers the fallback instead of dead-endi
     await openMap(page);
     expect(Object.keys(await sitesInStore(page))).toHaveLength(0);
 
-    await page.getByTestId("map-start-blank-menu-btn").click();
-    await page.getByTestId("map-start-blank-menu-item").click();
+    await page.getByTestId("map-toolbar-draw").click();
     // A plan opened…
     await expect(page.locator('[data-testid="planner-canvas"]')).toBeVisible({ timeout: 30_000 });
     // …and it is NOT stranded: it carries the map's centre as its anchor, written immediately.

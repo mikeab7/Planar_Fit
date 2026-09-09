@@ -1239,10 +1239,10 @@ export default function NoteEditor({
      * is deliberately given the box's own coordinates rather than a boolean: an offer to undo
      * that re-created the box somewhere else would be a different bug wearing an apology. */
     onSelectionUpdate: ({ editor: ed }) => {
-      ed.commands.dropEmptyAnchors({ keep: anchorPosAtSelection(ed.state) });
+      ed.commands.dropEmptyAnchors({ keep: anchorPosAtSelection(ed.state), onDropped: noteDroppedRef.current });
     },
     onBlur: ({ editor: ed }) => {
-      ed.commands.dropEmptyAnchors();
+      ed.commands.dropEmptyAnchors({ onDropped: noteDroppedRef.current });
     },
   });
 
@@ -2804,7 +2804,7 @@ export default function NoteEditor({
              It does NOT stop propagation: Escape's other job here — releasing the next Tab —
              still has to happen. */
           if (e.key === "Escape" && editor && !editor.isDestroyed) {
-            editor.commands.dropEmptyAnchors();
+            editor.commands.dropEmptyAnchors({ onDropped: noteDroppedRef.current });
             return;
           }
           if (!(e.key === "V" || e.key === "v") || !e.shiftKey || !(e.ctrlKey || e.metaKey)) return;

@@ -52,3 +52,20 @@ export function yieldBySite(rows) {
   for (const [siteId, elements] of bySite) out[siteId] = grossBuildingSqft(elements);
   return out;
 }
+
+/** The same grouping as `yieldBySite`, counting buildings instead of summing their area —
+ * the "Since you were last here" card's plan-created/plan-edited sub-line needs both from the
+ * SAME already-fetched rows (B1366384, NEW-1), never a second element fetch. `rows` always
+ * carries every plan `yieldBySite` was called with, so every key present in one map is present in
+ * the other — a caller may safely read both by the same siteId. */
+export function buildingCountBySite(rows) {
+  const bySite = new Map();
+  for (const r of rows || []) {
+    if (!r || !r.site_id || !r.data) continue;
+    if (!bySite.has(r.site_id)) bySite.set(r.site_id, 0);
+    if (r.data.type === "building") bySite.set(r.site_id, bySite.get(r.site_id) + 1);
+  }
+  const out = {};
+  for (const [siteId, n] of bySite) out[siteId] = n;
+  return out;
+}

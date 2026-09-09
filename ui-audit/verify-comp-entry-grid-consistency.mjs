@@ -123,7 +123,11 @@ console.log("=== LAND-ONLY sheet: opacity, alignment, group collapse, ruling, pa
   check("every th/td background is opaque (no rgba(...,0) / partial alpha anywhere)", bg.cellBgValues.every((v) => !/rgba?\([^)]*,\s*0(\.\d+)?\)/.test(v) || /,\s*1\)$/.test(v)), bg.cellBgValues.join(" | "));
 
   // Item 2/3 — group header alignment matches its column, and a single-column group's label is
-  // collapsed (never a doubled word like "PRICE" over "Price").
+  // collapsed when it would DOUBLE the header below it (never "PRICE" over "Price").
+  // ⛔ NEW-3(e) (owner report, 2026-09-08) NARROWED that collapse: it used to key on the column
+  // COUNT alone, which also blanked DERIVED over "$/SF/yr" — a band that tells the reader
+  // something its own header cannot. The rule now compares the WORDS
+  // (`groupLabelIsRedundant`, compSheetColumns.js), so this check asks both directions.
   const groups = await page.evaluate(() => {
     const table = document.querySelector('[data-comp-entry-panel] table');
     const groupRow = table.querySelectorAll("thead tr")[0];
@@ -135,12 +139,21 @@ console.log("=== LAND-ONLY sheet: opacity, alignment, group collapse, ruling, pa
       const span = th.colSpan;
       const membersAlign = colThs.slice(colCursor, colCursor + span).map((c) => getComputedStyle(c).textAlign);
       colCursor += span;
-      return { text: th.textContent.trim(), span, align: getComputedStyle(th).textAlign, membersAlign };
+      const memberLabels = colThs.slice(colCursor - span, colCursor).map((c) => c.textContent.trim());
+      return { text: th.textContent.trim(), span, align: getComputedStyle(th).textAlign, membersAlign, memberLabels };
     });
   });
   console.log("  group bands:", JSON.stringify(groups));
   const dealGroup = groups.find((g) => g.span === 1 && g.membersAlign[0] === "right");
-  check("a single-column group over a right-aligned column has NO label (collapsed) and right alignment", !dealGroup || (dealGroup.text === "" && dealGroup.align === "right"));
+  check("a single-column group over a right-aligned column takes that column's own right alignment",
+    !dealGroup || dealGroup.align === "right", dealGroup ? JSON.stringify(dealGroup) : "no single-column right-aligned group on this sheet");
+  // The two directions of the narrowed rule, on the same real sheet.
+  const norm = (t) => String(t || "").toLowerCase().replace(/[^a-z]/g, "");
+  const doubled = groups.filter((g) => g.span === 1 && g.text && norm(g.text) === norm(g.memberLabels?.[0]));
+  check("no band repeats the header directly under it", doubled.length === 0, doubled.map((g) => g.text).join(","));
+  const derived = groups.find((g) => g.text === "DERIVED");
+  check("a single-column DERIVED band keeps its label — its name is not its column's header",
+    !!derived, `bands=${groups.map((g) => g.text || "(blank)").join(",")}`);
   const priceGroupDoubled = groups.some((g) => g.text.toLowerCase() === "price");
   check("no group label literally repeats its lone column's own label (e.g. 'PRICE' over 'Price')", !priceGroupDoubled);
   const multiGroup = groups.find((g) => g.span > 1);

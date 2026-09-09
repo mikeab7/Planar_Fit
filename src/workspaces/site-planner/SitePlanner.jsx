@@ -15555,7 +15555,12 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     let live = true;
     countyAtPoint(o.lon, o.lat).then((ans) => {
       if (!live || !ans?.name) return;
-      const key = countyKeyForName(ans.name);
+      // NEW-1 (adversarial review, 2026-09-08) — state-qualified. `countyAtPoint` falls back to a
+      // NATIONAL county geometry when the boundary service can't answer, and an unqualified name
+      // is read as Texas — so a site outside TX/CO used to heal its county to the same-named TEXAS
+      // key (and with it that county's drainage authority, detention criteria and setbacks). A
+      // qualified miss is null and heals nothing, which is the correct outcome.
+      const key = countyKeyForName(ans.name, ans.state);
       if (!key || key === (restored?.county || null)) return;
       const wrong = restored?.county ?? null;
       if (restored) restored.county = key; // metaRef re-reads restored.county every render

@@ -47,8 +47,8 @@ test.describe("NEW-1 — three clicks make a road", () => {
     await armPlannerHooks(page);
     await page.goto("/");
     try {
-      await page.getByTestId("map-start-blank-menu-btn").click({ timeout: 8000 });
-      await page.getByTestId("map-start-blank-menu-item").click({ timeout: 8000 });
+      await page.getByTestId("map-toolbar-draw").click({ timeout: 8000 });
+      await page.getByTestId("map-toolbar-draw").click({ timeout: 8000 });
     } catch { /* already blank */ }
     await expect(canvas(page)).toBeVisible();
     const box = await canvas(page).boundingBox();

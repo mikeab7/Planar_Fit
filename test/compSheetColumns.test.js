@@ -3,6 +3,7 @@ import {
   SHEET_COLUMNS, GROUPS, columnIndex, cellState, cellPlaceholder, applyCellEdit,
   fillDownColumn, spillPaste, formatNumberDisplay, sanitizeNumericInput, visibleColumnIndices,
   computeFlexWidths, widthFor, frozenLeftOffsets, optionsForColumn,
+  isUnfilledRow, absorbPasteIntoSheet, groupLabelIsRedundant,
 } from "../src/shared/comps/lib/compSheetColumns.js";
 import { emptyDraft } from "../src/shared/comps/lib/comps.js";
 
@@ -213,27 +214,34 @@ describe("compSheetColumns: HARDENING-10 NEW-5 / HARDENING-27 — computeFlexWid
     expect(Math.abs(w.partyProvider - w.partyAcquirer)).toBeLessThanOrEqual(2);
     expect(w.notes).toBe(80);
   });
+  // NEW-3 (owner report, 2026-09-08) updated these constants: `location` JOINED the growers (it
+  // was a fixed 188 that never yielded while Notes starved at its floor) and every floor was
+  // raised to the width its own header genuinely needs. The numbers below track that, and they
+  // are STRICTER than the ones they replace — no floor moved down.
   it("moderate squeeze: Notes alone absorbs it first, growers stay at nominal", () => {
-    const w = computeFlexWidths(400); // full nominal total is 408; 8px short
+    const w = computeFlexWidths(588); // full nominal total is 596 (188+108+110+110+80); 8px short
     expect(w.notes).toBe(72);
+    expect(w.location).toBe(188);
     expect(w.title).toBe(108);
     expect(w.partyProvider).toBe(110);
     expect(w.partyAcquirer).toBe(110);
   });
-  it("severe squeeze: Notes is pinned at its own floor, the three growers then shrink together, never below their own floor", () => {
+  it("severe squeeze: Notes is pinned at its own floor, the growers then shrink together, never below their own floor", () => {
     const w = computeFlexWidths(0);
-    expect(w.notes).toBe(40);
-    expect(w.title).toBe(58);
-    expect(w.partyProvider).toBe(58);
-    expect(w.partyAcquirer).toBe(58);
+    expect(w.notes).toBe(44);
+    expect(w.location).toBe(90);
+    expect(w.title).toBe(84);
+    expect(w.partyProvider).toBe(88);
+    expect(w.partyAcquirer).toBe(78);
   });
   it("every regime keeps every column at or above its own floor, and never returns a negative width", () => {
-    for (const avail of [-50, 0, 100, 178, 220, 408, 900, 5000]) {
+    for (const avail of [-50, 0, 100, 178, 220, 408, 596, 900, 5000]) {
       const w = computeFlexWidths(avail);
-      expect(w.title).toBeGreaterThanOrEqual(58);
-      expect(w.partyProvider).toBeGreaterThanOrEqual(58);
-      expect(w.partyAcquirer).toBeGreaterThanOrEqual(58);
-      expect(w.notes).toBeGreaterThanOrEqual(40);
+      expect(w.location).toBeGreaterThanOrEqual(90);
+      expect(w.title).toBeGreaterThanOrEqual(84);
+      expect(w.partyProvider).toBeGreaterThanOrEqual(88);
+      expect(w.partyAcquirer).toBeGreaterThanOrEqual(78);
+      expect(w.notes).toBeGreaterThanOrEqual(44);
     }
   });
   it("widthFor returns the column's static width when there's no flexKey, or an unmeasured flex column falls back to its own static width", () => {
@@ -478,5 +486,131 @@ describe("compSheetColumns: visibleColumnIndices — 'hide unused columns entire
   it("indices come back in SHEET_COLUMNS order, never reordered", () => {
     const idx = visibleColumnIndices([rowOf("land"), rowOf("lease"), rowOf("building_sale")]);
     expect(idx).toEqual([...idx].sort((a, b) => a - b));
+  });
+});
+
+/* ── NEW-1 / NEW-3 (owner chat block, 2026-09-08) ───────────────────────────────────────────────
+ * Where a paste LANDS, whether a group band label is worth drawing, and the two width rules the
+ * owner's own 1600x465 reading caught. The live half is `ui-audit/verify-comp-paste-parcel-0908`
+ * (mutation-proven against the un-fixed build); this is the pure half. */
+
+describe("NEW-1: isUnfilledRow — exactly what a map pick leaves behind, and nothing a user typed", () => {
+  it("a row holding only an anchor is unfilled", () => {
+    const anchor = { kind: "pin", lat: 29.8, lon: -95.6, county: "harris" };
+    expect(isUnfilledRow({ _id: "a", draft: emptyDraft(anchor), cellFlags: {} }, emptyDraft)).toBe(true);
+  });
+  it("a row with no anchor at all is unfilled too", () => {
+    expect(isUnfilledRow({ _id: "a", draft: emptyDraft(null), cellFlags: {} }, emptyDraft)).toBe(true);
+  });
+  it("a parcel anchor's own acreage does NOT make the row look filled", () => {
+    // `emptyDraft` derives landSizeValue from the anchor, so it is a DEFAULT, not typed input.
+    const anchor = { kind: "parcel", lat: 29.8, lon: -95.6, acreageAc: 66.17 };
+    const row = { _id: "a", draft: emptyDraft(anchor), cellFlags: {} };
+    expect(row.draft.landSizeValue).toBe("66.17");
+    expect(isUnfilledRow(row, emptyDraft)).toBe(true);
+  });
+  it("ANY typed value makes a row filled — one field is enough", () => {
+    for (const [k, v] of [["title", "Exeter Bldg 3"], ["compType", "lease"], ["leaseRate", "0.58"], ["notes", "x"]]) {
+      const row = { _id: "a", draft: { ...emptyDraft(null), [k]: v }, cellFlags: {} };
+      expect(isUnfilledRow(row, emptyDraft), `${k} should count as filled`).toBe(false);
+    }
+  });
+});
+
+describe("NEW-1: absorbPasteIntoSheet — the paste fills the empty row instead of landing under it", () => {
+  const anchor = { kind: "pin", lat: 29.8, lon: -95.6, county: "harris" };
+  const parsed = (overrides) => ({ _id: newId(), draft: { ...emptyDraft(null), ...overrides }, cellFlags: {} });
+
+  it("the first parsed comp absorbs the unfilled row and KEEPS its anchor", () => {
+    const rows = [{ _id: "pinrow", draft: emptyDraft(anchor), cellFlags: {} }];
+    const out = absorbPasteIntoSheet(rows, [parsed({ compType: "lease", title: "Exeter Bldg 3" })], emptyDraft);
+    expect(out.rows).toHaveLength(1);
+    expect(out.rows[0]._id).toBe("pinrow");
+    expect(out.rows[0].draft.anchor).toBe(anchor);
+    expect(out.rows[0].draft.title).toBe("Exeter Bldg 3");
+    expect(out.selectRow).toBe(0);
+    expect(out.addedIds).toEqual([]); // nothing was appended, so Undo removes nothing
+    expect(out.restore.row).toBe(rows[0]); // ...it restores instead
+  });
+
+  it("extra parsed comps beyond the first still append", () => {
+    const rows = [{ _id: "pinrow", draft: emptyDraft(anchor), cellFlags: {} }];
+    const news = [parsed({ title: "one" }), parsed({ title: "two" }), parsed({ title: "three" })];
+    const out = absorbPasteIntoSheet(rows, news, emptyDraft);
+    expect(out.rows.map((r) => r.draft.title)).toEqual(["one", "two", "three"]);
+    expect(out.addedIds).toEqual([news[1]._id, news[2]._id]);
+  });
+
+  it("with no unfilled row it appends exactly as before, cursor on the first new row", () => {
+    const rows = [{ _id: "r1", draft: { ...emptyDraft(anchor), title: "typed" }, cellFlags: {} }];
+    const news = [parsed({ title: "pasted" })];
+    const out = absorbPasteIntoSheet(rows, news, emptyDraft);
+    expect(out.rows).toHaveLength(2);
+    expect(out.rows[0].draft.title).toBe("typed");
+    expect(out.selectRow).toBe(1);
+    expect(out.restore).toBeNull();
+    expect(out.addedIds).toEqual([news[0]._id]);
+  });
+
+  it("a paste never absorbs over a value the user typed", () => {
+    const rows = [
+      { _id: "typed", draft: { ...emptyDraft(anchor), leaseRate: "0.58" }, cellFlags: {} },
+      { _id: "blank", draft: emptyDraft(null), cellFlags: {} },
+    ];
+    const out = absorbPasteIntoSheet(rows, [parsed({ title: "pasted" })], emptyDraft);
+    expect(out.rows).toHaveLength(2);
+    expect(out.rows[0].draft.leaseRate).toBe("0.58");
+    expect(out.rows[1].draft.title).toBe("pasted");
+    expect(out.selectRow).toBe(1);
+  });
+
+  it("a pasted size wins over the anchor's acreage; an unstated one keeps it", () => {
+    const parcel = { kind: "parcel", lat: 29.8, lon: -95.6, acreageAc: 66.17 };
+    const rows = [{ _id: "p", draft: emptyDraft(parcel), cellFlags: {} }];
+    expect(absorbPasteIntoSheet(rows, [parsed({ landSizeValue: "5" })], emptyDraft).rows[0].draft.landSizeValue).toBe("5");
+    expect(absorbPasteIntoSheet(rows, [parsed({ title: "x" })], emptyDraft).rows[0].draft.landSizeValue).toBe("66.17");
+  });
+
+  it("an empty paste changes nothing", () => {
+    const rows = [{ _id: "a", draft: emptyDraft(null), cellFlags: {} }];
+    const out = absorbPasteIntoSheet(rows, [], emptyDraft);
+    expect(out.rows).toHaveLength(1);
+    expect(out.addedIds).toEqual([]);
+    expect(out.restore).toBeNull();
+  });
+});
+
+describe("NEW-3(e): groupLabelIsRedundant — blank a band only when the words really do repeat", () => {
+  it("blanks a band whose group name says what its own header says", () => {
+    expect(groupLabelIsRedundant("TYPE", "Type")).toBe(true);
+    expect(groupLabelIsRedundant("NOTES", "Notes")).toBe(true);
+    expect(groupLabelIsRedundant("PRICE", "Price")).toBe(true);
+  });
+  it("keeps a band that tells the reader something the header does not", () => {
+    expect(groupLabelIsRedundant("DERIVED", "$/SF/yr")).toBe(false);
+    expect(groupLabelIsRedundant("PROPERTY", "Location")).toBe(false);
+    expect(groupLabelIsRedundant("DEAL", "Executed")).toBe(false);
+    expect(groupLabelIsRedundant("CONCESSIONS", "TI ($/SF)")).toBe(false);
+  });
+});
+
+describe("NEW-3: width rules the owner's 1600x465 reading caught", () => {
+  it("Location flexes rather than holding a fixed width while Notes starves", () => {
+    const loc = SHEET_COLUMNS.find((c) => c.key === "location");
+    expect(loc.flexKey).toBe("location");
+    // At full squeeze it must genuinely yield; with room it must return to its nominal.
+    const tight = computeFlexWidths(0);
+    const roomy = computeFlexWidths(2000);
+    expect(tight.location).toBeLessThan(loc.width);
+    expect(roomy.location).toBeGreaterThanOrEqual(loc.width);
+  });
+  it("every flex column's FLOOR is wide enough for its own header (HARDENING-10 rule 4)", () => {
+    // Measured header text widths in the shipped 10px header face, + the cell's 5px padding pair
+    // and its hairline border. Live proof: ui-audit/verify-comp-paste-parcel-0908.
+    const HEADER_NEEDS = { location: 54, title: 83, partyProvider: 86, partyAcquirer: 78, notes: 41 };
+    const floors = computeFlexWidths(0);
+    for (const [key, need] of Object.entries(HEADER_NEEDS)) {
+      expect(floors[key], `${key} floor must fit its own header`).toBeGreaterThanOrEqual(need);
+    }
   });
 });
