@@ -13465,3 +13465,111 @@ rules — they are UA-default / not-yet-tokenized `fontSize` values, plus one st
 - Files: `public/sequence/index.html` (removed `GRID_GUTTER_W` and its dedicated strip div; scroll region and Columns button restyled).
 - Base: `origin/main` @ `e705440`.
 - **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+### B1409408 — Notes from a deleted project sit in the live Pages tree `[Notes]` (bug) #notes #ui #persistence  *(owner chat block, 2026-09-09: "idk why we're showing notes from a project that was deleted in my Pages, this should be in bin" — Michael's own follow-up decision, verbatim, after two options were put to him: **"Yeah give them their own holding row."** Orphaned notes do NOT go in the Bin. Minted **B1409408** from this branch's reserved block B1409408–B1409423 · V1025696–V1025711 against freshly-fetched `origin/main` 207c108. DEDUPE-FIRST — searched Open/⏳Verify/Done for "Unfiled", "orphaned note", "holding row", "From a project you deleted": no prior item builds this surface — B1202176/V872976 (still ⏳ Verify) fixed the CODE PATH that stops causing new orphans; nothing before this ever gave existing orphans a home. Net-new.)*
+
+`[x]` **FIXED THIS SESSION.**
+
+- Verify: sandbox — driven for real, headless, against a built local production preview in `ui-audit/verify-notes-unfiled-bin-footer.mjs` (18/18 checks). No live-only class applies: the behavior is fully reachable signed out, from local tree data, same as every other Notes structural check in this module.
+- Origin: owner chat block, 2026-09-09.
+
+**WHY THE BIN WAS WRONG, IN HIS OWN TERMS — recorded so a future session does not "simplify" this back.** The Bin is a countdown, not a location: putting an orphaned note there silently starts a 30-day deletion clock on something the owner never chose to delete — he deleted a PROJECT, not the note. Same family as the binned-plan-inside-a-live-project hazard already on file. Unfiled carries **no timer at all**.
+
+**THE MECHANISM.** A root page keeps its `projectId` forever — deleting a project never touches the notes filed under it (deliberately; a project delete's own confirmation already offers to re-file them, and declining just leaves the binding as-is). Once that project id no longer resolves against the account's live project list, the page is genuinely ORPHANED — distinct from a page whose `projectId` is `null` (created outside any project on purpose, and exactly where it was put).
+
+- `lib/notesModel.js` — new `unfiledPages(tree, projects, projectsState)`: every root page whose `projectId` is set and does not resolve against the live project list, **only while `projectsState === "ready"`** (a list that is still loading or failed to load is not evidence the project is gone — see `Notes.jsx`'s own `resolveProjectRef` for the identical three-way distinction). `projectGroups()` now takes the same `projectsState` and **excludes** exactly this set from the Dashboard's per-project grouping, so an orphan never lands in the live tree at all.
+- `components/NotesTree.jsx` — a new **Unfiled** row in the sidebar's footer rail (see B1409410), visible only when the count is above zero, opening a flat list of every orphaned root rendered through the SAME `renderPage` every other root uses — full right-click menu for free: **"Belongs to…"** files it under a real project (or "Not in a project"), **"Delete"** bins it as its own deliberate, separate act (which DOES start the retention clock, because that is now a choice the owner made, not something that happened to him).
+- Reachable tree-wide (not scoped to the current project or the Dashboard), exactly like the Bin already is — an orphan by definition belongs nowhere you could be "standing in."
+
+- **Adjacent cases, checked:**
+
+  | Case | Result | How checked |
+  |---|---|---|
+  | Zero orphans | Unfiled row absent entirely (not a permanent "Unfiled (0)") | Headless, live |
+  | One orphan | Row shows, singular copy ("1 page…") | Headless, live |
+  | Several orphans, from DIFFERENT dead projects | All collected under the ONE Unfiled row/heading — see B1409409 | Headless, live |
+  | Filing an orphan out (Belongs to… → a real project or "Not in a project") | Leaves Unfiled immediately, footer count decrements, durably written to the stored tree (not just the screen) | Headless, live |
+  | Binning an orphan deliberately | Removed from Unfiled, appears in the Bin, retention clock starts — the one case where a timer is correct, because it was chosen | Headless, live |
+  | A page deliberately created with no project ("Not in a project") | Never swept into Unfiled — stays in its existing group, unchanged | Unit + headless |
+  | Project list still loading / failed to load | Nothing is treated as unfiled yet — stays inline, flagged, exactly as before (no false positive from a transient state) | Unit |
+- Sandbox: `npx vitest run test/notesModel.test.js test/notesModule.test.js` — 304/304 green (new `unfiledPages` describe block, 6 cases; `projectGroups`'s orphan-exclusion behavior re-asserted for `ready`/`loading`/`failed`). Full repo `npx vitest run` — 1299/1299 Notes-suite tests green, no regressions. `npm run build` — clean.
+- Live: `node ui-audit/verify-notes-unfiled-bin-footer.mjs` against a real local production build — 18/18. `node ui-audit/verify-notes-project-integrity.mjs` re-run after this change — 73/73 (two of its own steps updated for the new access path, see that item's own file diff). `node ui-audit/verify-notes-tier1.mjs` — 80/80. `node ui-audit/verify-phone-layout.mjs` — every Notes-prefixed check passes (8 unrelated Site Planner failures pre-date this change, untouched).
+- **No contradiction with `## Owner product constraints`.**
+- Files: `src/workspaces/notes/lib/notesModel.js`, `src/workspaces/notes/components/NotesTree.jsx`, `test/notesModel.test.js`, `ui-audit/verify-notes-unfiled-bin-footer.mjs` (new), `ui-audit/verify-notes-project-integrity.mjs`, `docs/NOTES-CARRY-FORWARD.md`.
+- Base: `origin/main` @ `207c108`.
+
+### B1409409 — The "from a project you deleted" header repeated once per note, not once per group `[Notes]` (bug) #notes #ui  *(owner chat block, 2026-09-09, measured live in the sidebar: six orphaned pages produced the heading SIX TIMES, once per page. Minted **B1409409** from the same reserved block against `origin/main` 207c108. DEDUPE-FIRST — searched Open/⏳Verify/Done for the same terms as B1409408: no prior item. Net-new, though closed by the SAME code change as B1409408 — see below.)*
+
+`[x]` **FIXED THIS SESSION — as a direct consequence of B1409408, not a separate patch.**
+
+- Verify: sandbox — same harness as B1409408, `ui-audit/verify-notes-unfiled-bin-footer.mjs`, asserting the copy appears exactly once regardless of page count.
+- Origin: owner chat block, 2026-09-09.
+
+**ROOT CAUSE.** `projectGroups()` (`lib/notesModel.js`) grouped every root page by its OWN `projectId`, with no distinction between "a live project with two pages" and "a dead project id with one orphaned page." Six orphaned pages, from six different dead project ids, each legitimately keyed its OWN one-page group — so `GroupHead` (`components/NotesTree.jsx`) correctly rendered its "From a project you deleted" heading once per group, which was once per PAGE, because there was never a shared group for orphans to land in.
+
+**THE FIX IS THE SAME ONE THAT CLOSES B1409408, DELIBERATELY.** Once every orphan is excluded from `projectGroups()` and collected instead in the single Unfiled view (B1409408), there is exactly ONE explanatory paragraph over the whole collection — "N pages from a project you deleted…" — regardless of how many different dead projects they originally came from. Fixing this "wherever they land" (the dispatch's own instruction) meant the fix could not live in `GroupHead`'s rendering alone; it had to be that orphans stop forming their own groups at all. A version that merely changed the HEADING'S rendering (e.g., de-duplicating repeated headings in place) would have left the Bin-adjacent NEW-1 requirement unmet and reintroduced this exact bug the moment two orphans shared a heading in the live tree — so this is filed as its own item, closed by, not merged into, B1409408's change.
+
+- **Adjacent case checked:** orphans from the SAME dead project id (not just different ones) also collapse under the one heading — trivially true once grouping is removed for the whole class, confirmed via the harness's two-different-dead-project fixture (the harder case) rather than the easier same-id case.
+- Sandbox / Live: identical evidence to B1409408 (same commit, same test runs).
+- **No contradiction with `## Owner product constraints`.**
+- Files: `src/workspaces/notes/lib/notesModel.js`, `src/workspaces/notes/components/NotesTree.jsx` — see B1409408 for the full diff; filed separately because it is a distinct symptom the owner named separately.
+- Base: `origin/main` @ `207c108`.
+
+### B1409410 — The Bin moves off the primary segmented control into a footer rail `[Notes]` (task) #notes #ui  *(owner chat block, 2026-09-09: "Today it is Pages | Tasks | Bin... The control becomes Pages | Tasks. A footer rail pinned to the bottom of the sidebar carries Unfiled (count) and Bin. The Bin row states its retention period ON THE ROW." Minted **B1409410** from the same reserved block against `origin/main` 207c108. DEDUPE-FIRST — searched Open/⏳Verify/Done for "footer rail", "segmented control" + Notes, "Bin tab": no prior item. Net-new.)*
+
+`[x]` **FIXED THIS SESSION.**
+
+- Verify: sandbox — `ui-audit/verify-notes-unfiled-bin-footer.mjs` §1 and the Notes-prefixed rows of `ui-audit/verify-phone-layout.mjs` (footer Bin row still ≥44px tall on phone, still reachable).
+- Origin: owner chat block, 2026-09-09.
+
+**THE CHANGE, exactly as specified.** `VIEWS` (`components/NotesTree.jsx`) is now `[Pages, Tasks]` — two segments, not three. A new `SidebarFooter` component sits BELOW the scrolling tree as its own `flex: 0 0 auto` sibling (never inside the scroll container, so it stays visible without scrolling to find it), carrying:
+- **Bin** — always present (a standing feature, not gated on having contents, exactly like the segmented tab it replaces), stating its retention period on the row itself: **"Bin / kept 30 days"** (the number reads from the existing `TRASH_RETENTION_DAYS` constant, never hand-typed a second time).
+- **Unfiled** — present only when it has something to say (see B1409408); carries its count, because unlike the Bin the number IS the point.
+
+Both rows reuse the exact `data-testid="notes-view-bin"` the old tab carried, so every existing harness that opens the Bin (`verify-notes-project-integrity.mjs`, `verify-notes-bin-never-written.mjs`, `sweep-notes.mjs`, `verify-phone-layout.mjs`) kept working unchanged — only the tab-strip's own content-count assertion needed updating (it now asserts exactly `Pages|Tasks`).
+
+- **Adjacent cases, checked:**
+
+  | Case | Result | How checked |
+  |---|---|---|
+  | Short laptop window (1366×620) | Footer rail's bounding box sits fully inside the viewport with no scroll needed, Unfiled row visible and clickable | Headless, live — measured `getBoundingClientRect()` against the real viewport height |
+  | Phone width (narrow) | Both footer rows meet the ≥44px tap-target floor (`verify-phone-layout.mjs`'s existing budget, unchanged) | Headless, live |
+  | Tree scrolled to the bottom (a 40-page seeded tree, genuinely scrolled 690px) | Footer rail's own bounding box is pixel-identical before and after — it is a sibling of the scroll container, not inside it | Headless, live — measured, not inferred from the DOM structure alone |
+  | Bin still opens and restores/purges correctly from the new entry point | Every existing Bin behavior (Restore, Delete forever, Read it, Empty the bin, "Delete the N empty ones forever") — unchanged; only the row that opens the view moved | `verify-notes-project-integrity.mjs` §7 (35 checks), re-run green |
+  | Switching between Pages/Tasks and Bin/Unfiled repeatedly | Selected-state highlight follows correctly on all four surfaces via the shared `changeView()` handler (search query cleared on every switch, same as before) | Headless, live |
+- Sandbox: full Notes-suite `npx vitest run` unaffected (no model-layer change beyond B1409408's). `npm run build` clean.
+- Live: `ui-audit/verify-notes-unfiled-bin-footer.mjs` (18/18), `ui-audit/verify-notes.mjs` §16 tab-strip assertions rewritten and passing, `ui-audit/verify-notes-project-integrity.mjs` (73/73), `ui-audit/verify-notes-tier1.mjs` (80/80), `ui-audit/verify-phone-layout.mjs` (all Notes rows pass, including the new footer's tap-target height).
+- **No contradiction with `## Owner product constraints`.**
+- Files: `src/workspaces/notes/components/NotesTree.jsx`, `ui-audit/verify-notes.mjs`, `ui-audit/verify-notes-unfiled-bin-footer.mjs` (new).
+- Base: `origin/main` @ `207c108`.
+
+### B1409411 — Establish whether sessions are leaving test pages in Michael's real Notes `[Notes]` (task) #notes #persistence #testing  *(owner chat block, 2026-09-09: "All six orphans are titled 'Untitled page' and at least one has a body reading 'soft delete check'... ESTABLISH IT, DO NOT ASSUME IT... If sessions have been leaving pages in his live Notes, that is the real defect and it needs a rule, not a cleanup." Minted **B1409411** from the same reserved block against `origin/main` 207c108. DEDUPE-FIRST — searched Open/⏳Verify/Done for "test page" + Notes, "leftover" + notes, "soft delete check": no prior item asks this question directly, though B1202176/V872976 (⏳ Verify) turned out to be the very family that produced the evidence. Net-new.)*
+
+`[x]` **INVESTIGATED AND CLOSED THIS SESSION — ESTABLISHED, not assumed, via direct read-only queries against `planyr_production` (Supabase MCP, project `lyeqzkuiwngunutlkkmi`), cross-referenced with this repo's own git history and `VERIFICATION.md`.**
+
+- Verify: sandbox — a data-forensics finding closed by direct evidence gathering, not a UI behavior needing a click-through. Nothing further to verify live.
+- Origin: owner chat block, 2026-09-09.
+
+**THE FINDING: YES, confirmed for all six, by name.** Queried `notes_trees`/`notes_pages` directly (read-only) and read every one of the six orphaned root pages' actual stored bodies:
+
+| Page id | Dead project id | Created (UTC) | Stored body |
+|---|---|---|---|
+| `pg_mtp1ak5q1s7a0lb` | `smtp17mwi649` | 2026-09-05 23:48:44 | *"persistence check 6:52pm"* |
+| `pg_mtp2enm41umrl6o` | `smtp2dcu4i53` | 2026-09-06 00:19:55 | *"V872976 persistence check"* |
+| `pg_mtp3nmc5175q37v` | `smtp3n4lpe8u` | 2026-09-06 00:54:53 | *"soft delete check"* |
+| `pg_mtp5g10d1ul48sn` | `smtp5fn4hops` | 2026-09-06 01:44:58 | *"race check after 1479"* |
+| `pg_mtp6c5nb15xeowd` | `smtp6brrghkg` | 2026-09-06 02:09:57 | *"check after 1475"* |
+| `pg_mtp6r7j81yzh1x6` | `smtp6qplz47d` | 2026-09-06 02:21:39 | *"PERSIST CHECK 0227Z"* |
+
+**Not one is his data.** All six were created within a single 2.5-hour window, each under its own freshly-minted throwaway project id, and one names a live-verify item by number — `V872976` — which is the exact, still-open (`⏳ Verify`) live-verify item for **B1202176**: *"New project → first real write happens in Notes, not Site Planner → does the `sites` row ever materialize?"* That item's own steps 14-16, verbatim, instruct: *"navigate to that project's Notes tab and click the empty state's '+ New page' button... Paste or type some text into it"* — this is not an inference, it is that exact script, run six times, reproducing the bug (and confirming the fix) once per throwaway project.
+
+**The session (or sessions) DID clean up half its own mess.** `sites` rows for three of the six throwaway ids (`smtp2dcu4i53`, `smtp6brrghkg`, `smtp6qplz47d`) were bulk soft-deleted together at the identical timestamp `2026-09-06 03:50:22.589677+00` — one deliberate cleanup pass of the PROJECT side of the repro. The other three throwaway ids never got a `sites` row at all, which is the original bug reproducing correctly. **It never went back for the NOTES pages** those same six cycles had filed — because a Notes page's bytes are, by design, never gated on its project's `sites` row existing (`Notes.jsx`'s wiring to `ensureProjectRow` is deliberately best-effort, per B1202176/V872976's own text: *"its bytes are never at risk"*) — which is exactly correct for never losing a real user's words, and is exactly what let six throwaway diagnostic pages outlive their own already-deleted throwaway projects.
+
+**THE RULE, written into `docs/NOTES-CARRY-FORWARD.md` §5 item 12 (the module's own living bug-family ledger, per its standing instruction that a new bug family goes in there in the same commit that finds it) and cross-referenced against `CLAUDE.md`'s owner constraint #7:** a live check that creates a throwaway PROJECT to reproduce a bug must delete every NOTES PAGE it filed under that project too, in the SAME cleanup pass — not as a separate, easy-to-forget step. Before ending a live-verify session that touched Notes, confirm zero throwaway pages remain; the new Unfiled row (B1409408) is now the fastest way to check.
+
+**NOT cleaned up as part of THIS item, deliberately — the dispatch's own instruction, and STANDING RULE #2's spirit applied to test artifacts, not just owner-reported symptoms:** they are surfaced under Unfiled (B1409408), never auto-deleted, so Michael can see them himself and decide. A session correcting a defect does not get to unilaterally delete rows it merely diagnosed.
+
+- **What was NOT further pursued, and why:** whether `smtp2dcu4i53`'s earlier documented "adoption" (a `sites` row inserted via the Supabase MCP, recorded on B1202176 itself) was itself swept up in the same 03:50:22 bulk cleanup, or deleted independently, was not traced further — establishing that the six pages are test artifacts (the dispatch's actual question) did not require it, and re-litigating B1202176's own already-recorded production-repair history is out of that item's scope, not this one's.
+- **No contradiction with `## Owner product constraints`.**
+- Files: `docs/NOTES-CARRY-FORWARD.md` (new §5 item 12).
+- Base: `origin/main` @ `207c108`.
