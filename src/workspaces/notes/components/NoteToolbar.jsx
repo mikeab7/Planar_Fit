@@ -32,10 +32,15 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { HEADING_LEVELS } from "../lib/notesExtensions.js";
-import { BLOCK_SPACES, DENSITIES, LINE_SPACINGS, spacingLabel } from "../lib/notesSpacing.js";
+import { BLOCK_SPACES, DENSITIES, LINE_SPACINGS, spacingLabel, fontSizePx } from "../lib/notesSpacing.js";
 import { CALLOUT_TONES } from "../lib/notesCalloutNode.js";
 import { FONTS, HIGHLIGHT_COLORS, SIZES, TEXT_COLORS } from "../lib/notesFormatPalette.js";
-import { MIXED, formatDisplayValue, selectionBlockShapes, selectionFontSizes, selectionLineHeights } from "../lib/notesMixedSelection.js";
+import {
+  MIXED, formatDisplayValue, selectionAlignments, selectionBlockShapes, selectionFontFamilies,
+  selectionFontSizes, selectionLineHeights, selectionListKinds, selectionMarkAttrs,
+  selectionMarkPresence, togglePressed,
+} from "../lib/notesMixedSelection.js";
+import { familyKey, fontDisplayLabel, matchFontOption } from "../lib/notesFontFamily.js";
 
 /* Mirrored from src/shared/ui/controls.jsx rather than imported — deliberately, and there
  * is a test that fails if the copies drift (test/notesModule.test.js). Importing
@@ -94,13 +99,32 @@ function Icon({ children, size = 15 }) {
  * this — a 44px tap target (WCAG 2.5.5), the same floor the food module's phone controls
  * already use. `false` (the default, every desktop call site) reproduces this file's
  * pre-existing output exactly. */
-function TBButton({ onClick, active, disabled, title, label, children, testid, wide, big }) {
+/* ⛔ A TOGGLE HAS THREE STATES, AND `undefined` WAS BEING USED FOR ONE OF THEM
+ * (NEW-TOOLBAR-STATE). This shipped as `aria-pressed={active ? "true" : undefined}`, which
+ * means Bold / Italic / Underline / Strikethrough exposed **no state whatsoever** whenever they
+ * were off — the owner measured exactly that on the live toolbar, absent in every case he could
+ * sample. And `active` itself came from `editor.isActive(...)`, which on a RANGE answers "does
+ * this mark cover the WHOLE range" — so half-bold text reported a confident **false**,
+ * indistinguishable from text with no bold in it anywhere.
+ *
+ * `pressed` is the honest three-state answer ("true" / "false" / "mixed" — see
+ * lib/notesMixedSelection.js's `togglePressed`) and it drives BOTH the accessible state and the
+ * paint, so the two can never drift. `active` stays for the handful of buttons that are not
+ * toggles at all and merely want the accent treatment (the More sheet's own trigger); a button
+ * that is neither still emits no `aria-pressed`, which is correct — Undo is not a toggle.
+ *
+ * The MIXED paint is deliberately neither of the other two: an accent OUTLINE with no fill, so
+ * "some of this is bold" cannot be misread at a glance as either "all of it is" or "none of it
+ * is". Tokens only, per docs/DESIGN.md — no raw hex on a control. */
+function TBButton({ onClick, active, pressed, disabled, title, label, children, testid, wide, big }) {
+  const mixed = pressed === "mixed";
+  const on = pressed === "true" || (pressed === undefined && !!active);
   return (
     <button
       type="button"
-      title={title}
-      aria-label={title}
-      aria-pressed={active ? "true" : undefined}
+      title={mixed ? `${title} — mixed` : title}
+      aria-label={mixed ? `${title} — mixed` : title}
+      aria-pressed={pressed !== undefined ? pressed : (active ? "true" : undefined)}
       data-testid={testid}
       disabled={disabled}
       onMouseDown={stop}
@@ -110,13 +134,13 @@ function TBButton({ onClick, active, disabled, title, label, children, testid, w
         minWidth: big ? 44 : (wide ? undefined : 28), height: big ? 44 : 28,
         padding: big ? "0 12px" : (wide ? "0 9px" : "0 5px"),
         flex: big ? "0 0 auto" : undefined,
-        border: "1px solid", borderColor: active ? "var(--accent-notes)" : "transparent",
+        border: "1px solid", borderColor: (on || mixed) ? "var(--accent-notes)" : "transparent",
         borderRadius: RADIUS.control,
-        background: active ? "var(--accent-notes)" : "transparent",
-        color: active ? "var(--on-accent-notes)" : "var(--text-secondary)",
+        background: on ? "var(--accent-notes)" : "transparent",
+        color: on ? "var(--on-accent-notes)" : (mixed ? "var(--accent-notes-text)" : "var(--text-secondary)"),
         opacity: disabled ? 0.4 : 1,
         cursor: disabled ? "default" : "pointer",
-        font: "inherit", fontSize: big ? 15 : 13, fontWeight: active ? 650 : 500, lineHeight: 1,
+        font: "inherit", fontSize: big ? 15 : 13, fontWeight: (on || mixed) ? 650 : 500, lineHeight: 1,
       }}
     >
       {children}{label ? <span>{label}</span> : null}
@@ -124,26 +148,6 @@ function TBButton({ onClick, active, disabled, title, label, children, testid, w
   );
 }
 
-function TBSelect({ value, onChange, title, options, testid, width = 116, big }) {
-  return (
-    <select
-      title={title}
-      aria-label={title}
-      data-testid={testid}
-      value={value == null ? "" : String(value)}
-      onMouseDown={(e) => e.stopPropagation()}
-      onChange={onChange}
-      style={{
-        height: big ? 44 : 28, width: big ? Math.max(width, 132) : width, padding: "0 6px", borderRadius: RADIUS.control,
-        flex: big ? "0 0 auto" : undefined,
-        border: "1px solid var(--border-default)", background: "var(--surface-raised)",
-        color: "var(--text-primary)", font: "inherit", fontSize: big ? 15 : 13, cursor: "pointer",
-      }}
-    >
-      {options.map((o) => <option key={String(o.value)} value={o.value == null ? "" : String(o.value)}>{o.label}</option>)}
-    </select>
-  );
-}
 
 /** A LISTBOX POPOVER, not a native `<select>` — the fix for B1139216's "dead click".
  *
@@ -170,7 +174,7 @@ function TBSelect({ value, onChange, title, options, testid, width = 116, big })
  * override lets the trigger show a SHORT current-state glyph while the dropdown keeps its own
  * full, readable option text — the one thing a native `<select>` cannot do, because it ties the
  * closed box to the exact string of whatever option is selected. */
-function FormatMenu({ title, testid, value, mixed, options, onPick, big, width = 116, displayLabel }) {
+function FormatMenu({ title, testid, value, mixed, options, onPick, big, width = 116, displayLabel, prefix }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   useEffect(() => {
@@ -205,7 +209,16 @@ function FormatMenu({ title, testid, value, mixed, options, onPick, big, width =
           font: "inherit", fontSize: big ? 15 : 13, cursor: "pointer",
         }}
       >
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>{label}</span>
+        {/* `prefix` is a standing caption that names WHAT KIND of thing the box holds, so two
+            adjacent dropdowns cannot be mistaken for each other (NEW-3 amendment). It is not a
+            value and never changes with the selection. */}
+        {prefix ? (
+          <span aria-hidden="true" style={{
+            flex: "0 0 auto", fontSize: big ? 11 : 9.5, fontWeight: 700, letterSpacing: "0.06em",
+            textTransform: "uppercase", color: "var(--text-tertiary)", marginRight: 4,
+          }}>{prefix}</span>
+        ) : null}
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left", flex: "1 1 auto" }}>{label}</span>
         <Icon size={11}><path d="M4 6.5L8 10.5l4-4" /></Icon>
       </button>
       {open && (
@@ -300,7 +313,8 @@ const MarkerGlyph = ({ swatch }) => (
 );
 
 /** A swatch popover. Closes on pick, on Escape, and on an outside pointer press. */
-function ColorPopover({ title, swatch, colors, onPick, testid, glyph = "ink", big }) {
+function ColorPopover({ title, swatch, colors, onPick, testid, glyph = "ink", big, mixed }) {
+  const name = mixed ? `${title} — mixed` : title;
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   useEffect(() => {
@@ -314,8 +328,14 @@ function ColorPopover({ title, swatch, colors, onPick, testid, glyph = "ink", bi
 
   return (
     <span ref={wrapRef} style={{ position: "relative", display: "inline-flex" }}>
-      <TBButton title={title} testid={testid} big={big} onClick={() => setOpen((o) => !o)}>
-        {glyph === "marker" ? <MarkerGlyph swatch={swatch} /> : <InkGlyph swatch={swatch} />}
+      {/* ⛔ A MIXED RANGE SHOWS NO SWATCH (NEW-TOOLBAR-STATE). The glyph's bar IS the readout —
+          it is how the button says what colour it will apply and what colour the text already
+          is — so painting the caret's colour there for a range holding three colours is the
+          same guess the Font box was making with "Default". `swatch: null` falls through to the
+          glyph's own neutral outline, and the accessible name says "mixed". */}
+      <TBButton title={name} testid={testid} big={big} pressed={undefined}
+        onClick={() => setOpen((o) => !o)}>
+        {glyph === "marker" ? <MarkerGlyph swatch={mixed ? null : swatch} /> : <InkGlyph swatch={mixed ? null : swatch} />}
       </TBButton>
       {open && (
         <div
@@ -786,13 +806,27 @@ export default function NoteToolbar({
     else chain().setHeading({ level: Number(v.slice(1)) }).run();
   };
 
+  /* ⛔ SIZES ARE COMPARED AND DISPLAYED IN ONE UNIT (NEW-4). The stored value carries whatever
+   * unit its source used — a Word paste stores `11.0pt` — and `parseInt` threw the unit away,
+   * so an 11pt run (14.67px on screen) and an 11px run both read "11", and picking the "11"
+   * already showing SHRANK the first by a quarter. `fontSizePx` resolves both sides to px
+   * before anything is compared or shown, so two different sizes can never read as one number.
+   * See lib/notesSpacing.js for the measured repro. */
   const sizeDisplay = formatDisplayValue({
     selectionEmpty: selection.empty,
-    caretValue: editor.getAttributes("textStyle")?.fontSize || null,
-    rangeValues: selection.empty ? [] : selectionFontSizes(editor.state.doc, selection.from, selection.to),
+    caretValue: fontSizePx(editor.getAttributes("textStyle")?.fontSize || null),
+    rangeValues: selection.empty
+      ? []
+      : selectionFontSizes(editor.state.doc, selection.from, selection.to).map(fontSizePx),
   });
   const sizeMixed = sizeDisplay === MIXED;
-  const currentSizeNum = !sizeMixed && sizeDisplay ? parseInt(sizeDisplay, 10) : null;
+  const currentSizeNum = !sizeMixed && sizeDisplay ? Math.round(sizeDisplay) : null;
+  /* A size that is not one of the offered steps — which is what every pasted point size becomes
+   * — is still shown, and is still RE-PICKABLE, by joining the list rather than blanking the box
+   * (a blank box means "mixed" here, and this selection is not mixed). */
+  const sizeOptions = SIZES.includes(currentSizeNum) || currentSizeNum == null
+    ? SIZES
+    : [...SIZES, currentSizeNum].sort((a, b) => (a == null ? -1 : b == null ? 1 : a - b));
 
   /* ⛔ THE LINE SPACING CONTROL USED TO BE WRITE-ONLY (NEW-SPACING-3) — it applied a spacing but
    * never showed what the paragraph under the caret actually had, unlike Block style / Font size
@@ -822,9 +856,86 @@ export default function NoteToolbar({
     chain().setNoteSpacing({ [key]: n }).run();
   };
 
-  const currentFont = editor.getAttributes("textStyle")?.fontFamily || null;
-  const currentColor = editor.getAttributes("textStyle")?.color || null;
-  const currentHl = editor.getAttributes("highlight")?.color || null;
+  /* ═══ EVERY CONTROL REPORTS THE SELECTION, OR REPORTS NOTHING (NEW-TOOLBAR-STATE) ═══
+   * Owner rule, verbatim: *"If I select multiple text types and it's got different ones, then
+   * it shouldn't say a font. And then same thing for text size and bold and underlined and
+   * italic, whatever. Everything that you can think of that it does on Word, it should do
+   * here."* Uniform → the real value · caret → what the next character gets · mixed → nothing.
+   * ONE mechanism for all of them (lib/notesMixedSelection.js) — the whole point is that Font
+   * size was made correct in isolation and eleven other controls stayed wrong, so a bespoke
+   * mixed-check for one button is the defect, not the fix. */
+  const doc = editor.state.doc;
+  const { from, to, empty: selEmpty } = selection;
+  const rangeOf = (read) => (selEmpty ? [] : read());
+
+  /* FONT FAMILY (NEW-1 / NEW-2). Agreement is decided on the TYPEFACE, not on the exact stack
+   * string: Word's `"Calibri",sans-serif` and the palette's `Calibri, Candara, sans-serif` are
+   * the same answer to "what font is this", and comparing them as strings is precisely why a
+   * genuinely-Calibri run read "Default". See lib/notesFontFamily.js. */
+  const caretFamily = editor.getAttributes("textStyle")?.fontFamily || null;
+  const rawFamilies = selEmpty ? [caretFamily] : selectionFontFamilies(doc, from, to);
+  const familyDisplay = formatDisplayValue({
+    selectionEmpty: selEmpty,
+    caretValue: familyKey(caretFamily),
+    rangeValues: rangeOf(() => rawFamilies.map(familyKey)),
+  });
+  const fontMixed = familyDisplay === MIXED;
+  // The original stack string behind the agreed key — it is what carries the real display name.
+  const currentFont = fontMixed ? null : (rawFamilies.find((f) => familyKey(f) === familyDisplay) ?? null);
+  const currentFontOption = matchFontOption(currentFont, FONTS);
+  /* An off-palette family (any font a sender happened to use) is SHOWN BY NAME and offered as a
+   * pickable row, rather than silently reported as "Default" — his explicit ask. */
+  const fontOptions = currentFont && !currentFontOption
+    ? [...FONTS, { label: fontDisplayLabel(currentFont, FONTS), value: currentFont }]
+    : FONTS;
+
+  const currentColorRaw = editor.getAttributes("textStyle")?.color || null;
+  const colorDisplay = formatDisplayValue({
+    selectionEmpty: selEmpty,
+    caretValue: currentColorRaw,
+    rangeValues: rangeOf(() => selectionMarkAttrs(doc, from, to, "textStyle", "color")),
+  });
+  const colorMixed = colorDisplay === MIXED;
+  const currentColor = colorMixed ? null : colorDisplay;
+
+  const currentHlRaw = editor.getAttributes("highlight")?.color || null;
+  const hlDisplay = formatDisplayValue({
+    selectionEmpty: selEmpty,
+    caretValue: currentHlRaw,
+    rangeValues: rangeOf(() => selectionMarkAttrs(doc, from, to, "highlight", "color")),
+  });
+  const hlMixed = hlDisplay === MIXED;
+  const currentHl = hlMixed ? null : hlDisplay;
+
+  /* The boolean toggles. `editor.isActive` is kept for the CARET (it is exactly right for one
+   * position, and it also honours `storedMarks` — what the NEXT character will be, which no
+   * document walk can see); a RANGE is answered by the shared reader. */
+  const markPressed = (name) => togglePressed({
+    selectionEmpty: selEmpty,
+    caretValue: editor.isActive(name),
+    rangeValues: rangeOf(() => selectionMarkPresence(doc, from, to, name)),
+  });
+  const boldPressed = markPressed("bold");
+  const italicPressed = markPressed("italic");
+  const underlinePressed = markPressed("underline");
+  const strikePressed = markPressed("strike");
+  const codePressed = markPressed("code");
+
+  /* Lists and alignment are BLOCK properties, so they walk textblocks rather than runs. */
+  const listKinds = rangeOf(() => selectionListKinds(doc, from, to));
+  const listPressed = (kind) => togglePressed({
+    selectionEmpty: selEmpty,
+    caretValue: editor.isActive(kind),
+    rangeValues: listKinds.map((k) => k === kind),
+  });
+  const alignValues = rangeOf(() => selectionAlignments(doc, from, to));
+  const alignDisplay = formatDisplayValue({
+    selectionEmpty: selEmpty,
+    caretValue: ALIGNS.map((a) => a.id).find((id) => id !== "left" && editor.isActive({ textAlign: id })) ?? null,
+    rangeValues: alignValues,
+  });
+  const alignMixed = alignDisplay === MIXED;
+  const alignPressed = (id) => (alignMixed ? "mixed" : String((alignDisplay ?? "left") === id));
 
   // Indent/outdent act on whichever list kind the caret is actually in. Real nesting first,
   // the indent-attribute fallback second — the same order Tab itself uses (lib/notesListIndent.js)
@@ -850,16 +961,39 @@ export default function NoteToolbar({
   /* ---- controls that MOVE between the row and the More sheet, defined once (NEW-2) --------
    * Each is placed in exactly one of the two spots below via `{!narrow && x}` / `{narrow && x}`
    * — never both — so there is one copy of every prop and handler, not two that can drift. */
+  /* ⛔ BLOCK STYLE IS NOT THE FONT BOX, AND IT USED TO BE SITTING WHERE ONE IS (NEW-3
+   * amendment). It held the LEADING slot on the row — the exact screen position Word gives the
+   * font NAME — while showing "Body text", so the owner read it as the font picker and then
+   * concluded the font could only be changed on body text: *"and body text should just say
+   * font, i should be able to change the font of headers if thats why it shows like that"*.
+   * That is a layout defect, not a misreading. Font now leads (below), and the two adjacent
+   * dropdowns are told apart on sight rather than by their contents: this one carries a
+   * standing "Style" caption, so a glance reads "Style: Body text" and never a font name. */
   const blockStyleControl = (
-    <FormatMenu title="Block style" testid="nt-block" width={104} big={narrow}
-      value={blockDisplay} mixed={blockMixed} onPick={setBlock} options={HEADING_OPTIONS} />
+    <FormatMenu title="Block style" testid="nt-block" width={140} big={narrow}
+      value={blockDisplay} mixed={blockMixed} onPick={setBlock} options={HEADING_OPTIONS}
+      prefix="Style" />
+  );
+  /* ⛔ THE FONT NAME TAKES THE LEADING SLOT (NEW-3). It was two levels deep inside "More
+   * formatting" — which, as B1371 already recorded for Font size, reads to a user as "there is
+   * no font control" — while most of his real notes arrive pasted from Word and Outlook and are
+   * full of mixed fonts he could not see. It is a FormatMenu, not the native `<select>` it was:
+   * a select cannot show a blank mixed state, cannot show a family that is not one of its
+   * options, and cannot be driven in headless Chromium (this file's own note at FormatMenu). */
+  const fontControl = (
+    <FormatMenu title="Font" testid="nt-font" width={132} big={narrow}
+      value={currentFontOption ? currentFontOption.value : currentFont}
+      mixed={fontMixed}
+      displayLabel={fontMixed ? "" : fontDisplayLabel(currentFont, FONTS)}
+      options={fontOptions.map((f) => ({ label: f.label, value: f.value }))}
+      onPick={(v) => (v ? chain().setFontFamily(v).run() : chain().unsetFontFamily().run())} />
   );
   /* FONT SIZE LIVES ON THE ROW ON DESKTOP (B1371) — moved into the More sheet on phone, where
    * it stays reachable in two taps rather than crowding the six-control primary row. */
   const fontSizeControl = (
     <FormatMenu title="Font size" testid="nt-size" width={62} big={narrow}
       value={currentSizeNum} mixed={sizeMixed}
-      options={SIZES.map((s) => ({ label: s == null ? "Size" : String(s), value: s }))}
+      options={sizeOptions.map((s) => ({ label: s == null ? "Size" : String(s), value: s }))}
       /* ⛔ THE INLINE MARK, THEN THE BLOCK (NEW-SPACING-2). Setting the size only on the runs
        * leaves the paragraph's own strut at the default, so a whole line made smaller stayed
        * exactly as tall — measured, 11px words in the 24.75px row a 15px paragraph uses.
@@ -892,21 +1026,21 @@ export default function NoteToolbar({
       onPick={pickSpacing} />
   );
   const underlineBtn = (
-    <TBButton title="Underline" testid="nt-underline" big={narrow} active={editor.isActive("underline")} onClick={() => chain().toggleUnderline().run()}>
+    <TBButton title="Underline" testid="nt-underline" big={narrow} pressed={underlinePressed} onClick={() => chain().toggleUnderline().run()}>
       <span style={{ textDecoration: "underline", fontSize: 13 }}>U</span>
     </TBButton>
   );
   const strikeBtn = (
-    <TBButton title="Strikethrough" testid="nt-strike" big={narrow} active={editor.isActive("strike")} onClick={() => chain().toggleStrike().run()}>
+    <TBButton title="Strikethrough" testid="nt-strike" big={narrow} pressed={strikePressed} onClick={() => chain().toggleStrike().run()}>
       <span style={{ textDecoration: "line-through", fontSize: 13 }}>S</span>
     </TBButton>
   );
   const textColorControl = (
-    <ColorPopover title="Text colour" testid="nt-color" glyph="ink" big={narrow} swatch={currentColor || DEFAULT_TEXT_SWATCH} colors={TEXT_COLORS}
+    <ColorPopover title="Text colour" testid="nt-color" glyph="ink" big={narrow} mixed={colorMixed} swatch={currentColor || DEFAULT_TEXT_SWATCH} colors={TEXT_COLORS}
       onPick={(c) => (c ? chain().setColor(c).run() : chain().unsetColor().run())} />
   );
   const highlightColorControl = (
-    <ColorPopover title="Highlight colour" testid="nt-highlight" glyph="marker" big={narrow} swatch={currentHl || DEFAULT_HIGHLIGHT_SWATCH} colors={HIGHLIGHT_COLORS}
+    <ColorPopover title="Highlight colour" testid="nt-highlight" glyph="marker" big={narrow} mixed={hlMixed} swatch={currentHl || DEFAULT_HIGHLIGHT_SWATCH} colors={HIGHLIGHT_COLORS}
       onPick={(c) => (c ? chain().setHighlight({ color: c }).run() : chain().unsetHighlight().run())} />
   );
   const checklistBtn = (
@@ -1014,15 +1148,18 @@ export default function NoteToolbar({
 
       <Sep />
 
-      {!narrow && blockStyleControl}
+      {/* ⛔ THE ORDER IS WORD'S, AND THAT IS THE FIX (NEW-3 amendment): FONT NAME first, size
+          immediately right of it, and the paragraph-style picker after them both. */}
+      {!narrow && fontControl}
       {!narrow && fontSizeControl}
+      {!narrow && blockStyleControl}
       {!narrow && spacingControl}
       {!narrow && <Sep />}
 
-      <TBButton title="Bold" testid="nt-bold" big={narrow} active={editor.isActive("bold")} onClick={() => chain().toggleBold().run()}>
+      <TBButton title="Bold" testid="nt-bold" big={narrow} pressed={boldPressed} onClick={() => chain().toggleBold().run()}>
         <span style={{ fontWeight: 800, fontSize: 13 }}>B</span>
       </TBButton>
-      <TBButton title="Italic" testid="nt-italic" big={narrow} active={editor.isActive("italic")} onClick={() => chain().toggleItalic().run()}>
+      <TBButton title="Italic" testid="nt-italic" big={narrow} pressed={italicPressed} onClick={() => chain().toggleItalic().run()}>
         <span style={{ fontStyle: "italic", fontFamily: "Georgia, serif", fontSize: 13 }}>I</span>
       </TBButton>
       {!narrow && underlineBtn}
@@ -1032,8 +1169,8 @@ export default function NoteToolbar({
 
       <Sep />
 
-      <TBButton title="Bulleted list" testid="nt-bullet" big={narrow} active={editor.isActive("bulletList")} onClick={() => chain().toggleBulletList().run()}><BulletIcon /></TBButton>
-      <TBButton title="Numbered list" testid="nt-ordered" big={narrow} active={editor.isActive("orderedList")} onClick={() => chain().toggleOrderedList().run()}><OrderedIcon /></TBButton>
+      <TBButton title="Bulleted list" testid="nt-bullet" big={narrow} pressed={listPressed("bulletList")} onClick={() => chain().toggleBulletList().run()}><BulletIcon /></TBButton>
+      <TBButton title="Numbered list" testid="nt-ordered" big={narrow} pressed={listPressed("orderedList")} onClick={() => chain().toggleOrderedList().run()}><OrderedIcon /></TBButton>
       {!narrow && checklistBtn}
 
       <Sep />
@@ -1061,8 +1198,9 @@ export default function NoteToolbar({
       <OverflowMenu big={narrow}>
         {narrow && (
           <MenuGroup label="Text">
-            {blockStyleControl}
+            {fontControl}
             {fontSizeControl}
+            {blockStyleControl}
             {spacingControl}
             {underlineBtn}
             {strikeBtn}
@@ -1073,10 +1211,7 @@ export default function NoteToolbar({
         )}
 
         <MenuGroup label="Type">
-          <TBSelect title="Font" testid="nt-font" width={124} big={narrow} value={currentFont}
-            options={FONTS.map((f) => ({ label: f.label, value: f.value }))}
-            onChange={(e) => (e.target.value ? chain().setFontFamily(e.target.value).run() : chain().unsetFontFamily().run())} />
-          <TBButton title="Inline code" testid="nt-code" big={narrow} active={editor.isActive("code")} onClick={() => chain().toggleCode().run()}>
+          <TBButton title="Inline code" testid="nt-code" big={narrow} pressed={codePressed} onClick={() => chain().toggleCode().run()}>
             <Icon><path d="M6 4.5L3 8l3 3.5" /><path d="M10 4.5L13 8l-3 3.5" /></Icon>
           </TBButton>
           <TBButton title="Clear formatting" testid="nt-clear" big={narrow} onClick={() => chain().unsetAllMarks().clearNodes().run()}>
@@ -1087,7 +1222,7 @@ export default function NoteToolbar({
         <MenuGroup label="Alignment & indent">
           {ALIGNS.map((a) => (
             <TBButton key={a.id} title={a.title} testid={`nt-align-${a.id}`} big={narrow}
-              active={editor.isActive({ textAlign: a.id })}
+              pressed={alignPressed(a.id)}
               onClick={() => chain().setTextAlign(a.id).run()}>
               <AlignIcon lines={a.lines} />
             </TBButton>

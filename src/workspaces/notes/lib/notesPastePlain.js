@@ -29,6 +29,7 @@
 import { Extension } from "@tiptap/core";
 import { Fragment } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import { pushDownInherited } from "./notesPasteInherit.js";
 
 export const pastePlainKey = new PluginKey("notePastePlain");
 
@@ -249,6 +250,23 @@ const NotePastePlain = Extension.create({
            * paste to avoid inheriting Outlook's spacer paragraphs and layout tables. This is
            * a CLEAN-UP, not a strip: fonts, sizes and colours all still arrive, because the
            * default paste is deliberately unchanged. */
+          /* ⛔ RESOLVE INHERITED FONT AND SIZE BEFORE THE PARSE (NEW-5). Word and Outlook
+           * declare a font ONCE on a wrapping `<div>` and let CSS inheritance carry it — which
+           * is correct HTML and completely invisible to a `parseHTML` that reads the run's own
+           * element. The result was a paste where a directly-styled run kept Calibri and the
+           * run beside it, relying on inheritance, silently fell back to the app font: his
+           * "sometimes mid-line" patchwork, manufactured here rather than sent that way.
+           * See lib/notesPasteInherit.js for the measured before/after. */
+          transformPastedHTML(html) {
+            try {
+              const doc2 = new DOMParser().parseFromString(html, "text/html");
+              pushDownInherited(doc2.body);
+              return doc2.body.innerHTML;
+            } catch {
+              return html;                    // a malformed clipboard payload pastes as it did before
+            }
+          },
+
           transformPasted(slice, view) {
             try {
               const tidied = tidyPastedFragment(slice.content, view.state.schema);

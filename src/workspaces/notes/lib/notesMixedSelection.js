@@ -87,3 +87,114 @@ export function selectionLineHeights(doc, from, to) {
   });
   return heights;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+ * EVERY CONTROL REPORTS THE SELECTION, OR REPORTS NOTHING (NEW-TOOLBAR-STATE)
+ *
+ * ⛔ THE OWNER MADE THIS A STANDING RULE, not a fix for two controls: *"When I highlight
+ * multiple texts, assuming that they're one font, they should state the font. When I'm typing
+ * in a font, it should state the font. If I select multiple text types and it's got different
+ * ones, then it shouldn't say a font. And then same thing for text size and bold and underlined
+ * and italic, whatever. Everything that you can think of that it does on Word, it should do
+ * here."*
+ *
+ * THREE STATES, NO EXCEPTIONS. A **uniform** selection shows the real value read off the whole
+ * range · a **caret** shows what the next typed character would get · a **genuinely mixed**
+ * range shows NOTHING — blank for a value control, indeterminate for a toggle. **A control that
+ * cannot answer honestly goes blank rather than guessing, and "Default" is a guess.**
+ *
+ * ⛔ AND THE POINT OF PUTTING THEM ALL HERE: a per-control mixed check is the failure, not the
+ * fix. Font size was made correct in isolation (B1139216) and eleven other controls stayed
+ * wrong for months, because nothing about a bespoke check in one control says anything about
+ * the next one. These readers are the ONE mechanism; a control that grows its own is a defect.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Every text run's `textStyle.fontFamily` touched by `[from, to)` — the sibling of
+ *  `selectionFontSizes`, and the reader behind NEW-1/NEW-2. Values come back RAW (the exact
+ *  stack string the run stores, e.g. Word's `"Calibri",sans-serif`); comparing them is
+ *  `notesFontFamily.js`'s `familyKey`'s job, not this walk's, because two different stacks
+ *  can honestly be the same typeface and only that module knows the rule. */
+export function selectionFontFamilies(doc, from, to) {
+  const families = [];
+  doc.nodesBetween(from, to, (node) => {
+    if (!node.isText) return;
+    const mark = (node.marks || []).find((m) => m.type && m.type.name === "textStyle");
+    families.push((mark && mark.attrs && mark.attrs.fontFamily) || null);
+  });
+  return families;
+}
+
+/** Does each text run touched by `[from, to)` carry `markName`? One boolean per run, so
+ *  `uniformValue` answers all-on / all-off / MIXED — which is exactly the three states a
+ *  toggle needs and the two states `editor.isActive` can express. `isActive` on a RANGE
+ *  answers "does this mark cover the WHOLE range", so half-bold text reports a confident
+ *  **false** — indistinguishable from text with no bold in it anywhere. That is the guess
+ *  this replaces. */
+export function selectionMarkPresence(doc, from, to, markName) {
+  const flags = [];
+  doc.nodesBetween(from, to, (node) => {
+    if (!node.isText) return;
+    flags.push((node.marks || []).some((m) => m.type && m.type.name === markName));
+  });
+  return flags;
+}
+
+/** One attribute of one mark, per text run — `textStyle.color`, `highlight.color`. A run
+ *  without the mark contributes `null`, which is the real answer "this run has no colour of
+ *  its own", and therefore disagrees honestly with a run that has one. */
+export function selectionMarkAttrs(doc, from, to, markName, attr) {
+  const values = [];
+  doc.nodesBetween(from, to, (node) => {
+    if (!node.isText) return;
+    const mark = (node.marks || []).find((m) => m.type && m.type.name === markName);
+    values.push((mark && mark.attrs && mark.attrs[attr]) ?? null);
+  });
+  return values;
+}
+
+/** Every textblock's alignment touched by `[from, to)`. `"left"` and `null` are the SAME
+ *  answer — left is the body default and is what an unaligned paragraph already does — so
+ *  they are normalised to `null` rather than reported as a disagreement nobody can see. */
+export function selectionAlignments(doc, from, to) {
+  const aligns = [];
+  doc.nodesBetween(from, to, (node) => {
+    if (!node.isTextblock) return;
+    const a = node.attrs?.textAlign ?? null;
+    aligns.push(a === "left" ? null : a);
+  });
+  return aligns;
+}
+
+/** The list each textblock in `[from, to)` sits in — `"bulletList"` / `"orderedList"` /
+ *  `"taskList"`, or `null` for a block in no list. Needs `doc.resolve` (a list is an ANCESTOR,
+ *  and `nodesBetween`'s callback sees only one parent), which is the one thing a fake `doc` in
+ *  a unit test has to provide beyond `nodesBetween`. */
+export function selectionListKinds(doc, from, to) {
+  const kinds = [];
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (!node.isTextblock) return;
+    const $pos = doc.resolve(pos);
+    let kind = null;
+    for (let d = $pos.depth; d > 0; d -= 1) {
+      const name = $pos.node(d).type.name;
+      if (name === "bulletList" || name === "orderedList" || name === "taskList") { kind = name; break; }
+    }
+    kinds.push(kind);
+  });
+  return kinds;
+}
+
+/** ⛔ THE THREE STATES OF A TOGGLE, as the string `aria-pressed` actually takes.
+ *  `"mixed"` is a STANDARD `aria-pressed` value, not an invention — screen readers announce it
+ *  as "partially pressed" — which is why the accessible answer and the painted answer can be
+ *  one value rather than two that drift.
+ *
+ *  ⛔ AND `"false"` IS NOT THE SAME AS ABSENT, which is what shipped: `aria-pressed={active ?
+ *  "true" : undefined}` gave Bold/Italic/Underline/Strikethrough **no state at all** whenever
+ *  they were off — measured on the live toolbar, absent in every sampled case. A toggle that
+ *  says nothing when it is off is not a toggle to anyone who cannot see the highlight. */
+export function togglePressed({ selectionEmpty, caretValue, rangeValues }) {
+  const value = formatDisplayValue({ selectionEmpty, caretValue, rangeValues });
+  if (value === MIXED) return "mixed";
+  return value ? "true" : "false";
+}
