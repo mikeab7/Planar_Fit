@@ -38,6 +38,7 @@ import { bufferPolyline } from "./metesAndBounds.js";
 import { DEFAULT_ROAD_CLASS, roadClassOf } from "./roadClasses.js";
 import { ensureZ } from "./zOrder.js";
 import { normCountyKey } from "../../../shared/gis/countyKeys.js";
+import { nameAuthority } from "./projectName.js";
 // B927105 — the schema-version + status constants live in siteStatus.js (dependency-free) so a
 // caller that only needs a status label (doc-review/lib/reviewStore.js, siteListLight.js)
 // doesn't have to import this whole module's heavy geometry graph. Re-exported below so this
@@ -1370,6 +1371,20 @@ export function mergeSiteContent(a, b) {
   // v14 (B848736) — the aerial backdrop is now just another sheetOverlays record (bottom-pinned),
   // so its src-healing rides the generic `healSrc(unionById(...))` call above like any other
   // reference; there is no second single-object field left to heal here.
+  // NEW-1 (B1340800) — `site`/`siteRenamedAt` are NOT ordinary scalars and must not ride the
+  // generic `...newer` pick above. `rename_site_group()` (and its pre-migration fallback) stamp
+  // `siteRenamedAt` WITHOUT bumping `data.updatedAt` (projectName.js's whole point is that a
+  // rename has its own dedicated stamp, precisely so it doesn't need to), so a rename made on
+  // another device routinely loses the generic newer-wins vote to a stale local copy with an
+  // equal or greater `updatedAt` — silently reverting the project name every time this device
+  // pulls. Resolving the name pair through the SAME `nameAuthority` the list/read paths already
+  // trust makes a stamped rename win here too, regardless of which side `newer` picked for
+  // everything else; an ambiguous or unstamped pair (no rename in play) falls through unchanged.
+  const nameAuth = nameAuthority([A, B]);
+  if (!nameAuth.ambiguous && nameAuth.name != null) {
+    merged.site = nameAuth.name;
+    if (nameAuth.at != null) merged.siteRenamedAt = nameAuth.at;
+  }
   return createSiteModel(merged);
 }
 
