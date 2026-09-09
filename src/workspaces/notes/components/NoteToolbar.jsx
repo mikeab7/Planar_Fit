@@ -30,9 +30,9 @@
  *     re-picking the value already shown is a real click, not a dead one. See FormatMenu's
  *     own note and lib/notesMixedSelection.js for the measured bug and why this is the fix.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { HEADING_LEVELS } from "../lib/notesExtensions.js";
-import { BLOCK_SPACES, DENSITIES, LINE_SPACINGS, spacingLabel, fontSizePx } from "../lib/notesSpacing.js";
+import { BLOCK_SPACES, DEFAULT_DENSITY, DENSITIES, LINE_SPACINGS, spacingLabel, fontSizePx } from "../lib/notesSpacing.js";
 import { CALLOUT_TONES } from "../lib/notesCalloutNode.js";
 import { FONTS, HIGHLIGHT_COLORS, SIZES, TEXT_COLORS } from "../lib/notesFormatPalette.js";
 import {
@@ -40,7 +40,8 @@ import {
   selectionFontSizes, selectionLineHeights, selectionListKinds, selectionMarkAttrs,
   selectionMarkPresence, togglePressed,
 } from "../lib/notesMixedSelection.js";
-import { familyKey, fontDisplayLabel, matchFontOption } from "../lib/notesFontFamily.js";
+import { familyKey, firstFamily, fontDisplayLabel, matchFontOption } from "../lib/notesFontFamily.js";
+import { defaultFontLabel, resolvedColor, resolvedColorsAgree } from "../lib/notesResolvedValue.js";
 
 /* Mirrored from src/shared/ui/controls.jsx rather than imported — deliberately, and there
  * is a test that fails if the copies drift (test/notesModule.test.js). Importing
@@ -68,6 +69,10 @@ const POPOVER_SHADOW = "0 12px 32px rgba(0,0,0,0.20)";
  * in the theme's own ink colour, so `var(--text-primary)` is both the honest answer and the
  * one every theme can already show. */
 const DEFAULT_TEXT_SWATCH = "var(--text-primary)";
+/* The value behind DEFAULT_TEXT_SWATCH is read off the live document (see `defaultInk` below),
+ * never written here as a second copy of the token: the swatch is PAINTED with var(--text-primary)
+ * so it follows the theme, and deciding whether two runs AGREE needs a comparable value that
+ * follows the theme with it. */
 const DEFAULT_HIGHLIGHT_SWATCH = HIGHLIGHT_COLORS.find((c) => c.value)?.value || null;
 
 /* ⛔ THE PALETTES MOVED TO `lib/notesFormatPalette.js` (NEW-MINI-TOOLBAR). The right-click
@@ -782,7 +787,61 @@ export default function NoteToolbar({
   zoomIndicator = null, onZoomReset,
 }) {
   const fileRef = useRef(null);
+  /* ⛔ WHAT AN UNSTYLED RUN IS ACTUALLY RENDERED IN (NEW-7). "Default" is not a font, and the
+   * owner is right that there is always a name: a run with no font mark is drawn in the note's
+   * own typeface, and only the BROWSER knows which that is. So it is read off the real element
+   * at the caret rather than hard-coded — which also keeps a heading or a code block honest,
+   * and means the app's font can change without a second copy of its name going stale here.
+   *
+   * ⛔ IN A LAYOUT EFFECT, AND ONLY ON A REAL CHANGE. Reading `getComputedStyle` during render
+   * would measure DOM that has not committed the current transaction yet (the toolbar re-renders
+   * on the new state while the document still shows the old one), which is this repo's
+   * FOREGROUND-OR-VOID trap in miniature: an internally consistent reading of a view the app has
+   * already left. A layout effect runs after the commit and before paint, and the state is only
+   * set when the NAME differs, so an ordinary keystroke costs no extra render. */
+  const [resolvedDefaults, setResolvedDefaults] = useState({ family: null, ink: null, size: null });
+  /* ⛔ NO DEP ARRAY, DELIBERATELY, AND IT CANNOT LOOP. The thing being tracked is where the CARET
+   * IS, which is not a prop and not a stable value — `editor.state` is a fresh object on every
+   * transaction, so any dep array here would either miss selection moves or fire on all of them
+   * anyway. Running after every render is the honest expression of "re-read wherever the caret
+   * now is". The setter returns the PREVIOUS object unless a name actually changed, and React
+   * bails out of a re-render on identical state, so the steady state costs one getComputedStyle
+   * and no render. */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    let family = null;
+    let ink = null;
+    let size = null;
+    try {
+      const { node, offset } = editor.view.domAtPos(editor.state.selection.from);
+      const el = node.nodeType === 1 ? (node.childNodes[offset] || node) : node.parentElement;
+      const target = el && el.nodeType === 1 ? el : (el && el.parentElement);
+      if (target) {
+        const cs = getComputedStyle(target);
+        family = firstFamily(cs.fontFamily);
+        size = Math.round(parseFloat(cs.fontSize)) || null;
+        /* ⛔ THE NOTE'S OWN INK, NOT A SECOND COPY OF THE TOKEN. What a run with no colour mark
+         * paints as is a THEME value; hard-coding it here would be a duplicate that goes stale
+         * the moment the palette moves, and would be wrong in the other theme immediately. The
+         * editor root is read rather than the run itself, because the run may carry a real
+         * colour and it is the DEFAULT we need to compare against. */
+        ink = getComputedStyle(editor.view.dom).color || null;
+      }
+    } catch { /* a torn-down view, or a position the DOM has not caught up to — keep the last read */ }
+    if (family || ink || size) {
+      setResolvedDefaults((prev) => {
+        const next = { family: family || prev.family, ink: ink || prev.ink, size: size || prev.size };
+        return (next.family === prev.family && next.ink === prev.ink && next.size === prev.size) ? prev : next;
+      });
+    }
+  });
+
   if (!editor) return null;
+
+  const defaultFamily = resolvedDefaults.family;
+  const defaultSize = resolvedDefaults.size;
+  const DEFAULT_TEXT_INK = resolvedDefaults.ink;
 
   const chain = () => editor.chain().focus();
   const inTable = editor.isActive("table");
@@ -821,6 +880,14 @@ export default function NoteToolbar({
   });
   const sizeMixed = sizeDisplay === MIXED;
   const currentSizeNum = !sizeMixed && sizeDisplay ? Math.round(sizeDisplay) : null;
+  /* ⛔ THE SAME DEFECT THE FONT BOX HAD, FOUND BY THE NEW-9 SWEEP: a run with no size mark was
+   * reported as the word "Size", which is a category label, not a size — while the text is
+   * plainly being rendered at some real size. Named the same way the font is: the actual number,
+   * marked as the note's standard rather than a deliberate choice. */
+  const sizeLabel = sizeMixed
+    ? ""
+    : (currentSizeNum != null ? String(currentSizeNum)
+      : (defaultSize != null ? `${defaultSize} · std` : "Size"));
   /* A size that is not one of the offered steps — which is what every pasted point size becomes
    * — is still shown, and is still RE-PICKABLE, by joining the list rather than blanking the box
    * (a blank box means "mixed" here, and this selection is not mixed). */
@@ -846,7 +913,14 @@ export default function NoteToolbar({
    * their own default/unset state. `spacingLabel(null)` already returns exactly that word
    * ("Spacing") for the same reason those two do — so this reuses it rather than keeping the
    * lone symbol now that the control shows real words for every other state too. */
-  const spacingGlyph = spacingLabel(spacingResolved);
+  /* ⛔ AND THE THIRD INSTANCE (NEW-9). `spacingLabel(null)` returns the word "Spacing" — again a
+   * category label for a block that is plainly being laid out at SOME spacing. With no override,
+   * the resolved answer is the note's own density, which the same menu already offers by name. */
+  const spacingGlyph = spacingMixed
+    ? ""
+    : (spacingResolved != null
+      ? spacingLabel(spacingResolved)
+      : `${DENSITIES.find((d) => d.id === (editor.state.doc.attrs?.density ?? DEFAULT_DENSITY))?.label || "Spacing"} · std`);
   const pickSpacing = (v) => {
     if (!v) return;
     const [kind, raw] = v.split(":");
@@ -855,6 +929,7 @@ export default function NoteToolbar({
     const key = kind === "lh" ? "lineHeight" : (kind === "sb" ? "spaceBefore" : "spaceAfter");
     chain().setNoteSpacing({ [key]: n }).run();
   };
+
 
   /* ═══ EVERY CONTROL REPORTS THE SELECTION, OR REPORTS NOTHING (NEW-TOOLBAR-STATE) ═══
    * Owner rule, verbatim: *"If I select multiple text types and it's got different ones, then
@@ -885,27 +960,58 @@ export default function NoteToolbar({
   const currentFontOption = matchFontOption(currentFont, FONTS);
   /* An off-palette family (any font a sender happened to use) is SHOWN BY NAME and offered as a
    * pickable row, rather than silently reported as "Default" — his explicit ask. */
+  const paletteOptions = FONTS.map((f) => (f.value == null
+    /* ⛔ THE FIRST ROW NAMES A TYPEFACE TOO (NEW-7): *"a list of five typefaces and a mystery is
+     * not a list of fonts."* It still MEANS "remove the override" — the value is unchanged — it
+     * just says which font that lands you in. */
+    ? { ...f, label: defaultFontLabel(defaultFamily) }
+    : f));
   const fontOptions = currentFont && !currentFontOption
-    ? [...FONTS, { label: fontDisplayLabel(currentFont, FONTS), value: currentFont }]
-    : FONTS;
+    ? [...paletteOptions, { label: fontDisplayLabel(currentFont, FONTS), value: currentFont }]
+    : paletteOptions;
+  /* A run with no font mark is not "Default" — it is the note's own typeface, named, and marked
+   * as the standard one so it is still distinguishable from having chosen that font deliberately. */
+  const fontLabel = fontMixed
+    ? ""
+    : (currentFont ? fontDisplayLabel(currentFont, FONTS) : defaultFontLabel(defaultFamily));
 
-  const currentColorRaw = editor.getAttributes("textStyle")?.color || null;
+  /* ⛔ THE RESOLVED COLOUR, NOT THE STORED MARK (NEW-8). His note holds ONE black spelled three
+   * ways — no mark, a `color: inherit` mark, and an explicit copy of the note's own ink — and it
+   * read them
+   * as three different states: the default swatch, NO swatch at all, and the colour. Two runs he
+   * could see were identical reported as a disagreement. `resolvedColorsAgree` folds all three
+   * into one answer: `inherit` is not a colour, and an explicit colour equal to the note's own
+   * text colour is, on screen, that colour. A genuinely different colour still disagrees.
+   * See lib/notesResolvedValue.js for the measured before/after. */
+  const currentColorRaw = resolvedColor(editor.getAttributes("textStyle")?.color);
   const colorDisplay = formatDisplayValue({
     selectionEmpty: selEmpty,
-    caretValue: currentColorRaw,
-    rangeValues: rangeOf(() => selectionMarkAttrs(doc, from, to, "textStyle", "color")),
+    caretValue: currentColorRaw ?? resolvedColor(DEFAULT_TEXT_INK),
+    rangeValues: rangeOf(() => resolvedColorsAgree(
+      selectionMarkAttrs(doc, from, to, "textStyle", "color"), DEFAULT_TEXT_INK)),
   });
   const colorMixed = colorDisplay === MIXED;
-  const currentColor = colorMixed ? null : colorDisplay;
+  /* Painted from the RAW mark, so a real colour keeps its exact spelling — but ONLY when the mark
+   * is really a colour. A mark reading `inherit` painted a swatch of `inherit`, which paints
+   * nothing at all: that is the missing black line under the A he reported, and folding the
+   * agreement question alone would have left it, because the swatch is drawn from a different
+   * value than the one being compared. `null` falls through to the default swatch, which is what
+   * the text is actually rendered in. */
+  const rawColor = editor.getAttributes("textStyle")?.color || null;
+  const currentColor = colorMixed || !resolvedColor(rawColor) ? null : rawColor;
 
-  const currentHlRaw = editor.getAttributes("highlight")?.color || null;
+  /* Highlight shares the mechanism exactly — a pasted `background-color: inherit` is the same
+   * non-value — and is folded the same way. Its default is "no highlight", so no default is
+   * passed: an unhighlighted run and an `inherit` one agree on having none. */
   const hlDisplay = formatDisplayValue({
     selectionEmpty: selEmpty,
-    caretValue: currentHlRaw,
-    rangeValues: rangeOf(() => selectionMarkAttrs(doc, from, to, "highlight", "color")),
+    caretValue: resolvedColor(editor.getAttributes("highlight")?.color),
+    rangeValues: rangeOf(() => resolvedColorsAgree(
+      selectionMarkAttrs(doc, from, to, "highlight", "color"))),
   });
   const hlMixed = hlDisplay === MIXED;
-  const currentHl = hlMixed ? null : hlDisplay;
+  const rawHl = editor.getAttributes("highlight")?.color || null;
+  const currentHl = hlMixed || !resolvedColor(rawHl) ? null : rawHl;
 
   /* The boolean toggles. `editor.isActive` is kept for the CARET (it is exactly right for one
    * position, and it also honours `storedMarks` — what the NEXT character will be, which no
@@ -984,16 +1090,19 @@ export default function NoteToolbar({
     <FormatMenu title="Font" testid="nt-font" width={132} big={narrow}
       value={currentFontOption ? currentFontOption.value : currentFont}
       mixed={fontMixed}
-      displayLabel={fontMixed ? "" : fontDisplayLabel(currentFont, FONTS)}
+      displayLabel={fontLabel}
       options={fontOptions.map((f) => ({ label: f.label, value: f.value }))}
       onPick={(v) => (v ? chain().setFontFamily(v).run() : chain().unsetFontFamily().run())} />
   );
   /* FONT SIZE LIVES ON THE ROW ON DESKTOP (B1371) — moved into the More sheet on phone, where
    * it stays reachable in two taps rather than crowding the six-control primary row. */
   const fontSizeControl = (
-    <FormatMenu title="Font size" testid="nt-size" width={62} big={narrow}
-      value={currentSizeNum} mixed={sizeMixed}
-      options={sizeOptions.map((s) => ({ label: s == null ? "Size" : String(s), value: s }))}
+    <FormatMenu title="Font size" testid="nt-size" width={80} big={narrow}
+      value={currentSizeNum} mixed={sizeMixed} displayLabel={sizeLabel}
+      options={sizeOptions.map((s) => ({
+        label: s == null ? (defaultSize != null ? `${defaultSize} · standard` : "Size") : String(s),
+        value: s,
+      }))}
       /* ⛔ THE INLINE MARK, THEN THE BLOCK (NEW-SPACING-2). Setting the size only on the runs
        * leaves the paragraph's own strut at the default, so a whole line made smaller stayed
        * exactly as tall — measured, 11px words in the 24.75px row a 15px paragraph uses.

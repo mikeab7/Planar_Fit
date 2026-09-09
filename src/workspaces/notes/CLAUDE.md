@@ -90,14 +90,21 @@ written out in the header of `lib/notesStore.js`; read it there rather than re-d
   every control reports the SELECTION, or reports nothing** — uniform shows the real value,
   a caret shows what the next character gets, a genuinely mixed range shows blank (value
   controls) or `aria-pressed="mixed"` (toggles). *"Default" is a guess.* Every readout comes
-  from `lib/notesMixedSelection.js`; a control that grows its own mixed-check is a defect.
+  from `lib/notesMixedSelection.js`; a control that grows its own mixed-check is a defect. And
+  what it reports is the **resolved value**, never the presence of a mark
+  (`lib/notesResolvedValue.js`) — a category label like "Default", "Size" or "Spacing" standing
+  in for a real name is the bug, not the fallback.
   Order on the row is **Word's** — Font name, Font size, then Block style (which carries a
   standing "Style" caption so two adjacent dropdowns cannot be mistaken for each other; it
   used to hold the leading slot and was read as the font picker).
 - `lib/notesFontFamily.js` — "is this the same typeface?" Compare by `familyKey`, never by the
   raw stack string.
 - `lib/notesPasteInherit.js` — pushes an INHERITED font/size down onto the run that holds the
-  text, on paste only. Why a `parseHTML` ancestor walk is not enough is in its header.
+  text, and strips the CSS non-values (`inherit` and friends), on paste only. Why a `parseHTML`
+  ancestor walk is not enough is in its header.
+- `lib/notesResolvedValue.js` — **a control reports the RESOLVED VALUE, never whether a mark is
+  stored.** `inherit` is not a colour; an absent font mark is still a font. One black spelled
+  three ways must read as one colour, and "Default" is not the name of a typeface.
 - `components/IntegrityBanner.jsx` — the bar for the two findings nothing could previously mention (a note in two projects; a note that had lost its place). **Its own lazy chunk** — it renders only when something is actually wrong, so its bytes have no business on the rail's first paint.
 - **`components/ConflictNotice.jsx` — THE COMPACT NOTICE (NEW-3 of the follow-up brief, amending
   B842624).** The owner: *"it shouldn't just pop up with this massive banner, i should be able to

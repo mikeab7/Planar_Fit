@@ -55,6 +55,77 @@ Add a new tag to this legend **in the same commit** you first use it (this preve
 
 ## 🔲 Open
 
+### B1391952 — The font control said "Default" for text set in a real typeface `[Notes]` (bug) #notes #ui #a11y  *(owner report, 2026-09-09, verbatim: "The notes module can't even call any text at default. There's always a name to it." Minted B1391952 from this branch's reserved block B1391952–B1391967 against freshly-fetched `origin/main` e705440. DEDUPE-FIRST — searched Open / ⏳ Verify / Done for "Default", "font", "resolved", B1382544, B1382545, B1139216: **B1382544** made the control read the MARK correctly (Word's `"Calibri",sans-serif` stopped reading as "Default"); this is the case where there IS no mark, which that item did not touch and could not have. Net-new.)*
+
+`[x]` **FIXED THIS SESSION.**
+
+- Verify: sandbox — `ui-audit/verify-notes-font-control.mjs` §3b, RED-PROVEN against untouched `main`.
+- Origin: owner chat block, 2026-09-09.
+
+"Kandice Cabets" carries no font mark and is therefore rendered in the app's own typeface — a real font, with a real name. The control answered **"Default"**, which names nothing: two "Default" runs could not be told apart, and nothing on screen said what Default resolves to. The dropdown's own first row had the same problem — *a list of five typefaces and a mystery is not a list of fonts.*
+
+**THE FIX, and the shape is his:** *"name it AND mark it as the default rather than replacing the name with the word."* The control now reads **`Inter · standard`** — the typeface actually in use, plus a quiet marker that this is what the note falls back to, so it is still distinguishable from having chosen Inter deliberately. The dropdown's first row reads the same and still MEANS "remove the override" (its value is unchanged).
+
+**⛔ RESOLVED OFF THE LIVE DOCUMENT, NOT HARD-CODED.** Only the browser knows what an unstyled run is rendered in, so it is read with `getComputedStyle` at the caret — which also keeps a heading or a code block honest and means the app's font can change without a second copy of its name going stale here. It runs in a **layout effect**, never during render: reading computed style mid-render measures DOM that has not committed the current transaction, which is this repo's FOREGROUND-OR-VOID trap in miniature (an internally consistent reading of a view the app has already left). The setter returns the previous object unless the value genuinely changed, so the steady state costs no extra render.
+
+- **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+### B1391953 — Three encodings of one colour, and the colour control disagreed with itself `[Notes]` (bug) #notes #ui #a11y  *(owner report, 2026-09-09, verbatim: "one shows a black line under the A and the other doesn't, so it seems like they're different font colours even though they both look black." DEDUPE-FIRST — searched for "colour", "color", "swatch", "inherit", B1382549, B1370: **B1382549** made the colour controls mixed-aware, which is the neighbouring property and is what made this one VISIBLE (the false "mixed" it now reports honestly); it never asked what a stored value means. Net-new.)*
+
+`[x]` **FIXED THIS SESSION.**
+
+- Verify: **live** — V1008240, together with B1391952. The mechanism is proven against a rebuilt fixture; his own note is the case that was reported.
+- Origin: owner chat block, 2026-09-09.
+
+**ONE BLACK, STORED THREE WAYS** — measured on his Silvestri > Utility note, every run computing to the identical `rgb(27,30,38)`:
+
+| stored | runs | swatch shown (before) | agreement with a no-mark run |
+|---|---|---|---|
+| no colour mark at all | Quadvest, Kandice Cabets | the default black | — |
+| `color: inherit` | Contacts:, Jerry Hayley, 713-416-5353 | **NOTHING** | reported as **MIXED** |
+| explicit `rgb(27,30,38)` | jerry@, Simon Sequeira, O: 281- | black | reported as **MIXED** |
+
+So two runs he could see were identical reported as a disagreement, and a third showed no colour at all — the missing black line under the A.
+
+**THE COMMON CAUSE, and it is the point of the whole block: these controls reported WHETHER A MARK IS STORED, when what a person needs is the RESOLVED VALUE. A mark that says `inherit` is not a colour.** `lib/notesResolvedValue.js` answers it once: CSS-wide keywords (`inherit`, `initial`, `unset`, `revert`, `currentColor`, `transparent`, `none`) resolve to "no colour of its own"; hex and functional notation are canonicalised so one colour cannot read as two; and an explicit colour equal to the note's own ink is, on screen, that ink. **The swatch is painted from the resolved answer too** — folding only the agreement question would have left the `inherit` run still painting nothing, because the swatch is drawn from a different value than the one being compared.
+
+**HIGHLIGHT SHARES THE MECHANISM EXACTLY**, as the report predicted, and is folded the same way — verified with an arm that can actually see it (below).
+
+**THE DEFAULT INK IS READ OFF THE LIVE DOCUMENT, never written here as a second copy of the token**: what a mark-less run paints as is a THEME value, and a hard-coded copy would be wrong in the other theme immediately.
+
+**⛔ EXISTING NOTES ARE LEFT EXACTLY AS THEY ARE.** `inherit` is stripped at the PASTE boundary so it stops being created; nothing already saved is rewritten. His reservation, honoured: *"do NOT silently rewrite colour marks in notes he already has, that is a separate decision he has not made."* Those notes now merely READ correctly.
+
+**⛔ AND A VACUITY TRAP IN OUR OWN FIRST HARNESS, caught before it could vouch for anything:** the highlight button paints the colour it WOULD apply when a run has none, so a "real yellow highlight" arm reports yellow whether the feature works or not. The arm now uses a blue the button never defaults to. (Recorded in `docs/NOTES-CARRY-FORWARD.md`.)
+
+- **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+### B1391954 — Sweep every control for "reports the mark" instead of "reports the value" `[Notes]` (task) #notes #ui #a11y #testing  *(owner task, 2026-09-09: "NEW-7 and NEW-8 are one defect in two places. Sweep the rest of the toolbar… Report what you checked and what you found for EVERY control, including the ones that turned out fine." DEDUPE-FIRST: **B1382549** swept the same fifteen controls for the MIXED property; this sweeps them for a different property and found two instances that one could not see. Net-new.)*
+
+`[x]` **DONE — the sweep found two more real instances, both fixed.**
+
+- Verify: sandbox — the two fixes driven in `ui-audit/verify-notes-font-control.mjs` §3b; the whole-bar table re-run in §2.
+- Origin: owner chat block, 2026-09-09.
+
+**EVERY CONTROL, WHAT IT REPORTS:**
+
+| control | reports | verdict |
+|---|---|---|
+| Font | was the MARK → now the resolved typeface | **FIXED** (B1391952) |
+| Text colour | was the MARK → now the resolved colour | **FIXED** (B1391953) |
+| Highlight colour | was the MARK → now the resolved colour | **FIXED** (B1391953) |
+| **Font size** | was the MARK — an unsized run read **"Size"**, a category label for text plainly rendered at a real size | **FIXED — now `15 · std`** |
+| **Line spacing** | was the MARK — an unspaced block read **"Spacing"** | **FIXED — now `Comfortable · std`** |
+| Block style | the node's own type; a paragraph IS "Body text", there is no absent state | fine |
+| Alignment | resolved — `left` and unset are normalised to one answer, because they render identically | fine |
+| Bulleted / Numbered list | structural (the block's list ancestor), not a mark | fine |
+| Bold · Italic · Underline · Strikethrough | the mark — **and this one is a deliberate NON-change, stated rather than skipped** | see below |
+| Undo · Redo · Indent · Outdent | actions; no state to report | fine |
+
+**⛔ THE ONE I FOUND AND DID NOT CHANGE, with the reason, because silently skipping it would be the offence.** A Heading 1 is rendered **bold by stylesheet** with no bold mark, so the Bold button reads "off" on text that is visually bold — technically "reports the mark". I have not changed it, because making it read "on" would then require the toggle to distinguish *bold because you asked* from *bold because it is a heading*, and un-bolding a heading has no meaning: the button would light up and then refuse to do anything. The information is not lost — the Block style control says "Heading 1" right next to it, which is where that boldness actually comes from. Word behaves the same way. **Flagging it rather than deciding it: if he wants the toggle to reflect the rendered weight, that is a product call and a separate item.**
+
+- **No contradiction with `## Owner product constraints`** — checked all 8; touches none.
+
+
 ### B1382544 — The Font control reported "Default" for text that is genuinely Calibri `[Notes]` (bug) #notes #ui #a11y  *(owner report, 2026-09-08: "so the two names highlighted are the same text size? also it should tell me what font I've selected or am using." Minted B1382544 from this branch's reserved block B1382544–B1382559 against freshly-fetched `origin/main` c5c59e4. DEDUPE-FIRST — searched Open / ⏳ Verify / Done for "font", "fontFamily", "typeface", "Default", B1139216, B1371, B1411: **B1139216** made FONT SIZE mixed-aware and is the direct precedent this reuses, but it never touched font FAMILY; **B1371** moved font size onto the row. Neither asks what the Font control reads. Net-new.)*
 
 `[x]` **FIXED THIS SESSION.**
