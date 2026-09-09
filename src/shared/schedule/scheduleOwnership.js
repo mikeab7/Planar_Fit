@@ -272,10 +272,27 @@ function suggestScheduleName(projects, ownerKind, siteId, siteName) {
 
 /* SCHEDULE-OWNERSHIP:END */
 
+// ── Deleting a schedule ──────────────────────────────────────────────────────────────────────────
+//
+// The delete confirmation's own sentence (B1404352 — "once a schedule exists there is no way to
+// rename or delete it"). Named and testable so the wording can't silently drift between what the
+// item requires ("must NAME the schedule it is about to remove and say what happens to its
+// tasks") and what actually renders. Not part of the inlined SCHEDULE-OWNERSHIP block above: the
+// embedded app keeps its own equivalent sentence in its (suppressed, `skipConfirm`) native
+// `window.confirm` — this is the SHELL side's inline confirmation, a UI concern the standalone
+// page doesn't need a copy of.
+function describeScheduleDelete(name, taskCount) {
+  const label = normalizeName(name) || "this schedule";
+  const n = Number.isFinite(taskCount) ? Math.max(0, taskCount) : 0;
+  if (n <= 0) return `Delete “${label}”? This schedule has no tasks.`;
+  return `Delete “${label}”? This removes ${n} task${n === 1 ? "" : "s"}.`;
+}
+
 export {
   ORG_OWNER_KEY, ORG_OWNER_LABEL, OWNER_KIND_SITE, OWNER_KIND_ORG,
   ownerOf, ownerKeyOf, isOrgOwned, isSiteOwned,
   scheduleList, schedulesForOwner, partitionSchedules,
   migrateScheduleOwnership, pruneOrphanScheduleRefs, pruneScheduleRefs, normalizeScheduleOwnership,
   normalizeName, nameCollision, validateNewSchedule, suggestScheduleName,
+  describeScheduleDelete,
 };

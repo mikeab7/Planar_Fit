@@ -129,7 +129,7 @@ function ExportMenu({ post }) {
 // group" for its 2D-overlap math — `centerParts` in verify-schedule-header-widths.mjs — updated in
 // the same commit to include this button, or that check would silently measure a narrower box
 // than what's actually on screen.)
-function ScheduleSwitcher({ schedules, activeId, siteId, siteName, onSelect, onCreate }) {
+function ScheduleSwitcher({ schedules, activeId, siteId, siteName, onSelect, onCreate, onRename, onDelete }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef(null);
   return (
@@ -149,6 +149,8 @@ function ScheduleSwitcher({ schedules, activeId, siteId, siteName, onSelect, onC
           siteName={siteName}
           onSelect={(id) => { onSelect?.(id); setOpen(false); }}
           onCreate={onCreate ? () => { setOpen(false); onCreate(); } : undefined}
+          onRename={onRename}
+          onDelete={onDelete}
         />
       </AnchoredMenu>
     </>
@@ -178,11 +180,13 @@ export function ScheduleCenter({
   // B1397568 — optional: opens the "New schedule" dialog. When omitted, the switcher's dropdown
   // shows no create row (matches every existing caller, incl. the ui-audit harness above).
   onCreateSchedule,
+  // B1404352 — optional: rename (id, name) or delete (id) a schedule directly from this list.
+  onRenameSchedule, onDeleteSchedule,
 }) {
   if (!toolbar.ready || toolbar.section !== "projects") return <></>;
   return (
     <>
-      <ScheduleSwitcher schedules={schedules} activeId={activeId} siteId={siteId} siteName={siteName} onSelect={onSelectSchedule} onCreate={onCreateSchedule} />
+      <ScheduleSwitcher schedules={schedules} activeId={activeId} siteId={siteId} siteName={siteName} onSelect={onSelectSchedule} onCreate={onCreateSchedule} onRename={onRenameSchedule} onDelete={onDeleteSchedule} />
       <span style={{ width: 1, height: 20, background: "var(--chrome-divider)", flex: "none", margin: "0 2px" }} />
       {!toolbar.reviewOpen && <ViewToggle view={toolbar.view} onSet={(v) => post({ type: "planar:view-set", view: v })} />}
       <button onClick={() => post({ type: "planar:review-toggle" })} aria-pressed={toolbar.reviewOpen}

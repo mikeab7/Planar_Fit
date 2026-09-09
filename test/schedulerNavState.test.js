@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import {
   sanitizeProjects, parseNavState, deriveCurrentProject, findBySiteId, findAllBySiteId,
   needsScheduleCarryIn, dashboardNavActions, isPickShowing, isGridMismatched, newProjectAction,
+  scheduleCrumbLabel, labelMultiScheduleRows,
 } from "../src/workspaces/scheduler/lib/navState.js";
 
 const WELL_FORMED = [{ id: 1, name: "Goose Creek" }, { id: 3, name: "Grand Port Logistics" }];
@@ -108,6 +109,21 @@ describe("cross-module link (schema v9) — carry linkedSiteId and find a schedu
   it("a link with no cached name defaults linkedSiteName to null but keeps the id", () => {
     expect(sanitizeProjects([{ id: 3, name: "X", linkedSiteId: "grp-1" }]))
       .toEqual([{ id: 3, name: "X", linkedSiteId: "grp-1", linkedSiteName: null }]);
+  });
+
+  // B1404352 — taskCount rides along so the shell's delete confirmation can name what it removes.
+  it("a schedule with a reported taskCount carries it through", () => {
+    expect(sanitizeProjects([{ id: 22, name: "TAS Land Sale", taskCount: 8 }]))
+      .toEqual([{ id: 22, name: "TAS Land Sale", taskCount: 8 }]);
+  });
+
+  it("a schedule with NO reported taskCount keeps the exact prior shape — no null-field noise", () => {
+    expect(sanitizeProjects([{ id: 1, name: "Goose Creek" }])).toEqual([{ id: 1, name: "Goose Creek" }]);
+  });
+
+  it("a taskCount of exactly 0 is carried through, not dropped as falsy", () => {
+    expect(sanitizeProjects([{ id: 19, name: "Goose Creek (2)", taskCount: 0 }]))
+      .toEqual([{ id: 19, name: "Goose Creek (2)", taskCount: 0 }]);
   });
 
   it("parseNavState passes the link fields through for the project-aware breadcrumb", () => {
@@ -661,5 +677,74 @@ describe("Scheduler.jsx — the shell invalidates its nav belief on EVERY iframe
 
   it("the render gate is fed navConfirmed, not just projects/activeId/pickShowing", () => {
     expect(SRC).toMatch(/isGridMismatched\(projects, projectId, activeId, pickShowing, navConfirmed\)/);
+  });
+});
+
+// B1404352 — owner click-test: switching Goose Creek to its "TAS Land Sale" schedule made the
+// crumb read "TAS Land Sale" with no sign it's Goose Creek's project at all.
+describe("scheduleCrumbLabel — the crumb reads project THEN schedule", () => {
+  it("combines a differently-named schedule with its project", () => {
+    expect(scheduleCrumbLabel("Goose Creek", "TAS Land Sale")).toBe("Goose Creek / TAS Land Sale");
+  });
+
+  it("collapses to the bare name when the schedule is still just named after its project", () => {
+    expect(scheduleCrumbLabel("Grand Port", "Grand Port")).toBe("Grand Port");
+  });
+
+  it("ignores a difference that's whitespace-only", () => {
+    expect(scheduleCrumbLabel("Grand Port", "  Grand Port  ")).toBe("Grand Port");
+  });
+
+  it("falls back to whichever half is present when the other is missing", () => {
+    expect(scheduleCrumbLabel(null, "Pursuits")).toBe("Pursuits");
+    expect(scheduleCrumbLabel("Goose Creek", null)).toBe("Goose Creek");
+    expect(scheduleCrumbLabel("Goose Creek", "")).toBe("Goose Creek");
+  });
+
+  it("returns an empty string rather than throwing when both are missing", () => {
+    expect(scheduleCrumbLabel(null, null)).toBe("");
+  });
+});
+
+describe("labelMultiScheduleRows — disambiguate ONLY a project's own multi-schedule rows", () => {
+  it("leaves a single-schedule project's row exactly as it was — the common case", () => {
+    const rows = [{ id: 2, name: "Grand Port", linkedSiteId: "grp-2", linkedSiteName: "Grand Port" }];
+    expect(labelMultiScheduleRows(rows)).toEqual(rows);
+  });
+
+  it("leaves an org-owned / unlinked schedule untouched", () => {
+    const rows = [{ id: 5, name: "Pursuits" }];
+    expect(labelMultiScheduleRows(rows)).toEqual(rows);
+  });
+
+  it("relabels every row of a project with 2+ linked schedules — the Goose Creek repro shape", () => {
+    const rows = [
+      { id: 1, name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
+      { id: 22, name: "TAS Land Sale", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
+      { id: 2, name: "Grand Port", linkedSiteId: "grp-2", linkedSiteName: "Grand Port" },
+    ];
+    const out = labelMultiScheduleRows(rows);
+    expect(out.find((p) => p.id === 1).name).toBe("Goose Creek");
+    expect(out.find((p) => p.id === 22).name).toBe("Goose Creek / TAS Land Sale");
+    // The single-schedule sibling project is untouched — same object, not just an equal one.
+    expect(out.find((p) => p.id === 2)).toBe(rows[2]);
+  });
+
+  it("is null-safe and array-safe", () => {
+    expect(labelMultiScheduleRows(null)).toBe(null);
+    expect(labelMultiScheduleRows(undefined)).toBe(undefined);
+    expect(labelMultiScheduleRows([null, undefined])).toEqual([null, undefined]);
+  });
+
+  it("resolveCurrentName (the crumb's own name lookup) picks up the relabeled row by id", async () => {
+    // Reproduces the exact mechanism this fix depends on: resolveCurrentName prefers whatever
+    // name the LIST carries for a matching id over currentProject's own .name, so relabeling the
+    // row here — not reassigning currentProject.name — is what actually reaches the crumb.
+    const { resolveCurrentName } = await import("../src/shared/projects/projectModel.js");
+    const rows = labelMultiScheduleRows([
+      { id: 1, name: "Goose Creek", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
+      { id: 22, name: "TAS Land Sale", linkedSiteId: "gc", linkedSiteName: "Goose Creek" },
+    ]);
+    expect(resolveCurrentName({ id: 22, name: "TAS Land Sale" }, rows)).toBe("Goose Creek / TAS Land Sale");
   });
 });
