@@ -642,6 +642,27 @@ position**.
       here because doing so safely needs gating the whole integrity scan on "at least one seed
       has completed," which is a bigger change than this fix warranted.
 
+12. **A VISIBLE INDEX ENTRY CAN OUTLIVE THE THING IT POINTS AT, WHEN CREATING IT IS TWO STEPS AND
+    ONLY ONE OF THEM IS GUARANTEED TO RUN (B1405008, 2026-09-09).** `addPage` put a tree node
+    straight into the sidebar; the page's BODY was written only from the editor's own `onUpdate`
+    autosave — which fires only once the user actually types a character. A page created and then
+    abandoned (tab closed, distracted, or simply never typed into) left a clickable "Untitled
+    page" with **nothing wired to ever create its body**, for as long as it went untouched — one
+    real account measured 12+ hours and counting, while seven siblings made the same night each
+    got a body within ~2s because he happened to type into those. **This was not a failed write —
+    it was a write that was never attempted**, and it is the general shape to suspect any time one
+    user-visible action (an index/list/tree entry appearing) is produced by step A while the thing
+    it points at is produced only by a LATER, conditional step B (here: the user's first
+    keystroke). The fix is ordering, not a retry: write the body FIRST, synchronously, as part of
+    the same call that creates the entry (`notesStore.js`'s `createPage`), so there is no window
+    in which the entry can be seen with nothing behind it. **The tell that this was live on his
+    account and not merely theoretical:** the 17 tombstones in his tree naming no `notes_pages`
+    row at all are residue of this exact bug (a page created, abandoned bodiless, then deleted
+    before ever getting one) — not a separate defect, and not evidence `tombs` needs pruning
+    beyond the 400-day `TOMB_RETENTION_DAYS` mechanism `withTombstones` already has (see that
+    function's header in `lib/notesModel.js`); a tombstone's job is blocking the TREE ENTRY's
+    resurrection, which it does regardless of whether a row ever existed behind it.
+
 ---
 
 ## 6 · Where the rest lives

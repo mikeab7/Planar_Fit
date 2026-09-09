@@ -1410,7 +1410,10 @@ describe("the project a notebook belongs to", () => {
      * one of them goes through `treeNow()` now. */
     expect(workspace, "the live-tree accessor exists").toMatch(/const treeNow = useCallback\(\(\) => treeRef\.current \|\| emptyTree\(\), \[\]\)/);
     const MUTATORS = [
-      "addPage(", "renameNode(", "setPageProject(", "deleteNode(",
+      // B1405008 — page creation goes through `createPage` (notesStore.js), which writes the
+      // body before the tree node is ever handed back; `addPage` alone is no longer called
+      // from the workspace.
+      "createPage(", "renameNode(", "setPageProject(", "deleteNode(",
       "restoreNode(", "purgeTrashEntry(", "movePage(", "commitTitle(", "touchPage(",
     ];
     for (const fn of MUTATORS) {
