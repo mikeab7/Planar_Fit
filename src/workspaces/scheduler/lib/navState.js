@@ -297,50 +297,14 @@ export function newProjectAction({ projectId = null, routedSiteName = null } = {
   };
 }
 
-/* ---- B1404352 — the breadcrumb must say WHICH PROJECT, not just which schedule -------------------
+/* ---- SUPERSEDED (B1435888) — `scheduleCrumbLabel` / `labelMultiScheduleRows` are GONE ------------
  *
- * Owner report, live click-test: standing on Goose Creek, switching to its "TAS Land Sale" schedule
- * made the header read "planyr / Dashboard / TAS Land Sale" — Goose Creek gone entirely, with no way
- * to tell which project you're in. This file's header explains why: the crumb shows SCHEDULE names,
- * not the Site Planner's project names, by design (B203/B440) — a design that was safe only while a
- * project had exactly one schedule (so the two names were interchangeable in practice). B1080547
- * broke that assumption on purpose (a project may now hold several distinctly-named schedules), and
- * nothing here was updated to match — B1112450 fixed WHICH schedule's name shows, never THAT a
- * project's own name can vanish behind it.
- *
- * The fix stays inside this bridged-list boundary rather than touching `currentProject`'s identity
- * or ProjectBreadcrumb.jsx: `resolveCurrentName` (projectModel.js) prefers whatever name the row
- * with a matching id carries in the LIST it's given, so relabeling the row here is what actually
- * reaches the crumb's trigger text — reassigning `currentProject.name` alone would be overridden
- * the moment that lookup succeeds. Only rows belonging to a project with 2+ linked schedules are
- * touched, so the common single-schedule project (the vast majority) renders exactly as before. */
-
-// "Goose Creek" + "TAS Land Sale" → "Goose Creek / TAS Land Sale". A schedule still named after its
-// own project (the default single-schedule case) collapses back to the bare name — never
-// "Goose Creek / Goose Creek" — and a schedule with no project at all (org-owned, or the project
-// name hasn't resolved yet) is returned unchanged. Pure text join; no truncation (the header's own
-// shrink/ellipsis handles overflow the same way any other crumb name does).
-export function scheduleCrumbLabel(projectName, scheduleName) {
-  const p = typeof projectName === "string" ? projectName.trim() : "";
-  const s = typeof scheduleName === "string" ? scheduleName.trim() : "";
-  if (!p) return s;
-  if (!s || s === p) return p;
-  return `${p} / ${s}`;
-}
-
-// Disambiguate every row belonging to a project that has MORE THAN ONE linked schedule — each such
-// row already carries its own project's name via `linkedSiteName` (sanitizeProjects), so this needs
-// no extra lookup. A project with only one linked schedule (or an org-owned/unlinked schedule) is
-// returned untouched, which is what keeps this additive rather than a switcher-wide relabeling.
-export function labelMultiScheduleRows(projects) {
-  if (!Array.isArray(projects)) return projects;
-  const counts = new Map();
-  for (const p of projects) {
-    if (p && p.linkedSiteId != null) counts.set(p.linkedSiteId, (counts.get(p.linkedSiteId) || 0) + 1);
-  }
-  return projects.map((p) => {
-    if (!p || p.linkedSiteId == null || (counts.get(p.linkedSiteId) || 0) < 2) return p;
-    const label = scheduleCrumbLabel(p.linkedSiteName, p.name);
-    return label === p.name ? p : { ...p, name: label };
-  });
-}
+ * B1404352 fixed "the breadcrumb must say WHICH PROJECT, not just which schedule" by RELABELING a
+ * multi-schedule project's dropdown rows to "Goose Creek / TAS Land Sale", so the ONE combined
+ * crumb never lost the project's name. B1435888 ("Schedule access: project and schedule become two
+ * separate breadcrumb levels") replaces that mechanism outright: the breadcrumb is now TWO
+ * independent crumbs — a plain project switcher, and a separate schedule switcher (`ScheduleCrumb`)
+ * right beside it — so a schedule's OWN bare name is exactly what the schedule crumb shows; the
+ * project crumb answers "which project" on its own, with nothing to relabel. If a future session
+ * needs to rebuild a combined single-crumb label, the git history has both functions and their
+ * tests intact as of this commit. */

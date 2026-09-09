@@ -1,21 +1,24 @@
 /* pursuitsList — pure table model for the Dashboard's "Pursuits" card (B1161793, NEW-2, Direction
  * C's second real content card).
  *
- * Sorted by SOONEST UPCOMING contractual date, ascending — an undated pursuit sorts to the
- * bottom. "Quiet for" (real edit recency) never enters the sort: a stale pursuit must never
- * outrank one with a clock running on it (tried and explicitly rejected in the brief).
+ * ⛔ B1342848 (owner instruction, 2026-09-09, verbatim: "remove the deal date from pursuits") — the
+ * card's "Next" column and its soonest-contractual-date sort are GONE. The session that shipped
+ * B1411504 confirmed, against the owner's real portfolio the same day, that all 44 open plan rows
+ * across his 28 open pursuits have every one of the three contractual-date fields
+ * (`feasibilityExpiry`/`loiDate`/`closingDate`) unset — the column read "Nothing scheduled" on
+ * every row, and the resulting "sorted alphabetically" fallback banner was permanent, not a
+ * transitional first-release state. The three date fields, the site-model schema, and the "Deal
+ * dates…" editor (MapFinder.jsx) are UNTOUCHED — only the Dashboard card's own read/display of them
+ * is removed. This supersedes B1268017's "Next" column design and B1411504 Part 2's undated
+ * tie-break fix (both left as historical record — see their own items for the cross-reference).
  *
- * ⛔ Dependency the brief asked to be surfaced loudly if missing: `feasibilityExpiry` / `loiDate` /
- * `closingDate` did NOT exist on the site model before this item — there was no contractual-date
- * field of any kind on a pursuit. They are added here (siteModel.js's `createSiteModel`) as plain
- * optional ISO date strings; every existing pursuit reads all three as unset until the owner (or a
- * teammate) fills them in via the new "Deal dates…" editor (MapFinder.jsx's site context menu). So
- * on first release EVERY row reads "Nothing scheduled" and the card is sorted on nothing but the
- * undated tie-break (alphabetical-by-nothing, effectively insertion order) until dates are entered —
- * this module does not fall back to last-edited or any other proxy; see the brief's own instruction
- * not to substitute one silently.
+ * Sort is now plain alphabetical by name — the same fallback those items already used, kept as the
+ * primary (only) sort rather than invented fresh. "Quiet for" (real edit recency) still rides along
+ * per row but is deliberately NOT a sort input: the owner explicitly rejected quiet-first ordering
+ * when this card was designed ("I don't know that something that's been quiet the longest should
+ * really be the one at the top") — that verdict doesn't change just because the alternative it was
+ * weighed against (date) is now gone too.
  */
-import { daysUntil } from "./dashboardDates.js";
 import { shortenDisplayName } from "../../../shared/projects/projectModel.js";
 
 const OPEN_STATUSES = new Set(["pursuit", "active", "onhold"]);
@@ -27,41 +30,11 @@ const OPEN_STATUSES = new Set(["pursuit", "active", "onhold"]);
 // layer, so the name that reaches the cell is already safe to display in full.
 const PURSUIT_NAME_MAX_CHARS = 26;
 
-export const NEXT_DATE_FIELDS = [
-  { key: "feasibilityExpiry", label: "Feasibility ends" },
-  { key: "loiDate", label: "LOI response due" },
-  { key: "closingDate", label: "Closing" },
-];
-
-/** The soonest date among a pursuit's three contractual fields that hasn't happened yet (today
- * counts as 0 days out), or null when none is set or all have already passed. */
-export function nextContractualDate(p, nowMs = Date.now()) {
-  let best = null;
-  for (const f of NEXT_DATE_FIELDS) {
-    const iso = p && p[f.key];
-    if (!iso) continue;
-    const days = daysUntil(iso, nowMs);
-    if (days == null || days < 0) continue;
-    if (!best || days < best.days) best = { label: f.label, date: iso, days };
-  }
-  return best;
-}
-
-/** `projects` — `groupProjectsByGroupId()` output, extended with the three raw date fields (see
- * dashboardSitesFetch.js). `quietDaysByGroup` — `{ [groupId]: days }` from real element-edit
- * recency (dashboardElementRecencyFetch.js + siteRecency.js), never last-edited/autosave.
- *
- * ⛔ B1411504 — the undated↔undated tie-break. Confirmed against the owner's real portfolio
- * (2026-09-09): EVERY open pursuit has all three contractual-date fields null — nobody has used
- * the "Deal dates…" editor yet, so `next` is null for every row and the old comparator's
- * `ad==null && bd==null → return 0` made the whole list a no-op sort, leaving Array.sort's
- * stability to show whatever order the rows happened to arrive in as if it meant something.
- * Alphabetical-by-name is the tie-break here — deliberately NOT quiet time (`quietDays`), which
- * this module's own header already rejects as a sort input for the reason stated there, and NOT
- * `updatedAt`/recency, which is the same signal by another name. It says nothing about urgency,
- * which is the honest thing to say when no row has a real due date to rank by; see
- * `allPursuitsUndated` below for the card-level admission of that state. */
-export function pursuitsTable(projects, quietDaysByGroup, { nowMs = Date.now() } = {}) {
+/** `projects` — `groupProjectsByGroupId()` output. `quietDaysByGroup` — `{ [groupId]: days }` from
+ * real element-edit recency (dashboardElementRecencyFetch.js + siteRecency.js), never
+ * last-edited/autosave. Sorted alphabetically by name — see this module's header for why (B1342848)
+ * and why that's never quiet time. */
+export function pursuitsTable(projects, quietDaysByGroup) {
   return (projects || [])
     .filter((p) => p.role !== "tracked" && OPEN_STATUSES.has(p.status))
     .map((p) => ({
@@ -70,24 +43,9 @@ export function pursuitsTable(projects, quietDaysByGroup, { nowMs = Date.now() }
       name: shortenDisplayName(p.name, PURSUIT_NAME_MAX_CHARS),
       county: p.county,
       status: p.status,
-      next: nextContractualDate(p, nowMs),
       quietDays: quietDaysByGroup && quietDaysByGroup[p.groupId] != null ? quietDaysByGroup[p.groupId] : null,
     }))
-    .sort((a, b) => {
-      const ad = a.next ? a.next.days : null;
-      const bd = b.next ? b.next.days : null;
-      if (ad == null && bd == null) return (a.name || "").localeCompare(b.name || ""); // no date on either side — alphabetical, never quiet time
-      if (ad == null) return 1; // undated always sorts to the bottom
-      if (bd == null) return -1;
-      return ad - bd; // ascending — soonest first; quiet time never a tiebreak input
-    });
-}
-
-/** True when NOT ONE open pursuit has a contractual date set — the card's cue to say so plainly
- * instead of presenting the alphabetical fallback as if it were a real "soonest date" sort
- * (B1411504). False for an empty list — that's a different, already-handled empty state. */
-export function allPursuitsUndated(rows) {
-  return Array.isArray(rows) && rows.length > 0 && rows.every((r) => !r.next);
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 }
 
 /** { [groupId]: whole days since the group's real last edit }, derived from a
@@ -148,18 +106,7 @@ export function quietDaysByGroupFromRows(elementRecencyRows, siteRows, nowMs = D
   return quietDaysByGroupFromRecency(groupRecencyMs(siteRows, bySite), nowMs);
 }
 
-// The brief's own thresholds for the "Next" cell's second line and the "Quiet for" emphasis.
-export const NEXT_LINE_URGENT_DAYS = 7;   // < this → red
-export const NEXT_LINE_SOON_DAYS = 14;    // < this → accent
 export const QUIET_EMPHASIS_DAYS = 10;    // >= this → emphasized (never colored red/accent — not a warning)
-
-/** "danger" | "accent" | "muted" — the Next cell's second-line tone. null (undated) is muted. */
-export function nextLineTone(days) {
-  if (days == null) return "muted";
-  if (days < NEXT_LINE_URGENT_DAYS) return "danger";
-  if (days < NEXT_LINE_SOON_DAYS) return "accent";
-  return "muted";
-}
 
 export function isQuietEmphasized(days) {
   return days != null && days >= QUIET_EMPHASIS_DAYS;

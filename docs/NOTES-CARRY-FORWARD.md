@@ -701,6 +701,32 @@ position**.
     function's header in `lib/notesModel.js`); a tombstone's job is blocking the TREE ENTRY's
     resurrection, which it does regardless of whether a row ever existed behind it.
 
+13. **⛔ "GROW THE PADDING BEFORE A FIXED ELEMENT" CANNOT SEPARATE THAT ELEMENT FROM CONTENT
+    MEASURED FROM A DIFFERENT ORIGIN — NO MATTER HOW GENEROUS THE CREDIT (B1433856,
+    NOTES-TITLE-BAND-DEAD-ZONE, 2026-09-09).** NEW-5 (B1370545) let a box render "above the body's
+    origin" by crediting the title band's own height as free padding-top room — reasoning that
+    looked identical in shape to the LEFT-edge credit two lines above it in the same effect (a box
+    20px left of origin still sits on the card because the side padding is wider than that). It is
+    NOT the same shape, and the difference is proof, not intuition: `note-title`'s `<input>` is
+    `width: 100%` always, so the "free" room inside the band is occupied by a real interactive
+    element, and — proved algebraically before touching any code — **padding-top growth can never
+    open distance between the band and a box measured from the document's origin**, because both
+    shift down by the identical amount for ANY function of the growth that is linear in the box's
+    own reach (which `anchorExtentTop` always is). Substituting a bigger credit only moves WHERE
+    the collision sits; it can never remove it. Measured live on the owner's account exactly as
+    predicted: `note-title`'s rect and a placed note's rect painted the same pixels, and a real
+    click on the shared pixels focused NEITHER (`document.activeElement` stayed `BODY`) —
+    permanent, reload-surviving, and CHROME-NEVER-EATS-A-PRESS's own inverse (two real, different
+    editable surfaces sharing one press, resolved to neither). **The fix is a different quantity,
+    not a different constant**: grow the GAP AFTER the element (here, `TITLE_BAND_GAP`, folded into
+    the band's own `marginBottom`) instead of the padding BEFORE it — the one distance that is not
+    shared between the fixed element and content measured from the far side of it. Generalizes past
+    this one bug: **any time a growth/credit budget is computed as "there is already free room
+    before a fixed piece of chrome," ask whether that chrome is a real, always-full-extent
+    interactive element (not decoration) before trusting the credit** — a `width: 100%` control is
+    the tell, and the fix a caller reaches for first (grow the SAME padding harder) is provably the
+    one that cannot work.
+
 ---
 
 ## 6 · Where the rest lives

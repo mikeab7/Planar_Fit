@@ -2204,23 +2204,24 @@ export default function NoteEditor({
   /* ⛔ AND THE OTHER TWO DIRECTIONS (NOTES-FREE-PLACEMENT / NEW-1, owner report 2026-09-08).
    * Growth right and down shipped; left and up were CLAMPED, so a box dragged 434px past the
    * page's left edge landed at `left: 4px` with the page still 580 wide, while the identical
-   * gesture rightward grew it 580 → 1212 and shrank it back. These two are how far the sheet has
-   * had to reach BEYOND its own left and top edges — extra padding on the card, so the page grows
-   * outward and the content inside it keeps its coordinates rather than every box being rewritten.
-   * `0` is the ordinary state and costs nothing. */
+   * gesture rightward grew it 580 → 1212 and shrank it back. `sheetGrowLeft` is extra padding on
+   * the card's LEFT edge, so the page grows outward and the content inside it keeps its
+   * coordinates rather than every box being rewritten.
+   *
+   * ⛔ `sheetGrowTop` IS GONE (B1433856, NOTES-TITLE-BAND-DEAD-ZONE) — replaced by
+   * `sheetGrowGap`, extra space folded into the title band's own `marginBottom` rather than the
+   * sheet's padding-top. See the measurement effect's comment on `growGap`, below, for why: padding
+   * BEFORE the band moves the band and the body's origin down TOGETHER, so it can never open
+   * distance between them, which is exactly how a box "above the body's origin" ended up rendering
+   * behind the band's own `<input>` instead of clear of it. Growing the GAP AFTER the band is the
+   * one distance that separates them. `0` is the ordinary state and costs nothing, same as before. */
   const [sheetGrowLeft, setSheetGrowLeft] = useState(0);
-  const [sheetGrowTop, setSheetGrowTop] = useState(0);
+  const [sheetGrowGap, setSheetGrowGap] = useState(0);
   /* How much grey sits to the LEFT of the page — the gutter a centred ungrown page would have,
    * floored so it never disappears. Measured in the same pass as the growth, from the same
    * numbers, and it is a function of the PANE only, never of the sheet's grown width, which is
    * what makes the page's left edge unable to move. */
   const [matPadX, setMatPadX] = useState(0);
-  /* The title + metadata band's own height, measured rather than assumed: it is what sits between
-   * the sheet's top padding and the body's own origin, so it is exactly how far ABOVE the body a
-   * box may reach before the sheet itself has to grow. Measuring the band (content the effect
-   * never writes) rather than the body's rendered offset (which `sheetGrowTop` moves) is what
-   * keeps this out of the feedback loop `fitAnchorBox`'s header warns about. */
-  const titleBandRef = useRef(null);
   /** Where the body sat the last time the page's growth changed — see the compensation effect. */
   const growAnchorRef = useRef(null);
   /** …and the gutter that reading was taken under, so a gutter change re-bases rather than scrolls. */
@@ -2489,19 +2490,51 @@ export default function NoteEditor({
       const naturalSheetWidth = Math.max(1, Math.min(SHEET_MAX_WIDTH, paneWidth - marginX));
       const naturalPageWidth = Math.max(1, naturalSheetWidth - padX);
       const needX = anchorExtentX(blocks);
-      /* ⛔ AND THE SAME QUESTION ASKED OF THE OTHER TWO EDGES (NOTES-FREE-PLACEMENT / NEW-1).
-       * `anchorExtentLeft`/`anchorExtentTop` answer "how far past the page's LEFT/TOP origin does
-       * anything reach", in the same positive-distance units as the two above. The sheet already
-       * has room for some of that in its own padding — a box 20px left of the body's origin still
-       * sits on the white card, because the card's side padding is wider than that — so only the
-       * SHORTFALL becomes growth. A box above the body's origin has the whole title band to sit
-       * in first, which is what makes NEW-5 (placing something level with the title) fall out of
-       * this rather than needing a coordinate migration: the origin the DOCUMENT stores never
-       * moves, and the sheet reaches up to meet it. */
-      const bandH = titleBandRef.current?.offsetHeight || 0;
-      const padTop = narrow ? SHEET_PAD_TOP.narrow : SHEET_PAD_TOP.wide;
+      /* ⛔ AND THE SAME QUESTION ASKED OF THE LEFT EDGE (NOTES-FREE-PLACEMENT / NEW-1).
+       * `anchorExtentLeft` answers "how far past the page's LEFT origin does anything reach", in
+       * the same positive-distance units as the two above. The sheet already has room for some of
+       * that in its own padding — a box 20px left of the body's origin still sits on the white
+       * card, because the card's side padding is wider than that — so only the SHORTFALL becomes
+       * growth.
+       *
+       * ⛔ THE TOP EDGE IS NOT THE SAME QUESTION, AND TREATING IT AS ONE WAS THE BUG (B1433856,
+       * NOTES-TITLE-BAND-DEAD-ZONE, 2026-09-09) — CORRECTING NEW-5's ORIGINAL REASONING, KEPT FOR
+       * THE RECORD RATHER THAN DELETED. NEW-5 read "a box above the body's origin has the whole
+       * title band to sit in first" as the same kind of saving as the LEFT edge's padding credit —
+       * extra padding-TOP on the sheet, crediting the band's own height as part of it — and it
+       * never asked what already occupies that space. The title band's height is not blank: the
+       * `note-title` `<input>` spans it at `width: 100%`, always, regardless of what the title
+       * says. Measured live on the owner's account (B1433856): the input's rect and a placed
+       * note's rect painted the same pixels, the note's glyphs drew over the title's letters once
+       * the title grew long enough to reach them, and a real click in the shared pixels focused
+       * NEITHER element — `document.activeElement` stayed `BODY`. That is a permanent, reload-
+       * surviving dead zone: the title becomes uneditable at that x, and the note never gets a
+       * caret on a first press either (a box's own first press SELECTS it, per B434416's two-stage
+       * model — correct everywhere else, but there is nothing on screen there to show a selection
+       * happened, since it reads as more title).
+       *
+       * ⛔ AND EXTRA PADDING-TOP CANNOT FIX IT, WHICH IS WHY THE FIX IS A DIFFERENT MECHANISM
+       * RATHER THAN A DIFFERENT NUMBER. Padding-top sits BEFORE the band, so growing it shifts the
+       * band and the body's origin DOWN TOGETHER, by the same amount — it can never open distance
+       * BETWEEN them, because both move by exactly the same padding-top delta. Proved by construction: for any
+       * formula of the shape `padding-top += f(extentTop)`, a box's on-screen position reduces to
+       * `dom.top − |y| = (base + f(extentTop)) − |y|`, and whenever `f` is linear in `extentTop`
+       * (which `extentTop` itself is linear in `|y|`), the `|y|` terms cancel and the box lands at
+       * the SAME pixel regardless of the constant subtracted inside `f` — which is exactly how the
+       * shipped formula produced an overlapping "free" zone in the first place: crediting a bigger
+       * constant only moved WHERE the collision sits, never whether one happens.
+       *
+       * The fix instead grows the GAP between the band and the body's origin (`sheetGrowGap`,
+       * folded into the title band's own `marginBottom` below) — the one distance that is NOT
+       * shared between the band and a box measured from the body's origin, so growing it is the
+       * only lever that can put daylight between them. A box whose reach fits inside the band's
+       * own footprint now pushes the body's origin down by exactly enough to clear it (with the
+       * same breathing pad `anchorExtentTop` already gives every other edge); the band itself does
+       * not move. "Something placed level with the title" (NEW-5 / V993809) still works, and still
+       * needs no coordinate migration — it now renders in the space the gap opens up below the
+       * band instead of behind it, which is what makes it reachable rather than merely present. */
       const growLeft = Math.max(0, anchorExtentLeft(blocks) - padSide);
-      const growTop = Math.max(0, anchorExtentTop(blocks) - padTop - bandH - TITLE_BAND_GAP);
+      const growGap = Math.max(0, anchorExtentTop(blocks) - TITLE_BAND_GAP);
       /* The content column keeps its natural width unless something overhangs the RIGHT; growth
        * on the left is paid for by the sheet getting wider, never by the column getting narrower
        * (which would rewrap his words as a side effect of moving a box). */
@@ -2510,7 +2543,7 @@ export default function NoteEditor({
       const totalSheetWidth = grow ? growLeft + padX + contentW : naturalSheetWidth;
       setSheetGrowWidth(grow ? totalSheetWidth : null);
       setSheetGrowLeft(growLeft);
-      setSheetGrowTop(growTop);
+      setSheetGrowGap(growGap);
       /* ⛔ THE PAGE'S LEFT EDGE IS PINNED WHERE CENTRING WOULD HAVE PUT AN *UNGROWN* PAGE, AND
        * GROWTH ONLY EVER EXTENDS RIGHTWARD FROM IT.
        *
@@ -2604,7 +2637,7 @@ export default function NoteEditor({
     const dy = at.top - was.top;
     if (dx) sc.scrollLeft += dx;
     if (dy) sc.scrollTop += dy;
-  }, [editor, sheetGrowWidth, sheetGrowLeft, sheetGrowTop, matPadX]);
+  }, [editor, sheetGrowWidth, sheetGrowLeft, sheetGrowGap, matPadX]);
 
   /* ---- PASTE JUST THE TEXT (B36051) ------------------------------------------------------
    *
@@ -2994,15 +3027,21 @@ export default function NoteEditor({
                a leftover alignment hack. Widened on desktop to match the generosity the rest of
                this item gives the page — Craft/Bear both give a paragraph real room to breathe
                on every side, not just between lines. */
-            /* ⛔ GROWING LEFT AND UP IS EXTRA PADDING ON THIS CARD (NOTES-FREE-PLACEMENT / NEW-1).
-               The page reaches outward to contain a box; the document's own coordinates never
-               move, so nothing is rewritten and nothing has to migrate — which is also why the
-               title band becomes reachable (NEW-5) without a coordinate change. Both are 0 in the
-               ordinary case and shrink straight back the moment nothing needs them, exactly as
-               `sheetGrowWidth` already does on the right. */
+            /* ⛔ GROWING LEFT IS EXTRA PADDING ON THIS CARD (NOTES-FREE-PLACEMENT / NEW-1). The
+               page reaches outward to contain a box; the document's own coordinates never move,
+               so nothing is rewritten and nothing has to migrate. `0` in the ordinary case,
+               shrinking straight back the moment nothing needs it, exactly as `sheetGrowWidth`
+               already does on the right.
+               ⛔ GROWING **UP** IS NO LONGER PADDING-TOP (B1433856, NOTES-TITLE-BAND-DEAD-ZONE) —
+               it is `sheetGrowGap`, folded into the title band's own `marginBottom` below instead.
+               Padding here sits BEFORE the band, so growing it used to shift the band and
+               something placed level with the title (NEW-5) DOWN TOGETHER, never opening distance
+               between them — which is how that box ended up rendering behind the band's own
+               `<input>` instead of clear of it. See the measurement effect's comment on `growGap`
+               for the full reasoning. */
             padding: narrow
-              ? `${SHEET_PAD_TOP.narrow + sheetGrowTop}px ${SHEET_PAD_X.narrow}px max(96px, calc(96px + env(safe-area-inset-bottom))) ${SHEET_PAD_X.narrow + sheetGrowLeft}px`
-              : `${SHEET_PAD_TOP.wide + sheetGrowTop}px ${SHEET_PAD_X.wide}px 96px ${SHEET_PAD_X.wide + sheetGrowLeft}px`,
+              ? `${SHEET_PAD_TOP.narrow}px ${SHEET_PAD_X.narrow}px max(96px, calc(96px + env(safe-area-inset-bottom))) ${SHEET_PAD_X.narrow + sheetGrowLeft}px`
+              : `${SHEET_PAD_TOP.wide}px ${SHEET_PAD_X.wide}px 96px ${SHEET_PAD_X.wide + sheetGrowLeft}px`,
             margin: narrow ? `10px ${SHEET_MARGIN_X.narrow}px 0` : `24px ${SHEET_MARGIN_X.wide}px 0`,
           }}
         >
@@ -3022,7 +3061,11 @@ export default function NoteEditor({
               secondary line (defect #6) — every reference app named in this item's brief puts
               that information directly under the title, never floating far right on the same
               line with a large gap to the name. */}
-          <div ref={titleBandRef} style={{ marginBottom: TITLE_BAND_GAP }}>
+          {/* ⛔ THE GAP BELOW THE BAND GROWS TO KEEP A BOX CLEAR OF IT (B1433856) — see the
+              measurement effect's comment on `growGap`. `sheetGrowGap` is 0 in the ordinary case,
+              so this is the same fixed `TITLE_BAND_GAP` it always was until something above the
+              body's origin needs more room than that. */}
+          <div style={{ marginBottom: TITLE_BAND_GAP + sheetGrowGap }}>
             <input
               data-testid="note-title"
               value={title}

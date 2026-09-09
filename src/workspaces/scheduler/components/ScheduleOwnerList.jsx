@@ -26,6 +26,14 @@
  * (`ScheduleSwitcher` in ScheduleToolbar.jsx — new, covers every other case, incl. Grid/Split/
  * Gantt and the phone-width header's horizontal-scroll toolbar).
  *
+ * ⛔ B1435888 — TWO OPTIONAL PROPS FOR THE ROW-1 BREADCRUMB'S OWN SCHEDULE LEVEL (`ScheduleCrumb.jsx`,
+ * "Schedule access: project and schedule become two separate breadcrumb levels"). `showOther`
+ * (default true) hides the "Other projects" group when false — the breadcrumb's own dropdown is
+ * scoped to THIS project + the Organization only, per the owner-picked mockup; the header's
+ * "Schedules" panel (ScheduleSwitcher, unchanged) keeps every group. `createLabel` overrides the
+ * generic "New schedule" row text (the breadcrumb passes "New schedule in <Project>"). Neither
+ * prop changes anything for an existing caller that doesn't pass it.
+ *
  * ⛔ B1397568 — "＋ New schedule" IS NOW A ROW IN THIS LIST, when `onCreate` is passed in. The
  * create dialog (NewScheduleModal) already worked from a project that already has a schedule —
  * it was reachable via the breadcrumb's generic "＋ New project" row, confirmed live by
@@ -113,6 +121,20 @@ const TrashIcon = ({ size = 12 }) => (
     <path d="M10 11v6M14 11v6" />
   </svg>
 );
+// B1435888 — same drawn idiom, duplicated from ProjectBreadcrumb.jsx's own DuplicateIcon (module-
+// private there too — see that file's own note on why there's no shared icon module yet). This is
+// "Duplicate schedule", relocated here from the old flat project/schedule breadcrumb kebab: that
+// menu's "Duplicate" row posted a SCHEDULE id, and once the breadcrumb's project level became a
+// genuine, uncontrolled site-project switcher (B1435888) it had no schedule id to resolve any more
+// — duplicating a schedule belongs on the schedule's own row, not the project's.
+const DuplicateIcon = ({ size = 12 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+    style={{ flex: "none", display: "block" }}>
+    <rect x="9" y="9" width="12" height="12" rx="2" />
+    <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+  </svg>
+);
 
 const iconBtn = {
   display: "flex", alignItems: "center", justifyContent: "center", flex: "none",
@@ -149,6 +171,7 @@ function ScheduleRow({
   s, active, onSelect, canManage,
   editing, editVal, onEditValChange, onCommitRename, onCancelRename, onStartRename, editWarning,
   confirming, onStartConfirm, onCancelConfirm, onCommitDelete,
+  onDuplicate,
 }) {
   const label = s.name || "Untitled schedule";
   if (confirming) {
@@ -204,11 +227,26 @@ function ScheduleRow({
       >
         {label}
       </button>
+      {/* B1435888 — the task count, right-aligned beside the name (the breadcrumb's own dropdown
+          asked for this; shown here for every caller since it's a small, harmless addition and the
+          header's "Schedules" panel benefits from the same at-a-glance count). Absent entirely when
+          the embedded app hasn't reported a count for this row (sanitizeProjects only carries
+          `taskCount` when the bridge sent one) — never a fabricated 0. */}
+      {s.taskCount != null && (
+        <span style={{ flex: "none", fontSize: FONT_SIZE.micro, color: "var(--text-tertiary)" }}>
+          {s.taskCount}
+        </span>
+      )}
       {canManage && (
         <span style={{ display: "flex", gap: 1, flex: "none" }}>
           {onStartRename && (
             <button type="button" data-testid="schedule-owner-rename" title={`Rename “${label}”`} aria-label={`Rename “${label}”`} onClick={() => onStartRename(s)} style={iconBtn}>
               <PencilIcon />
+            </button>
+          )}
+          {onDuplicate && (
+            <button type="button" data-testid="schedule-owner-duplicate" title={`Duplicate “${label}”`} aria-label={`Duplicate “${label}”`} onClick={() => onDuplicate(s.id)} style={iconBtn}>
+              <DuplicateIcon />
             </button>
           )}
           {onStartConfirm && (
@@ -224,7 +262,7 @@ function ScheduleRow({
 
 function Group({ title, schedules, activeId, onSelect, emptyText, manage }) {
   if (!schedules.length && !emptyText) return null;
-  const canManage = !!(manage && (manage.onStartRename || manage.onStartConfirm));
+  const canManage = !!(manage && (manage.onStartRename || manage.onStartConfirm || manage.onDuplicate));
   return (
     <>
       <div style={heading}>{title}</div>
@@ -248,6 +286,7 @@ function Group({ title, schedules, activeId, onSelect, emptyText, manage }) {
               onStartConfirm={manage?.onStartConfirm}
               onCancelConfirm={manage?.onCancelConfirm}
               onCommitDelete={() => manage?.onCommitDelete(s)}
+              onDuplicate={manage?.onDuplicate}
             />
           ))}
     </>
@@ -264,6 +303,12 @@ export default function ScheduleOwnerList({
   // Neither call site is required to wire both — matches onCreate's own pattern, and keeps a
   // future read-only listing possible without a dead prop.
   onRename, onDelete,
+  // B1435888 — optional, independently again: duplicate a schedule (id). Relocated here from the
+  // old project/schedule breadcrumb kebab — see this file's own header note above the imports and
+  // DuplicateIcon's note.
+  onDuplicate,
+  showOther = true,
+  createLabel = "New schedule",
 }) {
   const { here, org, elsewhere } = useMemo(() => partitionSchedules(schedules, siteId), [schedules, siteId]);
   const [editingId, setEditingId] = useState(null);
@@ -289,7 +334,7 @@ export default function ScheduleOwnerList({
     ? `There is already a schedule called “${normalizeName(editVal)}” here.`
     : null;
 
-  const manage = (onRename || onDelete) ? {
+  const manage = (onRename || onDelete || onDuplicate) ? {
     editingId, editVal, editWarning,
     onEditValChange: setEditVal,
     onCommitRename: commitRename,
@@ -299,6 +344,7 @@ export default function ScheduleOwnerList({
     onStartConfirm: onDelete ? startConfirm : undefined,
     onCancelConfirm: cancelConfirm,
     onCommitDelete: commitDelete,
+    onDuplicate,
   } : null;
 
   return (
@@ -314,7 +360,7 @@ export default function ScheduleOwnerList({
         />
       )}
       <Group title={ORG_OWNER_LABEL} schedules={org} activeId={activeId} onSelect={onSelect} manage={manage} />
-      <Group title="Other projects" schedules={elsewhere} activeId={activeId} onSelect={onSelect} manage={manage} />
+      {showOther && <Group title="Other projects" schedules={elsewhere} activeId={activeId} onSelect={onSelect} manage={manage} />}
       {onCreate && (
         <>
           <div style={divider} />
@@ -326,7 +372,7 @@ export default function ScheduleOwnerList({
             style={createRow}
           >
             <span style={{ fontSize: 14, lineHeight: 1 }}>＋</span>
-            <span>New schedule</span>
+            <span>{createLabel}</span>
           </button>
         </>
       )}
