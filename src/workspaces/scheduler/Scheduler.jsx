@@ -649,6 +649,11 @@ export default function Scheduler({
             siteId={projectId}
             siteName={routedSiteName}
             onSelectSchedule={selectSchedule}
+            // B1397568 — the SAME dialog + pre-fill the breadcrumb's "＋ New project" already
+            // opens (newProjectAction pre-selects the routed project as owner, or the
+            // Organization when none is routed), now also reachable from the "Schedules" panel
+            // itself — see ScheduleOwnerList's own header for why that mattered.
+            onCreateSchedule={() => setNewSchedulePrompt(newProjectAction({ projectId, routedSiteName }))}
           />
         )}
         toolbarContent={<ScheduleActions toolbar={toolbar} post={post} />}
