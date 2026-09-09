@@ -253,6 +253,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         notePages: recentNotePages,
         prevSnapshot: mark.snapshot,
         scheduleLastWriteAt,
+        compsRatePeriod: compsPeriod,
       });
       setSinceLastHere({ feed, headerSpan: spanWords(feed.spanAnchorMs, nowMs), now: nowMs });
       // Fire-and-forget: this visit's own mark for NEXT time. Never blocks dataReady — a failed
@@ -263,6 +264,11 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
       setDataReady(true);
     })();
     return () => { live = false; };
+    // `compsPeriod` deliberately excluded: it only seeds the "New comp" rows' initial subline
+    // (SinceLastHereCard.jsx recomputes it live off the current period on every render regardless
+    // — see sinceLastHereFeed.js's header, FEED-3) and re-running this whole fetch waterfall on a
+    // toggle flip would refetch everything for no reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   const projects = useMemo(() => groupProjectsByGroupId(sites), [sites]);
@@ -320,6 +326,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
       <SinceLastHereCard
         feed={cardData.sinceLastHere.feed}
         now={sinceLastHere?.now ?? Date.now()}
+        compsRatePeriod={compsPeriod}
         onOpenProject={openProject}
         onOpenTask={openTask}
         onOpenSchedule={openSchedule}
