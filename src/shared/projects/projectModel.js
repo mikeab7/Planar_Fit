@@ -39,6 +39,57 @@ export function shortenDisplayName(name, maxLen) {
 // that owns the delete itself (B927105). storage.js imports it from here.
 export const DELETED_RETENTION_DAYS = 30;
 
+/* B1399568 — ADOPT, DON'T MINT: planning a site on ground that already carries a project must
+ * open that project instead of minting a second `group_id = id` row. Production showed two
+ * projects born 51 seconds apart at byte-identical origin coordinates — too far apart for any
+ * debounce/submit-disable/StrictMode guard to close (those all land within milliseconds), and it
+ * is unknown (and irrelevant) whether the second create came from a second press or the app
+ * re-entering the path on its own. So the guard is keyed on the GROUND, checked fresh at the
+ * moment of creation, not on suppressing a second click.
+ *
+ * `findProjectAtOrigin` is the ONE place that decides "does this origin already have a project."
+ * `SAME_GROUND_FT` is deliberately tight — the real duplicate matched to the last digit — with
+ * just enough slack to absorb float jitter from re-deriving an origin (e.g. a slightly different
+ * parcel-average) for what is unmistakably the same click, while staying far short of the
+ * distance between two genuinely different adjacent parcels. */
+export const SAME_GROUND_FT = 30;
+
+// Haversine distance in feet between two {lat, lon} points. Dependency-free (no projection
+// module) since this only needs to answer "is this the same spot," never a precise survey figure.
+export function distanceFeetBetween(a, b) {
+  if (!a || !b || !Number.isFinite(a.lat) || !Number.isFinite(a.lon) || !Number.isFinite(b.lat) || !Number.isFinite(b.lon)) {
+    return Infinity;
+  }
+  const EARTH_RADIUS_FT = 20925646.325;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const la1 = toRad(a.lat), la2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+  return 2 * EARTH_RADIUS_FT * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+// Find the existing project (group id) already anchored at `origin`, among a flat list of
+// site-model records (the same shape `groupProjects` consumes). Every plan in a group carries its
+// project's origin (copied verbatim by `newPlanSameParcel`/`duplicatePlan`), so matching any
+// record's origin is enough to identify the group — never re-derived from just the anchor row,
+// which the B1164192 family already showed can go missing while the group stays alive. Ties
+// (pre-existing duplicates at the same spot) resolve to the most recently updated group, never a
+// coin flip. Returns null when nothing at this ground exists yet, or `origin` is unusable.
+export function findProjectAtOrigin(records = [], origin, { excludeGroupId = null } = {}) {
+  if (!origin || !Number.isFinite(origin.lat) || !Number.isFinite(origin.lon)) return null;
+  let best = null;
+  for (const s of records || []) {
+    if (!s || !s.origin) continue;
+    const groupId = s.groupId || s.id;
+    if (!groupId || groupId === excludeGroupId) continue;
+    if (distanceFeetBetween(origin, s.origin) > SAME_GROUND_FT) continue;
+    const updatedAt = Number(s.updatedAt) || 0;
+    if (!best || updatedAt > best.updatedAt) best = { groupId, updatedAt };
+  }
+  return best ? best.groupId : null;
+}
+
 // B1202176 — Shell.jsx's route-level deletion gate (B848833) asks one honest question — does
 // this project id's cloud row exist, and if so is it soft-deleted? — and that question cannot
 // tell "nobody has ever created this row" apart from "this row was just created LOCALLY and

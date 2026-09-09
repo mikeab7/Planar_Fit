@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, shortenDisplayName } from "../src/shared/projects/projectModel.js";
+import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, shortenDisplayName, findProjectAtOrigin, distanceFeetBetween, SAME_GROUND_FT } from "../src/shared/projects/projectModel.js";
 import { listProjects } from "../src/shared/projects/projects.js";
 import { setActiveUser } from "../src/workspaces/site-planner/lib/activeUser.js";
 
@@ -393,13 +393,15 @@ describe("listProjects — pursuit-only by default (NEW-1)", () => {
 
 // B1407824 — a truncated project/plan name was rendering with a dangling trailing comma and no
 // ellipsis ("ALUMAX RD, NASH,") on five Dashboard surfaces (the Locations map pin, the Pursuits
-// table, the Recent plans tile caption, and the Since-you-were-last-here feed's plan rows). A
-// plain `name.slice(0, n)` cuts to a length and stops, with no regard for what character it
-// stopped on and no visible mark that anything was cut. `shortenDisplayName` is the ONE shared
-// place that decides how a name shortens for all of them.
+// table, the Recent plans tile caption, and the Since-you-were-last-here feed's plan rows).
+// `shortenDisplayName` is the ONE shared place that decides how a name shortens for all of them —
+// and, per the production evidence surfaced by the sibling B1399568 fix below (the exact same
+// stored value, read straight off two real `sites` rows), the reported name is not actually long:
+// it's exactly "ALUMAX RD, NASH," with nothing more ever following, so a length-only truncate can
+// never fix it — there's nothing left to cut. This function does two different things accordingly.
 describe("shortenDisplayName", () => {
   // The adjacent-case table the fix was built against, one row per case.
-  it("a name shorter than the limit is returned untouched — no ellipsis, nothing was cut", () => {
+  it("a name shorter than the limit, with no dangling punctuation, is returned untouched", () => {
     expect(shortenDisplayName("Short Name", 20)).toBe("Short Name");
   });
 
@@ -412,11 +414,15 @@ describe("shortenDisplayName", () => {
   });
 
   it("a name cut immediately after a comma trims the comma before marking it shortened", () => {
-    // The exact production string this item was filed for: "ALUMAX RD, NASH," is where a naive
-    // slice(0, 16) lands on the fuller address below — and it is exactly the dangling-comma
-    // defect this function exists to prevent.
-    expect(shortenDisplayName("ALUMAX RD, NASH,", 16)).toBe("ALUMAX RD, NASH,");
     expect(shortenDisplayName("ALUMAX RD, NASH, TX 75569", 16)).toBe("ALUMAX RD, NASH…");
+  });
+
+  it("a name that FITS but itself dangles on a comma is cleaned, with no ellipsis — nothing was cut, there's nothing left to shorten it to", () => {
+    // The exact reported production string, confirmed elsewhere in this file (see
+    // findProjectAtOrigin's own fixture below) to be the real, complete stored value — not a
+    // truncated prefix of something longer. A length-based cut can't fix this; only cleanup can.
+    expect(shortenDisplayName("ALUMAX RD, NASH,", 16)).toBe("ALUMAX RD, NASH");
+    expect(shortenDisplayName("ALUMAX RD, NASH,", 100)).toBe("ALUMAX RD, NASH");
   });
 
   it("a name cut immediately after a period trims the period before marking it shortened", () => {
@@ -439,18 +445,25 @@ describe("shortenDisplayName", () => {
     expect(shortenDisplayName("Foo Bar, , TX", 9)).toBe("Foo Bar…");
   });
 
+  it("a fitting name's trailing SPACE is left alone — plain whitespace isn't 'broken text'", () => {
+    expect(shortenDisplayName("Trailing Space  ", 20)).toBe("Trailing Space  ");
+  });
+
   it("null/empty/undefined never throw and never fabricate a mark", () => {
     expect(shortenDisplayName(null, 10)).toBe("");
     expect(shortenDisplayName(undefined, 10)).toBe("");
     expect(shortenDisplayName("", 10)).toBe("");
   });
 
-  // RED-PROOF — a shortened name must never end on a comma, period, hyphen or space, and must
-  // always carry the one visible mark that it was shortened. Run across a spread of inputs and
-  // limits so this is a property of the function, not one lucky case.
-  it("RED-PROOF: a shortened name never ends on a comma/period/hyphen/space, and is always visibly marked", () => {
+  // RED-PROOF — no name this function returns may end on a dangling comma, period or hyphen, and
+  // every name it genuinely SHORTENED (cut for space) must carry the one visible mark that it was.
+  // Run across a spread of inputs and limits so this is a property of the function, not one lucky
+  // case — including the "fits but dangles" shape the naive length-only design above couldn't
+  // reach at all.
+  it("RED-PROOF: never ends on a comma/period/hyphen, and every space-driven cut is visibly marked", () => {
     const names = [
       "ALUMAX RD, NASH, TX 75569",
+      "ALUMAX RD, NASH,", // fits under every maxLen tried below — the reported case itself
       "Building A. Extra text here",
       "Alumax-Rd-Extension Industrial",
       "Foo Bar Baz Qux Industrial Park",
@@ -461,14 +474,103 @@ describe("shortenDisplayName", () => {
     for (const name of names) {
       for (let maxLen = 1; maxLen <= name.length + 2; maxLen++) {
         const out = shortenDisplayName(name, maxLen);
+        expect(out).not.toMatch(/[,.\-]$/); // never ends on a dangling comma/period/hyphen
         if (name.length <= maxLen) {
-          expect(out).toBe(name); // untouched — nothing was cut, no mark expected
+          expect(out.endsWith("…")).toBe(false); // nothing was cut for space — no mark
           continue;
         }
-        expect(out.endsWith("…")).toBe(true); // always visibly marked as shortened
-        const withoutMark = out.slice(0, -1);
-        expect(withoutMark).not.toMatch(/[,.\-\s]$/); // never ends on a dangling separator
+        expect(out.endsWith("…")).toBe(true); // genuinely shortened — always visibly marked
+        expect(out.slice(0, -1)).not.toMatch(/\s$/); // and never on a dangling space either
       }
     }
+  });
+});
+
+// B1399568 — ADOPT, DON'T MINT: planning a site on ground that already carries a project must
+// find that project rather than let a second `group_id = id` row be minted. Production evidence:
+// two projects born 51s apart at byte-identical origin coordinates (lat 33.44769381770632, lon
+// -94.13769222822577 — "ALUMAX RD, NASH,", Bowie county), both empty shells. `findProjectAtOrigin`
+// is the pure decision SitePlannerApp.jsx's newSiteFromMap/newBlankSite consult before minting —
+// see its header in projectModel.js. Full mint-vs-adopt integration proof (through the real
+// storage.js saveSite/loadSitesList) lives in test/duplicateProjectOrigin.test.js; this suite
+// covers the matching rule itself.
+describe("distanceFeetBetween — pure haversine distance", () => {
+  it("is 0 for the identical point", () => {
+    expect(distanceFeetBetween({ lat: 33.4, lon: -94.1 }, { lat: 33.4, lon: -94.1 })).toBe(0);
+  });
+
+  it("is Infinity for a missing or non-finite point on either side", () => {
+    expect(distanceFeetBetween(null, { lat: 1, lon: 1 })).toBe(Infinity);
+    expect(distanceFeetBetween({ lat: 1, lon: 1 }, { lat: NaN, lon: 1 })).toBe(Infinity);
+    expect(distanceFeetBetween({ lat: 1, lon: 1 }, undefined)).toBe(Infinity);
+  });
+
+  it("reports a real distance in the right ballpark for a known-separated pair", () => {
+    // Roughly a degree of latitude apart ≈ 364,000-366,000 ft (~69 miles) at this latitude.
+    const d = distanceFeetBetween({ lat: 33.0, lon: -94.0 }, { lat: 34.0, lon: -94.0 });
+    expect(d).toBeGreaterThan(360000);
+    expect(d).toBeLessThan(367000);
+  });
+});
+
+describe("findProjectAtOrigin — the ADOPT decision", () => {
+  const ORIGIN = { lat: 33.44769381770632, lon: -94.13769222822577 };
+
+  it("returns null when nothing exists at this ground yet", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: { lat: 40, lon: -100 }, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBeNull();
+  });
+
+  it("returns null for an unusable origin (missing / non-finite)", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: ORIGIN, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, null)).toBeNull();
+    expect(findProjectAtOrigin(records, { lat: NaN, lon: ORIGIN.lon })).toBeNull();
+  });
+
+  it("finds a project at the byte-identical production origin", () => {
+    const records = [{ id: "smtu8o27freg", groupId: "smtu8o27freg", site: "ALUMAX RD, NASH,", origin: ORIGIN, updatedAt: 1000 }];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBe("smtu8o27freg");
+  });
+
+  it("matches any plan in a group, not only the anchor row (a plan's origin mirrors its project's)", () => {
+    const records = [
+      { id: "anchorA", groupId: "anchorA", origin: ORIGIN, updatedAt: 100 },
+      { id: "plan2", groupId: "anchorA", origin: ORIGIN, updatedAt: 500 }, // a second plan of the SAME project
+    ];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBe("anchorA");
+  });
+
+  it("does not match a genuinely different location", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: { lat: 29.76, lon: -95.37 }, updatedAt: 100 }]; // Houston, TX — far away
+    expect(findProjectAtOrigin(records, ORIGIN)).toBeNull();
+  });
+
+  it("tolerates float jitter within SAME_GROUND_FT but not beyond it", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: ORIGIN, updatedAt: 100 }];
+    // ~1e-6 deg of lat is on the order of a few inches — well inside the tolerance.
+    const nudgedIn = { lat: ORIGIN.lat + 0.000001, lon: ORIGIN.lon };
+    expect(findProjectAtOrigin(records, nudgedIn)).toBe("g1");
+    // A degree of latitude is tens of miles — far outside SAME_GROUND_FT.
+    const farAway = { lat: ORIGIN.lat + 1, lon: ORIGIN.lon };
+    expect(findProjectAtOrigin(records, farAway)).toBeNull();
+    expect(SAME_GROUND_FT).toBeLessThan(500); // sanity: this is a tight "same click" tolerance, not a neighborhood radius
+  });
+
+  it("excludes a given group id (never adopts itself)", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: ORIGIN, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, ORIGIN, { excludeGroupId: "g1" })).toBeNull();
+  });
+
+  it("breaks a tie between pre-existing duplicates by picking the most recently updated group", () => {
+    const records = [
+      { id: "older", groupId: "older", origin: ORIGIN, updatedAt: 100 },
+      { id: "newer", groupId: "newer", origin: ORIGIN, updatedAt: 900 },
+    ];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBe("newer");
+  });
+
+  it("ignores records with no origin at all", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: null, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBeNull();
   });
 });
