@@ -220,6 +220,9 @@ footer .wrap { display: flex; align-items: flex-end; justify-content: space-betw
 .legend .north svg { display: block; }
 .footer-right { text-align: right; font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-2); }
 .footer-right .copyright { display: block; }
+.footer-legal { display: block; margin-top: 4px; }
+.footer-legal a { color: inherit; text-decoration: none; }
+.footer-legal a:hover, .footer-legal a:focus-visible { color: var(--ink); }
 .cursor-hint {
   display: none;
   margin-top: 4px;
@@ -298,6 +301,9 @@ footer .wrap { display: flex; align-items: flex-end; justify-content: space-betw
     </div>
     <div class="footer-right">
       <span class="copyright">© 2026 Planyr</span>
+      <nav class="footer-legal" aria-label="Legal">
+        <a href="/privacy/">Privacy</a><span aria-hidden="true"> · </span><a href="/terms/">Terms</a><span aria-hidden="true"> · </span><a href="mailto:michael@planyr.io">Contact</a>
+      </nav>
       <span class="cursor-hint" id="cursorHint">Move your cursor</span>
     </div>
   </div>

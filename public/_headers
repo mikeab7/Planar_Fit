@@ -75,6 +75,25 @@
   Cache-Control: no-cache
   X-Frame-Options: DENY
   Content-Security-Policy: frame-ancestors 'none'
+
+# /privacy/ and /terms/ (B1344528) are the same kind of standalone HTML document as /landing/ —
+# revalidate on every load, same anti-framing policy.
+/privacy/
+  Cache-Control: no-cache
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'
+/privacy/index.html
+  Cache-Control: no-cache
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'
+/terms/
+  Cache-Control: no-cache
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'
+/terms/index.html
+  Cache-Control: no-cache
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'
 /landing/index.html
   Cache-Control: no-cache
   X-Frame-Options: DENY
