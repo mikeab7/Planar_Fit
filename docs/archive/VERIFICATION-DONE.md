@@ -32,6 +32,17 @@ Five points spanning the panhandle to the eastern border and north to south, eac
 
 **Result:** ✅ fully passed, nothing pending — archived directly (a diagnostic live measurement that fully passes with nothing pending moves straight here rather than sitting in `VERIFICATION.md`'s `## 🔲 Needs verification`).
 
+### V993808 — B1273296 (×2): the note page grows in all four directions on HIS OWN note, and shrinks back ✅ **PASSED 2026-09-09 — owner's own signed-in account, real note**
+
+**Why this needed its own real pass.** The sandbox measurements were complete and green on a seeded page, but the report was made on the owner's own Goose Creek → Platting note — whose real content (a long title, a metadata line, real body text, several boxes at once, a window he sized himself) is what the growth budget is computed against. Zoom-/data-density-dependent rendering is a mandatory LIVE-VERIFY class.
+
+**What was confirmed, on his own note, measured rather than eyeballed:**
+1. **Right.** The page grew right 478 → 641 with the LEFT edge pinned (VIEWPORT-STABLE — existing content did not move).
+2. **Left.** The page's own left edge moved x705 w641 → x700 w646 while the mat scrolled ~5px to compensate — the reachable-left-margin mechanism (round 2 of this item) holding on his real note, not just the sandbox fixture.
+3. **Down.** The page grew h396 → h537 with the TOP pinned.
+4. **Up.** The page grew h537 → h561 with the top moving y115 → y91, and `scrollTop` moving 0 → 24 — **exactly cancelling the shift**, so existing content did not visibly move under the reader. This is the specific compensation mechanism that round 2 of #1581 shipped dead (a guard that passed while the mechanism behind it was dead — `docs/NOTES-CARRY-FORWARD.md` §1.16) — confirmed alive and working on his real account.
+
+**Result:** ✅ PASSED. All four directions grow correctly, pinned/compensated exactly as designed, on the owner's own real note. See B1273296 (`docs/archive/BACKLOG-DONE.md`) for the fix itself. (V993809, the sibling item from the same pair, stays open — see `VERIFICATION.md` — it covers a distinct claim, "something can be placed and kept level with the title," which needed its own correction before it could pass; see B1433856.)
 ### V981248 — B1344528: the landing footer's new privacy/terms links and mailto work, both new pages render fully with JS off and under reduced motion, and the single-screen landing layout is unchanged ✅ **PASSED 2026-09-09 — Claude, headless Chromium against a real built app (signed out, no external GIS, no real data — ATTEMPT-BEFORE-YOU-PARK)**
 
 **Why this could be run here, not deferred.** Two brand-new static pages plus a footer edit on an already-signed-out marketing page — no auth, no external GIS host, no real saved project. None of the five named `Blocker:` classes (`auth`/`live-GIS`/`real-data`/`print-engine`/`live-deploy`) apply, so this is Claude-doable per ATTEMPT-BEFORE-YOU-PARK and must not be filed as needing a human pass.

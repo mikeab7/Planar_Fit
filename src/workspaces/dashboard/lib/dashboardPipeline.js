@@ -48,12 +48,6 @@ export function groupProjectsByGroupId(siteRows) {
       planCount: rows.length,
       // NEW-1 — the geo anchor, straight through from the representative plan; null when unset.
       origin: newest.origin || null,
-      // B1161793 (NEW-2) — the pursuit's contractual dates (feasibility expiry / LOI response /
-      // closing), read straight through from the representative plan. Absent on every pursuit
-      // until entered via the "Deal dates…" editor — see pursuitsList.js's own header.
-      feasibilityExpiry: newest.feasibilityExpiry || null,
-      loiDate: newest.loiDate || null,
-      closingDate: newest.closingDate || null,
     });
   }
   return out;

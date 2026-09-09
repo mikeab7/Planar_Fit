@@ -104,12 +104,15 @@ async function openSchedule(page, gid, projects) {
   await expect(page.getByTestId("schedule-owner-row").first()).toBeVisible({ timeout: 10_000 });
 }
 
-/* "+ New project" lives in the breadcrumb dropdown (the shared switcher), not on the page surface.
- * In the Schedule module it creates a SCHEDULE — which is what opens the dialog under test. */
+/* B1435888 — "+ New schedule in <project>" lives in the SCHEDULE crumb's own dropdown (the
+ * breadcrumb's second, independent level), not on the page surface and not in the PROJECT
+ * crumb's "+ New project" row any more — that row now creates a genuine new SITE project, since
+ * the project crumb became an uncontrolled site-project switcher. This is what opens the dialog
+ * under test. */
 async function pressNew(page) {
   await page.locator('[data-testid="new-schedule-modal"]').waitFor({ state: "detached" }).catch(() => {});
-  await page.getByRole("button", { name: /▾/ }).first().click();
-  await page.getByRole("button", { name: /New project/i }).last().click();
+  await page.getByTestId("schedule-crumb").click();
+  await page.getByTestId("schedule-owner-create").click();
 }
 
 test.describe("a project's schedules are listed, with the organization as a peer container", () => {
@@ -136,7 +139,11 @@ test.describe("a project's schedules are listed, with the organization as a peer
 
   test("all five of Goose Creek's schedules sit together under one heading, contiguously", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    const names = await page.getByTestId("schedule-owner-row").allInnerTexts();
+    // B1435888 — each row's innerText now carries the task count on a second line (right-aligned
+    // beside the name); take just the name's own line so this stays a check on ORDER/GROUPING,
+    // not on the count's exact rendered text.
+    const rowTexts = await page.getByTestId("schedule-owner-row").allInnerTexts();
+    const names = rowTexts.map((t) => t.split("\n")[0]);
     const goose = ["Goose Creek", "Goose Creek (2)", "Goose Creek (3)", "Goose Creek (4)", "TAS Land Sale"];
     for (const n of goose) expect(names).toContain(n);
     // One group, not scattered through the account-wide run — which is what the flat switcher did.
@@ -244,16 +251,15 @@ test.describe("New schedule ASKS — it can never silently mint another 'Goose C
   });
 });
 
-/* ── B1404352 — the breadcrumb reads PROJECT then SCHEDULE ───────────────────────────────────────
+/* ── B1435888 — the breadcrumb is TWO INDEPENDENT LEVELS: project, then schedule ────────────────
  *
- * Owner's live click-test, verbatim: switching Goose Creek to its "TAS Land Sale" schedule made
- * the header read "planyr / Dashboard / TAS Land Sale" — "Goose Creek disappears entirely, so you
- * lose track of which project you are in." This module's breadcrumb shows SCHEDULE names by
- * design (see Scheduler.jsx's own file header) — a design that was safe only while a project had
- * exactly one schedule. `labelMultiScheduleRows` (navState.js) fixes the multi-schedule case by
- * relabeling the DROPDOWN LIST rows themselves, because `resolveCurrentName` (projectModel.js)
- * prefers the list's own name for a matching id over `currentProject.name` — this is a headless,
- * logged-out, no-external-GIS check (ATTEMPT-BEFORE-YOU-PARK), not a live-verify item.
+ * Supersedes B1404352's fix, which merged the active schedule's name INTO the single project
+ * crumb ("Goose Creek / TAS Land Sale") so the project would never disappear from a click-test
+ * that found the header reading "planyr / Dashboard / TAS Land Sale" with Goose Creek gone
+ * entirely. The owner picked a different shape from three mockups ("Option A"): the breadcrumb
+ * ALWAYS shows Dashboard / <Project> ▾ / <Schedule> ▾ — two independent switchers, mirroring the
+ * Site tab's own Project/Plan pair — never one crumb carrying both names, and never collapsed
+ * even when the schedule happens to share its project's name.
  */
 async function openScheduleActive(page, gid, projects, activeId) {
   await seed(page);
@@ -266,28 +272,74 @@ async function openScheduleActive(page, gid, projects, activeId) {
   await postSeq(page, { type: "planar:nav-state", section: "projects", activeId, projects });
 }
 
-test.describe("B1404352 — the breadcrumb reads project THEN schedule", () => {
-  test("standing on Goose Creek's 'TAS Land Sale' schedule, the crumb names BOTH — Goose Creek never disappears", async ({ page }) => {
+test.describe("B1435888 — the breadcrumb is two independent levels, project then schedule", () => {
+  test("standing on Goose Creek's 'TAS Land Sale' schedule, the PROJECT crumb names only the project", async ({ page }) => {
     await openScheduleActive(page, GOOSE, SCHEDULES, 22);
     const crumb = page.getByTestId("project-crumb");
-    await expect(crumb).toContainText("TAS Land Sale", { timeout: 10_000 });
-    await expect(crumb).toContainText("Goose Creek");
-  });
-
-  test("a project with only ONE linked schedule still reads plainly — no redundant 'Grand Port / Grand Port'", async ({ page }) => {
-    await openScheduleActive(page, GRAND, SCHEDULES, 2);
-    const crumb = page.getByTestId("project-crumb");
-    await expect(crumb).toContainText("Grand Port", { timeout: 10_000 });
-    const text = await crumb.innerText();
-    expect(text.match(/Grand Port/g)?.length).toBe(1);
-  });
-
-  test("switching to Goose Creek's OTHER schedule (its default, same-named one) reads plainly too", async ({ page }) => {
-    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
-    const crumb = page.getByTestId("project-crumb");
     await expect(crumb).toContainText("Goose Creek", { timeout: 10_000 });
-    const text = await crumb.innerText();
-    expect(text.match(/Goose Creek/g)?.length).toBe(1);
+    await expect(crumb).not.toContainText("TAS Land Sale");
+  });
+
+  test("…and the SCHEDULE crumb, right beside it, names only the active schedule", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 22);
+    const crumb = page.getByTestId("schedule-crumb");
+    await expect(crumb).toContainText("TAS Land Sale", { timeout: 10_000 });
+    await expect(crumb).not.toContainText("Goose Creek");
+  });
+
+  test("⛔ the two levels are NEVER collapsed, even when the schedule shares its project's name", async ({ page }) => {
+    // Schedule id 1 is named "Goose Creek" inside project "Goose Creek" — both crumbs must still
+    // render as two distinct segments, never merged into one.
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await expect(page.getByTestId("project-crumb")).toContainText("Goose Creek", { timeout: 10_000 });
+    await expect(page.getByTestId("schedule-crumb")).toContainText("Goose Creek", { timeout: 10_000 });
+    await expect(page.getByTestId("project-crumb")).toHaveCount(1);
+    await expect(page.getByTestId("schedule-crumb")).toHaveCount(1);
+  });
+
+  test("a project with only ONE linked schedule still reads plainly on each crumb", async ({ page }) => {
+    await openScheduleActive(page, GRAND, SCHEDULES, 2);
+    await expect(page.getByTestId("project-crumb")).toContainText("Grand Port", { timeout: 10_000 });
+    await expect(page.getByTestId("schedule-crumb")).toContainText("Grand Port", { timeout: 10_000 });
+  });
+
+  test("the PROJECT crumb's dropdown lists projects only — no schedule rows mixed in", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("project-crumb").click();
+    const dropdown = page.getByTestId("project-row-" + GOOSE);
+    await expect(dropdown).toBeVisible({ timeout: 10_000 });
+    // None of the schedule-only names (Pursuits/Operations/TAS Land Sale) appear as a project row.
+    await expect(page.getByTestId("project-row-1")).toHaveCount(0);
+    await expect(page.getByTestId("project-row-22")).toHaveCount(0);
+  });
+
+  test("the SCHEDULE crumb's dropdown groups this project's schedules, then the Organization, then '+ New schedule in <project>'", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("schedule-crumb").click();
+    const list = page.getByTestId("schedule-owner-list");
+    await expect(list).toBeVisible({ timeout: 10_000 });
+
+    // Goose Creek's own schedules — all five (the fixture's real shape, incl. its three empty
+    // duplicates, see this file's own WRONG-CASE note) — never another project's (Grand Port).
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "Goose Creek" })).toHaveCount(4); // Goose Creek + (2)/(3)/(4)
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" })).toHaveCount(1);
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "Grand Port" })).toHaveCount(0);
+
+    // The Organization group, still reachable from inside this project.
+    await expect(list).toContainText("Organization");
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "Pursuits" })).toHaveCount(1);
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "Operations" })).toHaveCount(1);
+
+    // The create row names the project.
+    await expect(list.getByTestId("schedule-owner-create")).toContainText("New schedule in Goose Creek");
+  });
+
+  test("switching from Goose Creek's own schedule to its 'TAS Land Sale' schedule actually changes what's open", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("schedule-crumb").click();
+    await page.getByTestId("schedule-owner-list").getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).click();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-select"));
+    expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-select", id: 22 }]);
   });
 });
 

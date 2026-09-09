@@ -1,25 +1,22 @@
-/* B1112448/NEW-1 — "Duplicate" never rendered in the Schedule module's project switcher because
- * AppHeader.jsx destructured only onRenameProject/onDeleteProject and forwarded only those two
- * into <ProjectBreadcrumb>, so ProjectBreadcrumb's own `canDuplicate = !!onDuplicateProject` was
- * always false no matter what Scheduler.jsx passed in. The prior guard for this
- * (test/schedulerNavState.test.js) was a source regex against Scheduler.jsx ALONE — it could not
- * see AppHeader.jsx in between, so it stayed green the entire time the feature was 100% dead.
+/* B1435888 — "Duplicate schedule" moved from the old flat project/schedule breadcrumb's kebab menu
+ * (Rename/Duplicate/Delete, one press posting a bridged `planar:nav-duplicate`) onto the
+ * schedule's own row in the SCHEDULE crumb's dropdown — an inline icon button beside the Rename
+ * and Delete icons B1404352 already put there, not a submenu.
  *
- * This mounts the REAL Scheduler → AppHeader → ProjectBreadcrumb chain (the actual built app, not
- * a fabricated harness) and clicks through it exactly like the owner does: open the switcher,
- * open a row's kebab menu, and read the rendered "Duplicate" row. Runs fully LOGGED OUT, seeding
- * the legacy `planarfit:sites:v1` local site store the same way e2e/schedule-link-panel.spec.js
- * already does — deliberately NOT waiting on the embedded scheduler iframe to boot (its own React
- * tree loads React/Babel from a CDN this sandbox's browser can't reach), since `canManage` and the
- * kebab's Rename/Duplicate/Delete rows are driven purely by the props Scheduler.jsx hands AppHeader
- * (always wired, whether or not the iframe has reported in yet) — exactly the layer this bug lived
- * in. (ATTEMPT-BEFORE-YOU-PARK: this is Claude-doable in the sandbox, so it is not filed as
- * `Verify: live`.)
+ * Why it moved: "Schedule access: project and schedule become two separate breadcrumb levels"
+ * (B1435888) turned the breadcrumb's PROJECT level into a genuine, uncontrolled Site Planner
+ * project switcher — it lists real projects and has no schedule id to resolve any more, so the
+ * old kebab's "Duplicate" row would have posted a SITE group id where the embedded app expects a
+ * schedule id (a silent no-op) had it stayed there. Duplicating a SCHEDULE now lives with the
+ * schedule, on the new SCHEDULE crumb (`ScheduleCrumb.jsx` → `ScheduleOwnerList.jsx`).
  *
- * RED-PROOF: reverting AppHeader.jsx's onDuplicateProject destructure/forward (the exact bug this
- * item found) makes the assertion below fail — the row is simply absent from the DOM, matching the
- * owner's live measurement (`[data-testid="project-duplicate"]` absent, menu items read only
- * ["Rename","Delete"]).
+ * Runs LOGGED OUT, following e2e/schedule-ownership.spec.js's own seeding + bridge-driving
+ * pattern: a Site Planner project in the legacy local store, plus the embedded scheduler's
+ * nav-state posted in exactly as the real iframe would post it.
+ *
+ * RED-PROOF: every testid this file locates below the crumb (`schedule-crumb`,
+ * `schedule-owner-duplicate`) is new to this schedule row in this PR; `git stash` on this branch
+ * and the first locator below fails (element not found).
  */
 import { test, expect } from "@playwright/test";
 
@@ -30,49 +27,62 @@ function seed(page) {
     localStorage.setItem("planarfit:sites:v1", JSON.stringify({
       p1: { id: "p1", groupId: gid, site: "ZZ Duplicate Test", name: "Plan 1", origin: null, updatedAt: Date.now(), parcels: [], els: [], measures: [], settings: {} },
     }));
+    localStorage.setItem("planyr.theme", "light");
+
+    /* Record what the shell POSTS into the iframe, so "did clicking Duplicate actually ask for
+     * the right thing" is observable without the embedded app itself. Same-origin, so wrapping is
+     * allowed — same technique e2e/schedule-ownership.spec.js's own seed() uses. */
+    const desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "contentWindow");
+    Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
+      configurable: true,
+      get() {
+        const w = desc.get.call(this);
+        try {
+          if (w && !w.__planyrPosted) {
+            const orig = w.postMessage.bind(w);
+            w.__planyrPosted = true;
+            w.postMessage = (m, o) => { (window.__posted = window.__posted || []).push(m); return orig(m, o); };
+          }
+        } catch (_) {}
+        return w;
+      },
+    });
   }, [GID]);
 }
 
-test.describe("NEW-1/B1112448 — Duplicate is reachable from the Schedule module's switcher", () => {
-  test("the switcher kebab menu renders Duplicate between Rename and Delete", async ({ page }) => {
+const SCHEDULES = [
+  { id: 1, name: "ZZ Duplicate Test", ownerKind: "site", linkedSiteId: GID, linkedSiteName: "ZZ Duplicate Test", taskCount: 3 },
+];
+
+const postSeq = (page, msg) =>
+  page.evaluate((m) => window.postMessage({ source: "planar-seq", ...m }, window.location.origin), msg);
+
+test.describe("B1435888 — Duplicate is reachable from the SCHEDULE crumb's own row", () => {
+  test("the schedule crumb's dropdown renders Rename, Duplicate and Delete on the row, and Duplicate posts the schedule's own id", async ({ page }) => {
     await seed(page);
-    await page.goto(`/#/project/${GID}/schedule`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/#/project/${GID}/schedule`);
 
-    // Workspaces stay mounted-but-hidden (keep-alive), so more than one AppHeader/ProjectBreadcrumb
-    // can exist in the DOM at once — scope every selector to the currently VISIBLE one, never a
-    // bare testid that could resolve to a different, hidden workspace's copy.
-    const crumb = page.locator('[data-testid="project-crumb"]:visible');
-    await expect(crumb).toBeVisible({ timeout: 15_000 });
-    await crumb.click();
+    // Wait for the tab to resolve (the empty state's own list appears once the iframe reports in)
+    // BEFORE posting the fixture, exactly like schedule-ownership.spec.js's openSchedule — or the
+    // embed's own boot post lands last and wins.
+    await expect(page.getByTestId("schedule-owner-list")).toBeVisible({ timeout: 25_000 });
+    await postSeq(page, { type: "planar:nav-state", section: "projects", activeId: 1, projects: SCHEDULES });
 
-    const row = page.locator(`[data-testid="project-row-${GID}"]:visible`);
-    await expect(row).toBeVisible({ timeout: 15_000 });
+    // Open the SCHEDULE crumb (the second breadcrumb level, right beside the project crumb).
+    const scheduleCrumb = page.getByTestId("schedule-crumb");
+    await expect(scheduleCrumb).toBeVisible({ timeout: 10_000 });
+    await scheduleCrumb.click();
 
-    // Open that row's kebab (Rename/Duplicate/Delete manage menu).
-    const kebab = row.locator(`[data-testid="project-kebab-${GID}"]`);
-    await expect(kebab).toBeVisible();
-    await kebab.click();
+    const row = page.getByTestId("schedule-owner-row").filter({ hasText: "ZZ Duplicate Test" });
+    await expect(row).toBeVisible({ timeout: 10_000 });
 
-    const menu = page.locator('[data-testid="project-manage-menu"]:visible');
-    await expect(menu).toBeVisible();
-    const items = menu.locator('[role="menuitem"]');
-    await expect(items).toHaveCount(3, { timeout: 5000 });
+    await expect(row.getByTestId("schedule-owner-rename")).toBeVisible();
+    const duplicateBtn = row.getByTestId("schedule-owner-duplicate");
+    await expect(duplicateBtn).toBeVisible();
+    await expect(row.getByTestId("schedule-owner-delete")).toBeVisible();
 
-    // Exact shape of the owner's live measurement, corrected: Rename, Duplicate, Delete — in
-    // that order — not the pre-fix ["Rename","Delete"].
-    await expect(menu.locator('[data-testid="project-rename"]')).toBeVisible();
-    const duplicateRow = menu.locator('[data-testid="project-duplicate"]');
-    await expect(duplicateRow).toBeVisible();
-    await expect(duplicateRow).toHaveText(/Duplicate/);
-    await expect(menu.locator('[data-testid="project-delete"]')).toBeVisible();
-
-    const texts = await items.allTextContents();
-    expect(texts.findIndex((t) => /Rename/.test(t))).toBeLessThan(texts.findIndex((t) => /Duplicate/.test(t)));
-    expect(texts.findIndex((t) => /Duplicate/.test(t))).toBeLessThan(texts.findIndex((t) => /Delete/.test(t)));
-
-    // Clicking it closes the manage menu — the click handler runs (setMenuFor(null) then
-    // onDuplicateProject(id)), proving the row is not just painted but actually wired.
-    await duplicateRow.click();
-    await expect(menu).toBeHidden();
+    await duplicateBtn.click();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-duplicate"));
+    expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-duplicate", id: 1 }]);
   });
 });

@@ -2,6 +2,20 @@
  * project that no longer exists." Shared by any surface that offers/lists a `doc_reviews` row
  * filed under a project: never offer or open one whose filed project is gone.
  *
+ * ⛔ B1340368 (×2), recurrence 2026-09-09 — offering and opening read TWO
+ * different copies of "which project is this doc filed under," and B1340368 only fixed one of
+ * them. The Dashboard/Library OFFER-time checks below (docProjectIsDead) read the flat
+ * `doc_reviews.project_id` mirror column; the OPEN path (DocReview.jsx's loadSingleReview) reads
+ * the review's own record — the `data` jsonb reviewStore.loadReview returns — whose `projectId`
+ * field is a SEPARATE copy of the same fact. Every ordinary save keeps the two in lockstep
+ * (reviewRowFor mirrors one straight from the other), but storage.js's purgeProjectFoldersFor →
+ * reviewStore.unfileReviewsForDeletedProject nulled only the flat column, out of band — so a
+ * document a project purge had already made safe to OFFER (flat column null) could still carry
+ * a dead project id in its own record, and opening it navigated straight to that dead id. Fixed
+ * at both ends: unfileReviewsForDeletedProject now clears both copies (this file's own edit
+ * doesn't touch that — see reviewStore.js), and `openableProjectId` below re-checks liveness at
+ * the one place that actually navigates, so a record's own stale copy can never win either way.
+ *
  * `doc_reviews.project_id` mirrors `sites.group_id` (doc-review/db/project_library.sql's own
  * column comment), so liveness is asked the SAME group-aware way `cloudCheckDeleted`
  * (site-planner/lib/cloudSync.js, B1164192) already asks it for the route gate — a live row
@@ -48,4 +62,17 @@ export function docProjectIsDead(doc, liveIds) {
   if (!doc || !doc.project_id) return false;
   if (!liveIds) return false;
   return !liveIds.has(doc.project_id);
+}
+
+/** The project id a just-opened document's OWN record should actually navigate to. `rec` is a
+ * review record as `reviewStore.loadReview` returns it (the `data` jsonb, not the flat mirror
+ * row) — its `projectId` field can lag a purge that already cleared the mirror column (see this
+ * file's own header). Re-runs the same liveness predicate against the record's copy so a
+ * document that is safe to OPEN can never route to a project id nothing resolves any more,
+ * whichever copy of the fact it came from. Fails OPEN on an inconclusive check (`liveIds` null —
+ * offline/RLS/thrown), same as `docProjectIsDead` — never blocks an ordinary open on a maybe. */
+export function openableProjectId(rec, liveIds) {
+  const pid = (rec && rec.projectId) || null;
+  if (!pid) return null;
+  return docProjectIsDead({ project_id: pid }, liveIds) ? null : pid;
 }

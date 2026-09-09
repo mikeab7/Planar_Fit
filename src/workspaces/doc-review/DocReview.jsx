@@ -24,6 +24,7 @@ import { useReviewPersistence, docSaveState } from "./lib/usePersistence.js";
 import { newReviewId, newSourceId, storeSource, isStoredSource, downloadSource, downloadFromDrive, driveStreamSource, MAX_BYTES, loadReview, currentUid, readDraft, reconcile, cloudReady, composeTitle } from "./lib/reviewStore.js";
 import { writeLastDoc, readLastDoc, readLastDocMap, readLegacyPointers, resolveResume, resumeAllowedForRoute } from "./lib/lastDoc.js";
 import { recordOpen } from "../../shared/recents/recentDocs.js";
+import { liveProjectIds, openableProjectId } from "../../shared/projects/docProjectLiveness.js";
 import { classifySource, sourceUnavailableMessage } from "./lib/sourceState.js";
 import { cacheSourceBytes, getSourceBytes } from "./lib/sessionBytes.js";
 import { isPdfName } from "../../shared/files/uploadQueue.js";
@@ -1035,11 +1036,6 @@ export default function DocReview({
     suspendSave(); // don't let this programmatic load re-save itself with a fresh updatedAt (B19)
     const s = rec.single || {};
     const src = (rec.sources || [])[0] || null;
-    // Library-Home "Recent": every open stamps the local opened-list — but not a non-PDF (B686),
-    // which can't be marked up and shouldn't clutter "Recent drawings" (opening it just downloads).
-    if (!(src && src.name && !isPdfName(src.name))) {
-      currentUid().then((uid) => recordOpen(uid, { id: rec.id, projectId: rec.projectId || null })).catch(() => {});
-    }
     // B446: a clear canvas-level "Opening…" overlay covers the whole load (setPdfDoc(null) below
     // blanks the backdrop, so without this the switch looks like nothing registered). Cleared in
     // the finally — but ONLY by the still-current load, so a rapid A→B switch doesn't let A's
@@ -1048,8 +1044,26 @@ export default function DocReview({
     setPdfDoc(null);
     sourceRef.current = src ? { srcId: src.srcId, name: src.name } : null;
     setReviewId(rec.id);
-    setMeta({ title: rec.title || "", projectId: rec.projectId || null, project: rec.project || "", discipline: rec.discipline || "", item: rec.item || "", revision: rec.revision || "", docDate: rec.docDate || "" });
-    if (rec.projectId) onNavigate?.({ projectId: rec.projectId }); // reflect the open file's project in the URL + breadcrumb (Work Item A)
+    // B1340368 (×2) — `rec.projectId` is the record's OWN copy of "which project is this
+    // filed under" (reviewStore.loadReview reads the `data` jsonb), which a project purge can
+    // leave stale even after the offer-time check (docProjectLiveness, reading the separate flat
+    // mirror column) has already cleared and offered this exact document as safe to open. Never
+    // trust it for a real navigation without re-checking liveness here — the one place that
+    // actually builds the route. Fails open on an inconclusive check (network/RLS), so an
+    // ordinary open never stalls or misfires on a maybe.
+    let liveIds = null;
+    if (rec.projectId) { try { liveIds = await liveProjectIds([rec.projectId]); } catch (_) { liveIds = null; } }
+    if (tok !== loadTok.current) return; // superseded while checking liveness — the newer load owns the outcome
+    const openProjectId = openableProjectId(rec, liveIds);
+    // Library-Home "Recent": every open stamps the local opened-list — but not a non-PDF (B686),
+    // which can't be marked up and shouldn't clutter "Recent drawings" (opening it just downloads).
+    // Uses the SAME re-checked id as the navigation below, so a dead project can't re-enter
+    // Library Home's own offer-time check through this recorded pointer either.
+    if (!(src && src.name && !isPdfName(src.name))) {
+      currentUid().then((uid) => recordOpen(uid, { id: rec.id, projectId: openProjectId })).catch(() => {});
+    }
+    setMeta({ title: rec.title || "", projectId: openProjectId, project: rec.project || "", discipline: rec.discipline || "", item: rec.item || "", revision: rec.revision || "", docDate: rec.docDate || "" });
+    if (openProjectId) onNavigate?.({ projectId: openProjectId }); // reflect the open file's project in the URL + breadcrumb (Work Item A)
     setSource(src ? { srcId: src.srcId, name: src.name, size: src.size || 0, storageKey: src.storageKey || null, driveKey: src.driveKey || null, oversize: !!src.oversize } : null);
     setMarkups(sanitizeMarkups(s.markups)); setCalByPage(s.calByPage || {}); setCalInfo(s.calInfo || {}); // sanitize: a corrupted/partial saved review can't crash the overlay
     setSheetMeta({}); setOpenGroups({}); // re-read on load (B266/B348); saved cals preserved
