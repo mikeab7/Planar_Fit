@@ -164,7 +164,7 @@ import { openTasksInDoc, rollUpOpenTasks, setTaskCheckedInDoc } from "./notesTas
 import { MAX_VERSIONS_PER_PAGE, planRestore, planRetention, shouldSnapshot } from "./notesVersions.js";
 import { safeAttachmentName } from "./notesFileMeta.js";
 import {
-  allPageIds, countNodes, dropPages, migrate, purgeTrashEntry, searchTitles, pagesInScope,
+  addPage, allPageIds, countNodes, dropPages, migrate, purgeTrashEntry, searchTitles, pagesInScope,
   trashEntries, walkPages, withTombstones, SCOPE_ALL, SCOPE_PROJECT, SCOPE_ORG,
 } from "./notesModel.js";
 import { normalizeZoom, zoomKey, ZOOM_DEFAULT } from "./notesZoom.js";
@@ -376,6 +376,44 @@ export function writePage(pageId, doc) {
    * data, which is why it is silent; the bar for "empty" is a whitelist and refuses to guess. */
   const clean = pruneEmptyAnchors(doc).doc;
   return commitPageWrite(pageId, clean, { auto: false });
+}
+
+/** The blank body a freshly created page starts with — the exact shape `EMPTY_DOC` in
+ *  notesExtensions.js round-trips to (`isEmptyDoc` in notesCloud.js treats them identically).
+ *  Hand-built here, like notesTemplates.js already hand-builds its own doc JSON, because this
+ *  module sits on Notes.jsx's STATIC path and must never pull the editor engine in. */
+const BLANK_DOC = { type: "doc", content: [{ type: "paragraph" }] };
+
+/** ⛔ CREATE THE PAGE AND ITS BODY IN ONE STEP — B1405008. A tree entry a
+ *  person can see and click in the sidebar must never exist before something is behind it.
+ *
+ *  Before this, `addPage` alone put a node straight into the tree, and NOTHING wrote a body
+ *  for it unless a template was picked — the ordinary "+ Page" click left `writePage` to the
+ *  editor's own `onUpdate` autosave, which fires only once the user actually types a
+ *  character (600ms-debounced from there). A page created and then abandoned — the tab
+ *  closed, the user distracted, or simply never typed into before navigating on — never ran
+ *  that autosave even once, so no local body and therefore no `notes_pages` cloud row was
+ *  EVER written for it: not a failed write, a write that was never attempted. Measured on a
+ *  real account: one such entry sat in the sidebar, clickable, for 12+ hours with nothing
+ *  behind it, while seven siblings created the same night each got a body within about two
+ *  seconds — because he happened to type into those and never typed into that one.
+ *
+ *  The fix is ordering, not a retry: the body is written FIRST, synchronously, before the
+ *  tree node is ever handed to a caller to persist. Every creation path — a top-level page, a
+ *  subpage, a templated page — goes through here now, so a plain page starts with the same
+ *  blank document a template-seeded one already got immediately (B1020931's `writePage`
+ *  call), rather than a page with no template being the one path with nothing behind it.
+ *
+ *  Returns `{ ok, tree, pageId }`. `ok` is the body write's own outcome (LOUD-FAILURE) — a
+ *  caller MUST NOT persist `tree` when `ok` is false, or the exact same defect reappears one
+ *  layer up with a storage failure standing in for "never typed into". A real storage failure
+ *  already surfaces through `onNotesStorageError` (the `fail()` call inside `writePage`
+ *  itself), so a caller that bails out on `!ok` needs no banner of its own. */
+export function createPage(baseTree, opts, seedDoc = BLANK_DOC) {
+  const r = addPage(baseTree, opts);
+  if (!r.pageId) return { ok: false, tree: baseTree, pageId: null };
+  const ok = writePage(r.pageId, seedDoc);
+  return { ok, tree: r.tree, pageId: r.pageId };
 }
 
 /** The housekeeping twin of `writePage` — same write, same "the cleaned copy still owes the
