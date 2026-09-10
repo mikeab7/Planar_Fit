@@ -9147,6 +9147,30 @@ Proven in `vite preview` AND on the **real Cloudflare branch-preview deploy** (`
 
 **Result:** ⏳ pending — needs a real signed-in browser session on real production data; not reachable from this sandbox. `Cadence: once`.
 
+### V1085600 — B1497888: opening a real project actually issues each of `profiles?select=prefs`, `auth/v1/user`, `sites` and `site_elements` far fewer times, on the owner's own Goose Creek/Bain projects `Blocker: auth`
+
+**Why this needs its own real pass.** The mechanism is proven directly — `currentIdentity()` (`teams.js`) now reads `supabase.auth.getSession()` (a local, no-network read) instead of `supabase.auth.getUser()` (a network round trip), and every `profiles.prefs` reader (`userPrefs.js`, `compsRatePeriodPrefs.js`, `dashboardPrefs.js`, `dashboardSinceLastHerePrefs.js`) now goes through the new shared, coalescing `profileRowCache.js` instead of firing its own independent read — both proven with mocked-Supabase unit tests (`test/profileRowCache.test.js`, 10 cases) and a clean full build. What cannot be proven here: the actual before/after request COUNT on a real cold load, because this sandbox's proxy CORS-blocks the Supabase auth handshake, so there is no way to sign in and open a real project from here.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, DevTools Network tab open, filtered to Fetch/XHR:**
+1. Hard-reload Goose Creek "Plan II - 220K, 440K, 700K" (`#/project/sms69x8rb2qk/site`). **Expect:** `profiles?select=prefs` appears **once**, not 5-8 times; `auth/v1/user` appears **zero or close to it** (the network tab should show none at all, or at most one — the getSession switch removes the network hit entirely, so any remaining count is from a different code path, not this one); `sites` and `site_elements` counts may stay similar to before (see the item's own note: the multi-shape `sites` pair and the paginated `site_elements` calls were checked and are NOT duplication).
+2. Repeat on Bain (`#/project/smr9olizi5ue/site`) as the second data point the original report already gathered. **Expect:** the same reduction.
+3. Confirm nothing else regressed: Standards panel prefs still load/save correctly (Site Planner → Standards, change a default, reload, confirm it stuck); the Comps rate-period toggle (per year/per month) on the map's Comps rail still loads/saves correctly; the Dashboard's card layout and "since you were last here" card still work.
+4. Report the actual new counts for `profiles`/`auth/v1/user` alongside the totals quoted in the original report (5-8 and 6-7), so the reduction is a real number, not an assumption.
+
+**Result:** ⏳ pending — needs a real signed-in browser session on real production data; not reachable from this sandbox. `Cadence: once`.
+
+### V1085601 — B1497889: a project open with the Comps tab closed fires zero reverse-geocode calls, and opening Comps resolves addresses (fresh, then warm from a reload) `Blocker: auth` `Blocker: live-GIS`
+
+**Why this needs its own real pass.** The gate itself is proven by source (`useCompLocationText`'s effect now short-circuits on `enabled=false`, threaded from `CompsPanel`'s own `active` prop) and the persistence half is proven directly (`test/compPinAddrCache.test.js`, 8 cases, a real `localStorage`-backed round trip). What cannot be proven here: a real reverse-geocode call succeeding at all, because this sandbox's egress to every external GIS host tried so far comes back connection-reset, on top of the same signed-in-account requirement V1085600 names.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, DevTools Network tab open, filtered to "geocode":**
+1. Open any project's site route with the map's Comps tab NOT selected (default: "Sites" tab). **Expect:** zero `arcgis…reverseGeocode` requests fire, even though pin/parcel-anchored comps exist on the account.
+2. Click into the Comps tab. **Expect:** the resolved-address requests now fire (one per not-yet-cached pin/parcel comp), and each row's Location text updates from the coordinate/county fallback to a real street address as each resolves.
+3. Reload the page and go straight into the Comps tab again. **Expect:** the SAME comps' addresses appear immediately, with no new `reverseGeocode` requests for the ones already resolved in step 2 — proving the `localStorage` persistence survived the reload.
+4. Confirm a comp's detail view (opened directly, e.g. from the Dashboard) still resolves its own address immediately regardless of which tab the map rail is on — `CompDetail` is deliberately never gated.
+
+**Result:** ⏳ pending — needs a real signed-in browser session with live GIS reachability; not reachable from this sandbox. `Cadence: once`.
+
 ## ✅ Verified / ❌ Failed — history
 
 > Passed/failed items are archived to **`VERIFICATION-DONE.md`** to keep this file fast.

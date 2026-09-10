@@ -13,13 +13,22 @@ import { supabase } from "./supabase.js";
 const lower = (s) => (s == null ? "" : String(s)).trim().toLowerCase();
 const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lower(s));
 
-// The signed-in user's id + verified email (for "an invite addressed to me" checks). Null when
-// signed out. Best-effort — never throws.
+// The signed-in user's id + email (for "an invite addressed to me" checks). Null when signed
+// out. Best-effort — never throws.
+//
+// NEW-1 (a project-open perf report — a cold load fired auth/v1/user SIX times, ~1050ms
+// aggregate, for the SAME already-known identity) — `getSession()` reads the session Supabase
+// already holds locally (from storage / its own in-memory cache) and costs no network round
+// trip; `supabase.auth.getUser()` re-verifies the JWT against the auth SERVER on every call.
+// This function is called by several independently-mounted components (MapFinder, SitePlanner,
+// CompsPanel, SitePlansSection, sharing.js) to answer nothing more sensitive than "who is signed
+// in right now" — every subsequent read/write is still authorized server-side by RLS regardless
+// of what this returns, so re-verifying the token here on every call buys nothing but latency.
 export async function currentIdentity() {
   if (!supabase) return { uid: null, email: null };
   try {
-    const { data } = await supabase.auth.getUser();
-    const u = data && data.user;
+    const { data } = await supabase.auth.getSession();
+    const u = data && data.session && data.session.user;
     return { uid: u ? u.id : null, email: u ? lower(u.email) : null };
   } catch (_) { return { uid: null, email: null }; }
 }
