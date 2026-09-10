@@ -153,9 +153,12 @@ async function openPlanner(page, site = SITE) {
 
 /* Turn a Layers-panel row on by its VISIBLE checkbox. Both hosts stay mounted (the shell hides the
  * inactive one with display:none to keep its map alive), so the DOM holds two copies of this panel
- * — target the visible one by role, never `.first()` on a text node. */
+ * — target the visible one by role, never `.first()` on a text node. The "Layers" button is a real
+ * disclosure TOGGLE (`setLayersOpen(o => !o)`), so calling this twice to turn on two rows in one
+ * test must not blindly re-click it — that would CLOSE the panel it just opened. */
 async function toggleLayer(page, name) {
-  await page.getByRole("button", { name: /Layers/ }).first().click();
+  const btn = page.getByRole("button", { name: /Layers/ }).first();
+  if ((await btn.getAttribute("aria-expanded")) !== "true") await btn.click();
   const row = page.getByRole("checkbox", { name }).filter({ visible: true }).first();
   await expect(row).toBeVisible({ timeout: 10_000 });
   await row.click();
@@ -188,6 +191,36 @@ async function lngLatToScreen(page, lat, lng) {
     const r = m.getContainer().getBoundingClientRect();
     return { x: r.left + p.x, y: r.top + p.y };
   }, [lat, lng]);
+}
+
+/* The planner canvas's raster hover controller (`rasterIdentifyLazy.js`) is a lazily-loaded
+ * chunk, only imported from INSIDE the debounced hover-rest callback — unlike the map finder's
+ * own raster hover, which warms the same chunk on the first `pointermove`/`pointerdown`/`wheel`
+ * well before a rest completes. So the planner's documented behaviour is that the FIRST-EVER
+ * rest over a raster layer in a session shows nothing (the chunk is still loading) and a
+ * SUBSEQUENT rest, after it has landed, answers normally — the same honest "not yet" the
+ * contour readout gives on its first move. A single scripted `mouse.move` reproduces exactly
+ * that first-rest gap a real user's continuous mouse travel does not usually expose, so a hover
+ * a test wants an ANSWER from — not testing the "not yet" gap itself — does the warm-up rest
+ * first and the real one second. */
+async function hoverRasterAt(page, x, y) {
+  await page.mouse.move(x - 3, y - 3);
+  await page.waitForTimeout(600); // debounce (320ms) + the lazy chunk's first import
+  await page.mouse.move(x, y);
+}
+
+/* Stub the Wetlands MapServer's metadata (?f=json) + export endpoints, leaving `/identify` for
+ * the caller to wire per-test. THE TRAP: a metadata route glob of `**?f=json**` also matches the
+ * `/identify?f=json&…` request (Playwright routes run most-recently-registered first, and `**`
+ * spans the `/identify` segment) — so a metadata stub registered AFTER the identify stub silently
+ * steals every identify request and answers it with the metadata body instead. Anchoring the
+ * pattern immediately after `MapServer` with no wildcard before `?f=json` keeps the two disjoint. */
+async function stubWetlandsMetadata(page) {
+  const meta = (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ currentVersion: 11.1, mapName: "Layers", capabilities: "Map,Query,Identify" }) });
+  await page.route("**fwsprimary.wim.usgs.gov/**/MapServer?f=json", meta);
+  await page.route("**fwsprimary.wim.usgs.gov/**/MapServer/?f=json", meta);
+  // Keep the raster export image itself from hanging the layer's status wiring.
+  await page.route("**fwsprimary.wim.usgs.gov/**/MapServer/export**", (route) => route.abort());
 }
 
 /* THE ITEM-1 ASSERTION, in the DOM, as the brief specifies: no broken default marker anywhere. */
@@ -311,32 +344,32 @@ test.describe("electric layer point symbols + hover identify (NEW-1/NEW-2)", () 
   });
 
   /* THE RASTER PATH. Half the registry paints as a server-rendered picture with no features in the
-   * DOM at all, so it can only answer by asking the service. FEMA is the canonical one. */
+   * DOM at all, so it can only answer by asking the service. Wetlands is the example here — FEMA
+   * used to be, until B1490144 opted the flood layer out of every cursor identify (see
+   * the dedicated describe block below); this test now proves the RASTER MACHINERY ITSELF still
+   * works for a layer that didn't opt out. */
   test("hovering a RASTER-painted layer identifies it through the service", async ({ page }) => {
     await stubElectric(page);
     let identifyCalls = 0;
-    await page.route("**/MapServer/identify**", async (route) => {
+    await page.route("**fwsprimary.wim.usgs.gov/**/MapServer/identify**", async (route) => {
       identifyCalls += 1;
       await route.fulfill({
         status: 200, contentType: "application/json",
-        body: JSON.stringify({ results: [{ layerName: "Flood Hazard Zones", value: "AE", attributes: { FLD_ZONE: "AE", STATIC_BFE: 102.4 } }] }),
+        body: JSON.stringify({ results: [{ layerName: "Wetlands", value: "PFO1A", attributes: { ATTRIBUTE: "PFO1A", WETLAND_TYPE: "Freshwater Forested/Shrub Wetland" } }] }),
       });
     });
-    // Keep the raster export image itself from hanging the layer's status wiring.
-    await page.route("**/MapServer/export**", (route) => route.abort());
-    await page.route("**/MapServer?f=json**", (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ currentVersion: 11.1, mapName: "Layers", capabilities: "Map,Query,Identify" }) }));
+    await stubWetlandsMetadata(page);
 
     await openPlanner(page);
-    await toggleLayer(page, /FEMA flood zones/i);
+    await toggleLayer(page, /^Wetlands/);
     await page.waitForTimeout(2000);
 
     const at = await feetToScreen(page, 400, 400);
-    await page.mouse.move(at.x, at.y);
+    await hoverRasterAt(page, at.x, at.y);
     const readout = page.getByTestId("gis-identify-hover");
     await expect(readout).toBeVisible({ timeout: 8000 });
     // The service's own answer, named — the same shape the vector tooltips use.
-    await expect(readout).toContainText(/Flood Hazard Zones|AE/);
+    await expect(readout).toContainText(/Wetlands|PFO1A/);
     expect(identifyCalls, "no /identify request was made for the raster layer").toBeGreaterThan(0);
   });
 
@@ -344,17 +377,15 @@ test.describe("electric layer point symbols + hover identify (NEW-1/NEW-2)", () 
    * silent nothing that reads as a dead layer. */
   test("an unreachable identify service says so, briefly — never a hanging spinner", async ({ page }) => {
     await stubElectric(page);
-    await page.route("**/MapServer/identify**", (route) => route.abort("failed"));
-    await page.route("**/MapServer/export**", (route) => route.abort());
-    await page.route("**/MapServer?f=json**", (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ currentVersion: 11.1, mapName: "Layers", capabilities: "Map,Query,Identify" }) }));
+    await page.route("**fwsprimary.wim.usgs.gov/**/MapServer/identify**", (route) => route.abort("failed"));
+    await stubWetlandsMetadata(page);
 
     await openPlanner(page);
-    await toggleLayer(page, /FEMA flood zones/i);
+    await toggleLayer(page, /^Wetlands/);
     await page.waitForTimeout(2000);
 
     const at = await feetToScreen(page, 400, 400);
-    await page.mouse.move(at.x, at.y);
+    await hoverRasterAt(page, at.x, at.y);
     const readout = page.getByTestId("gis-identify-hover");
     await expect(readout).toBeVisible({ timeout: 8000 });
     /* An honest STATED outcome — which of the failure wordings appears depends on how far the
@@ -365,6 +396,81 @@ test.describe("electric layer point symbols + hover identify (NEW-1/NEW-2)", () 
     await expect(readout).not.toContainText("Checking…");
     await expect(readout).not.toContainText(/Unexpected token|is not valid JSON|undefined|\[object/i);
     expect((await readout.innerText()).trim().length).toBeGreaterThan(0);
+  });
+
+  /* B1490144 — owner request 2026-09-10, verbatim: "remove the feature where my mouse
+   * tells me the floodplain status when the floodplain layer is on." Scoped to the FEMA flood-zone
+   * row alone: turning it on and resting the cursor over the canvas must never open a readout or
+   * hit the service, while a sibling raster layer switched on at the same time (Wetlands, the
+   * layer this file's own raster tests already exercise) keeps answering normally — proving the
+   * removal is scoped to one layer, not a blanket kill of the hover machinery. */
+  test.describe("the floodplain layer is excluded from the cursor-rest identify", () => {
+    test("hovering with FEMA flood zones on opens no readout and never asks the FEMA service", async ({ page }) => {
+      await stubElectric(page);
+      // The layer still PAINTS (its export tile + metadata probe are legitimate, expected
+      // traffic — the ask this item removes is only the cursor IDENTIFY) — so only an
+      // `/identify` request would prove the opt-out failed; count that one specifically.
+      let femaIdentifyCalls = 0;
+      await page.route("**hazards.fema.gov/**", async (route) => {
+        const url = route.request().url();
+        if (/\/identify\b/i.test(url)) {
+          femaIdentifyCalls += 1;
+          await route.fulfill({
+            status: 200, contentType: "application/json",
+            body: JSON.stringify({ results: [{ layerName: "Flood Hazard Zones", value: "AE", attributes: { FLD_ZONE: "AE" } }] }),
+          });
+        } else if (/\?f=json/i.test(url)) {
+          await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ currentVersion: 11.1, mapName: "NFHL", capabilities: "Map,Query,Identify" }) });
+        } else {
+          await route.abort();
+        }
+      });
+
+      await openPlanner(page);
+      await toggleLayer(page, /FEMA flood zones/i);
+      await page.waitForTimeout(2000);
+
+      const at = await feetToScreen(page, 400, 400);
+      await page.mouse.move(at.x, at.y);
+      await page.waitForTimeout(2500); // longer than CANVAS_HOVER_IDENTIFY_MS + a full debounce cycle
+      await expect(page.getByTestId("gis-identify-hover")).toHaveCount(0);
+      expect(femaIdentifyCalls, "the FEMA service was asked to identify despite the layer opting out of cursor identify").toBe(0);
+    });
+
+    test("with FEMA AND Wetlands both on, hovering a wetlands feature still reports it", async ({ page }) => {
+      await stubElectric(page);
+      let femaIdentifyCalls = 0;
+      await page.route("**hazards.fema.gov/**", async (route) => {
+        const url = route.request().url();
+        if (/\/identify\b/i.test(url)) { femaIdentifyCalls += 1; await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ results: [] }) }); }
+        else if (/\?f=json/i.test(url)) await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ currentVersion: 11.1, mapName: "NFHL", capabilities: "Map,Query,Identify" }) });
+        else await route.abort();
+      });
+      await page.route("**fwsprimary.wim.usgs.gov/**/MapServer/identify**", async (route) => {
+        await route.fulfill({
+          status: 200, contentType: "application/json",
+          body: JSON.stringify({ results: [{ layerName: "Wetlands", value: "PFO1A", attributes: { ATTRIBUTE: "PFO1A" } }] }),
+        });
+      });
+      await stubWetlandsMetadata(page);
+
+      await openPlanner(page);
+      await toggleLayer(page, /FEMA flood zones/i);
+      await toggleLayer(page, /^Wetlands/);
+      await page.waitForTimeout(2000);
+
+      const at = await feetToScreen(page, 400, 400);
+      await hoverRasterAt(page, at.x, at.y);
+      const readout = page.getByTestId("gis-identify-hover");
+      await expect(readout).toBeVisible({ timeout: 8000 });
+      await expect(readout).toContainText(/Wetlands|PFO1A/);
+      expect(femaIdentifyCalls, "the FEMA service was asked to identify despite the layer opting out of cursor identify").toBe(0);
+    });
+
+    // The Layers panel's own FEMA verdict is a separate, deliberate ask-on-purpose surface
+    // (components/LayerPanel.jsx `femaVerdict`) and is untouched by this change — it never
+    // depended on the hover identify path in the first place, so there is nothing to re-prove
+    // here beyond what test/layerConsolidation.test.js already pins on the registry row.
   });
 
   /* Both themes, per the verification brief — the readout is app chrome, so it must clear the

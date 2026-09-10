@@ -162,11 +162,20 @@ export const STATEWIDE = {
      * plumbing. `floodTiles` is the opt-in; `syncOverlayLayers` makes the call per plan, and a
      * missing or unreadable archive falls straight back to the raster path below. */
     floodTiles: true,
-    /* (B1092) With tiles the geometry is IN HAND, so the canvas can answer an identify with no
-     * network at all. When the raster path is live the ref has no `identifyAt` and
-     * `identifyOverlaysAt` skips this row exactly as it does today — so this costs nothing and
-     * changes nothing while the flag is off. */
-    canvasIdentify: true,
+    /* ⛔ B1490144 (owner request 2026-09-10, verbatim: "remove the feature where my
+     * mouse tells me the floodplain status when the floodplain layer is on") — this row is
+     * excluded from EVERY cursor-driven identify, both the raster ask (`identify: false`, read by
+     * `identifyCapable` in layerRequest.js, which is what `rasterIdentifyLayers` gates on — the
+     * one function both the planner canvas's hover and the map finder's hover/click share) and
+     * the vector/tiles ask (`canvasIdentify: false`, read by `identifyOverlaysAt`). Scoped to
+     * THIS layer only — every other raster-painted layer (wetlands, the City mains, HCFCD, BKDD,
+     * the wells) is untouched. The Layers panel's own FEMA verdict (`femaVerdict` in
+     * components/LayerPanel.jsx, via `floodZoneCopy.femaZoneVerdict`) is a SEPARATE, deliberate
+     * ask-on-purpose surface and does not read either flag — it is unaffected. `identifyGap`
+     * above is left alone too: it is generic coverage-gap machinery another layer could still opt
+     * into, not flood-specific code, and `test/layerConsolidation.test.js` already pins it. */
+    identify: false,
+    canvasIdentify: false,
   },
   wetlands: {
     kind: "dynamic", label: "Wetlands",
