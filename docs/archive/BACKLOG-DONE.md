@@ -261,6 +261,8 @@
 - The Terms page's governing-law clause names the State of Texas (inferred from the product's Houston/Dallas framing throughout this repo, not from any committed legal decision) — flagged for his confirmation rather than left blank, since a terms document with no governing-law clause at all is a stranger omission than a named-but-unconfirmed one.
 - `problem_reports` has no committed auto-deletion policy (unlike `client_errors`'s dated 90/365-day SQL policy) — the privacy page says so plainly ("kept until reviewed; there's no separate automatic-deletion schedule for those today") rather than inventing a number.
 
+**⛔ BOTH OPEN QUESTIONS CONFIRMED BY MICHAEL, 2026-09-10 — no code change needed.** `michael@planyr.io` is the correct contact address and the State of Texas is the correct governing state for the Terms page; both stand exactly as shipped. Removed from `OWNER-TODO.md` the same day.
+
 **No contradiction with `## Owner product constraints`** — checked all 8; touches none (no owner field, no measurement quoted in chat — the privacy page describes retention IN DAYS because that is the literal SQL policy, not a chat-facing number — no Colorado surface, no rate/volume/elevation, no project-creation timing, no cloud-write banner, no live-plan check, no phone Schedule Split). Also satisfies the separate 2026-09-06 money-silence decision (`claude/decision-2026-09-06-the-landing-page-never-mentions-money.md`), extended here to the two new pages by design, not by accident.
 - Files: `public/privacy/index.html` (new), `public/terms/index.html` (new), `public/landing/index.html`, `public/_headers`, `vite.config.js`, `test/landingLegibility.test.js`.
 - Base: `origin/main` @ `859952fc`.
