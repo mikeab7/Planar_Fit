@@ -52,6 +52,16 @@ describe("B385042 — the current plan's name appears TWICE, never three times",
   });
 });
 
+describe("B1482000 (follow-on to B1469872) — the 'Recently deleted' rows carry a date, not just a name", () => {
+  it("renders relTime(p.deletedAt) beside each row — two plans can share a name, only the date tells them apart", () => {
+    expect(crumb).toContain("relTime(p.deletedAt)");
+  });
+
+  it("imports relTime from the shared project model", () => {
+    expect(src).toMatch(/import \{ relTime \} from "\.\.\/\.\.\/shared\/projects\/projectModel\.js";/);
+  });
+});
+
 describe("B366389 (×2) — the plan menu ends up on ONE icon system", () => {
   const EMOJI_AND_GLYPHS = ["💾", "🗄", "🔒", "🔓", "⧉", "＋"];
 

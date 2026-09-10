@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
 import ModuleLoader from "../../shared/ui/ModuleLoader.jsx";
+import { menuPanelStyle } from "../../shared/ui/controls.jsx";
 import {
   parseNavState, deriveCurrentProject, findBySiteId, needsScheduleCarryIn,
   dashboardNavActions, shouldShowLinkPanel, shouldAdoptLinkedSiteIntoRoute, isPickShowing,
@@ -724,18 +725,34 @@ export default function Scheduler({
             planSlot above) instead of inline here — NEW-1 removed the header toolbar's own
             "Schedules" button (ScheduleCenter → ScheduleSwitcher) now that the breadcrumb covers
             the job. Kept here, unchanged, for the empty-state case — regressing this was
-            explicitly out of scope. */}
+            explicitly out of scope.
+            B1482096 — the outer div used to stretch `left:0; right:0` with no surface behind
+            it, so ScheduleOwnerList's bare wrapper (padding/gap/font only — correct for its OTHER
+            caller, ScheduleCrumb.jsx, which supplies the surface via AnchoredMenu) rendered as
+            loose text pinned to the bottom-left and bottom-right corners of the whole window. The
+            outer div is now just a centering shell (`pointerEvents: none` so it never blocks the
+            empty state's own Create/Link buttons above it); the inner div is the actual panel,
+            width-capped and carrying the SAME surface token (`menuPanelStyle`) the breadcrumb's
+            dropdown gets from AnchoredMenu, so the two read as one consistent list style. */}
         {showEmptyState && (
-          <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "40%", overflow: "auto", zIndex: 7 }}>
-            <ScheduleOwnerList
-              schedules={projects}
-              activeId={activeId}
-              siteId={projectId}
-              siteName={routedSiteName}
-              onSelect={selectSchedule}
-              onRename={renameSchedule}
-              onDelete={deleteSchedule}
-            />
+          <div
+            style={{
+              position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 7,
+              display: "flex", justifyContent: "center",
+              padding: "0 24px 24px", maxHeight: "40%", pointerEvents: "none",
+            }}
+          >
+            <div style={{ ...menuPanelStyle, width: "min(360px, 100%)", maxHeight: "100%", overflow: "auto", pointerEvents: "auto" }}>
+              <ScheduleOwnerList
+                schedules={projects}
+                activeId={activeId}
+                siteId={projectId}
+                siteName={routedSiteName}
+                onSelect={selectSchedule}
+                onRename={renameSchedule}
+                onDelete={deleteSchedule}
+              />
+            </div>
           </div>
         )}
         {newSchedulePrompt && (

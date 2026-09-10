@@ -200,6 +200,16 @@ describe("cloudCheckDeleted — the one question a routed project id must answer
       expect(res.deleted).toBe(false);
     });
   });
+
+  // B1482000 (follow-on to B1469872, owner report 2026-09-10) — `name` stays the PROJECT's name
+  // (site takes priority) so a genuine whole-project deletion is still announced correctly, but
+  // the row's own PLAN name is now carried separately for a caller that needs to tell them apart.
+  it("carries the plan's own name (`planName`) alongside the coalesced `name`, on a deleted row", async () => {
+    h.rows = [{ id: "smshwnnijjfi", group_id: "smr9olizi5ue", site: "Bain", name: "Concept A - Quiddity V1", deleted_at: "2026-08-12T00:00:00+00:00" }];
+    const res = await cloudCheckDeleted("u1", "smshwnnijjfi");
+    expect(res.name).toBe("Bain");
+    expect(res.planName).toBe("Concept A - Quiddity V1");
+  });
 });
 
 /* ⛔ B1336576 — listDeletedProjects (the "Recently deleted" bin in the project switcher) is the
@@ -299,6 +309,77 @@ describe("checkProjectDeletionStatus — the Shell.jsx route gate's own entry po
     expect(res.ok).toBe(true);
     expect(res.deleted).toBe(false);
     setActiveUser(null);
+  });
+});
+
+/* B1482000 (follow-on to B1469872, owner report 2026-09-10) — "navigating directly to a soft-deleted
+ * plan's URL shows a dialog headed 'This project was deleted' … named with the project name, for
+ * the same reason [as the plan-menu bug]." That row is a PLAN inside a still-live project, not a
+ * dead project. `cloudCheckDeleted(uid, id)`'s two-query shape (id=:id OR group_id=:id) only ever
+ * sees a NON-anchor plan's own row — it can't see the plan's real siblings, because they carry a
+ * DIFFERENT group_id than the id that was asked about. `checkProjectDeletionStatus` closes that
+ * gap with a supplementary `groupStillHasLivePlans` check against the row's REAL group_id — the
+ * same helper `listDeletedProjects` and the 30-day purge already trust for "is this project still
+ * live". Live-verified against the real production schema in
+ * `db/test/deleted_plan_naming.test.sql` (throwaway, self-rolling-back fixtures — see its header). */
+describe("checkProjectDeletionStatus — NEW-1: a deep link to a non-anchor PLAN inside an otherwise-live project", () => {
+  beforeEach(() => { h.rows = []; h.error = null; setActiveUser("u1"); });
+
+  it("THE CORE REPRO (Bain): reports scope:'plan', named with the PLAN's own name — never the project's", async () => {
+    h.rows = [
+      { id: "smr9olizi5ue", group_id: "smr9olizi5ue", site: "Bain", name: "Concept C", deleted_at: null }, // live anchor plan
+      { id: "smshwnnijjfi", group_id: "smr9olizi5ue", site: "Bain", name: "Concept A - Quiddity V1", deleted_at: "2026-08-12T00:00:00+00:00" }, // the deleted, non-anchor plan
+    ];
+    const res = await checkProjectDeletionStatus("smshwnnijjfi");
+    expect(res.ok).toBe(true);
+    expect(res.exists).toBe(true);
+    expect(res.deleted).toBe(true);
+    expect(res.scope).toBe("plan");
+    expect(res.name).toBe("Concept A - Quiddity V1");
+    expect(res.name).not.toBe("Bain");
+  });
+
+  it("a genuine whole-project deletion (id IS the group's anchor) is untouched — scope stays unset, named with the project", async () => {
+    h.rows = [{ id: "gone-anchor", group_id: "gone-anchor", site: "Old Deal", name: "Concept A", deleted_at: "2026-08-01T00:00:00+00:00" }];
+    const res = await checkProjectDeletionStatus("gone-anchor");
+    expect(res.deleted).toBe(true);
+    expect(res.scope).toBeUndefined();
+    expect(res.name).toBe("Old Deal");
+  });
+
+  it("a non-anchor plan whose TRUE group has nothing live either still reports the whole project gone, not a false 'plan' scope", async () => {
+    h.rows = [
+      { id: "dead-anchor", group_id: "dead-anchor", site: "Dead Deal", name: "Concept A", deleted_at: "2026-08-01T00:00:00+00:00" },
+      { id: "dead-plan2", group_id: "dead-anchor", site: "Dead Deal", name: "Concept B", deleted_at: "2026-08-02T00:00:00+00:00" },
+    ];
+    const res = await checkProjectDeletionStatus("dead-plan2");
+    expect(res.deleted).toBe(true);
+    expect(res.scope).toBeUndefined();
+  });
+
+  it("a project whose anchor row is alive is untouched by the supplementary check (never reaches it — deleted is false)", async () => {
+    h.rows = [
+      { id: "healthy-anchor", group_id: "healthy-anchor", site: "Bain", name: "Concept A", deleted_at: null },
+      { id: "healthy-plan2", group_id: "healthy-anchor", site: "Bain", name: "Concept B", deleted_at: null },
+    ];
+    const res = await checkProjectDeletionStatus("healthy-plan2");
+    expect(res.deleted).toBe(false);
+    expect(res.scope).toBeUndefined();
+  });
+});
+
+describe("projectGateStatus — NEW-1: the `scope` field reaches the notice screen", () => {
+  it("defaults an unset scope to 'project' (a whole-project deletion, or a caller that predates this field)", () => {
+    const res = { ok: true, exists: true, deleted: true, name: "Bain", deletedAt: "2026-09-03T20:13:59+00:00" };
+    expect(projectGateStatus({ res }).scope).toBe("project");
+  });
+
+  it("passes a 'plan' scope straight through", () => {
+    const res = { ok: true, exists: true, deleted: true, name: "Concept A - Quiddity V1", deletedAt: "2026-09-03T20:13:59+00:00", scope: "plan" };
+    const g = projectGateStatus({ res });
+    expect(g.status).toBe("deleted");
+    expect(g.scope).toBe("plan");
+    expect(g.name).toBe("Concept A - Quiddity V1");
   });
 });
 
@@ -514,5 +595,32 @@ describe("DeletedProjectNotice — no stray space before the period", () => {
 
   it("leaves no ' .' anywhere in the copy", () => {
     expect(NOTICE).not.toMatch(/Recently deleted\{[^}]*\}\./);
+  });
+});
+
+/* B1482000 (follow-on to B1469872, owner report 2026-09-10) — the deep-link dialog announced "This
+ * project was deleted" for a soft-deleted PLAN inside a still-live project. `scope` (threaded from
+ * `checkProjectDeletionStatus` through `projectGateStatus`/Shell.jsx) is what lets this screen say
+ * the right thing. Source assertion, same reasoning as the sibling block above: this component is
+ * lazy-loaded behind Suspense, and what's being checked is the copy itself. */
+describe("DeletedProjectNotice — NEW-1: scope-aware copy (plan vs. project)", () => {
+  const NOTICE = readFileSync(resolve(HERE, "../src/shared/ui/DeletedProjectNotice.jsx"), "utf8");
+
+  it("defaults `scope` to \"project\" so every existing caller (pre-dating this prop) is unaffected", () => {
+    expect(NOTICE).toMatch(/scope = "project"/);
+  });
+
+  it("carries both headline words — never hardcodes only the project one", () => {
+    expect(NOTICE).toContain("This plan was deleted");
+    expect(NOTICE).toContain("This project was deleted");
+  });
+
+  it("carries both restore-button labels", () => {
+    expect(NOTICE).toContain("Restore plan");
+    expect(NOTICE).toContain("Restore project");
+  });
+
+  it("publishes the resolved scope on the DOM for a live check to assert against", () => {
+    expect(NOTICE).toContain("data-scope={scope}");
   });
 });

@@ -17,6 +17,10 @@
  * RED-PROOF: every testid this file locates below the crumb (`schedule-crumb`,
  * `schedule-owner-duplicate`) is new to this schedule row in this PR; `git stash` on this branch
  * and the first locator below fails (element not found).
+ *
+ * ⛔ NEW-1 (2026-09-10) — Rename/Duplicate/Delete moved BEHIND a per-row kebab
+ * (`schedule-owner-kebab`); this drives that kebab before locating Duplicate, since it no longer
+ * renders as an always-visible row icon.
  */
 import { test, expect } from "@playwright/test";
 
@@ -76,10 +80,11 @@ test.describe("B1435888 — Duplicate is reachable from the SCHEDULE crumb's own
     const row = page.getByTestId("schedule-owner-row").filter({ hasText: "ZZ Duplicate Test" });
     await expect(row).toBeVisible({ timeout: 10_000 });
 
-    await expect(row.getByTestId("schedule-owner-rename")).toBeVisible();
-    const duplicateBtn = row.getByTestId("schedule-owner-duplicate");
+    await row.getByTestId("schedule-owner-kebab").click();
+    await expect(page.getByTestId("schedule-owner-rename")).toBeVisible();
+    const duplicateBtn = page.getByTestId("schedule-owner-duplicate");
     await expect(duplicateBtn).toBeVisible();
-    await expect(row.getByTestId("schedule-owner-delete")).toBeVisible();
+    await expect(page.getByTestId("schedule-owner-delete")).toBeVisible();
 
     await duplicateBtn.click();
     const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-duplicate"));
