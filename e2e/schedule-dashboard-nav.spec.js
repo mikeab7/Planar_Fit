@@ -63,7 +63,11 @@ test.describe("B1128272 — Schedule's Dashboard crumb stays in Schedule; the wo
     await seed(page);
     await page.goto(`/#/project/${GID}/schedule`, { waitUntil: "domcontentloaded" });
 
-    const wordmark = page.locator('button[title="Leave Schedule — go to the Site Planner map"]:visible');
+    // B1213312 reworded this tooltip from "go to the Site Planner map" to "go to the Dashboard"
+    // once the Dashboard became a real, separate destination (Scheduler.jsx's logoDashboardTitle);
+    // this test's locator was never updated to match, so it was silently unable to find the
+    // wordmark at all. Found incidentally while verifying B1341184 — unrelated to that fix.
+    const wordmark = page.locator('button[title="Leave Schedule — go to the Dashboard"]:visible');
     await expect(wordmark).toBeVisible({ timeout: 15_000 });
     await wordmark.click();
 

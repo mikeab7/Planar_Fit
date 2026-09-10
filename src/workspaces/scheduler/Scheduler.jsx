@@ -98,9 +98,13 @@ export default function Scheduler({
   // re-adopt the site we just cleared and put the trapping panel straight back up. Cleared by the
   // very next nav-state (see the message handler), so it can never wedge the route permanently.
   const dashboardIntentRef = useRef(false);
-  // The switcher id the user last EXPLICITLY picked (or null). Read by isPickShowing() below to
-  // let a deliberate pick of a cross-cutting unlinked schedule (Operations/Pursuits) show its grid
-  // even on a routed project with no schedule of its own — see navState.js for the full story.
+  // The switcher pick the user last EXPLICITLY made (or null): `{ id, projectId }`, never a bare
+  // id. Read by isPickShowing() below to let a deliberate pick of a cross-cutting unlinked
+  // schedule (Operations/Pursuits) show its grid even on a routed project with no schedule of its
+  // own — see navState.js for the full story. B1341184 — `projectId` here is the project the pick
+  // BELONGS to (the schedule's own `linkedSiteId`, or the routed project at pick time for a
+  // cross-cutting one), so a genuine switch to a DIFFERENT routed project invalidates the pick
+  // instead of latching it forever — see isPickShowing's own header for the deadlock this fixes.
   const explicitPickRef = useRef(null);
   // "New schedule" ASKS for a name and an owner (see NewScheduleModal's header — the old silent
   // auto-naming is what put three empty "Goose Creek (2)/(3)/(4)" schedules on production). null
@@ -321,7 +325,7 @@ export default function Scheduler({
   // site, carry that site into the route so the Site/Review tabs follow. Computed HERE (before the
   // carry-in effect below) because NEW-5's fix needs it as the carry-in's ONLY suppression signal —
   // see that effect's own note.
-  const pickShowing = isPickShowing(explicitPickRef.current, activeId, section);
+  const pickShowing = isPickShowing(explicitPickRef.current, activeId, section, projectId);
 
   // SELF-HEALING (B851 — the route↔grid divergence): this is a RE-DRIVE, not a fire-once. The
   // original one-shot (deps `[ready, projectId]`) posted the select a single time when `ready`
@@ -419,9 +423,13 @@ export default function Scheduler({
     const sch = resolvedId != null ? projects.find((p) => p && p.id === resolvedId) : null;
     if (!sch) return; // an id this module cannot resolve at all — nothing to switch to
     dashboardIntentRef.current = false; // a deliberate pick supersedes a pending Dashboard press
-    explicitPickRef.current = sch.id; // isPickShowing() lets this override the route-derived empty state
-    post({ type: "planar:nav-select", id: sch.id });
     const linked = sch.linkedSiteId != null ? sch.linkedSiteId : null;
+    // B1341184 — record which project this pick BELONGS to (the schedule's own link, or the
+    // currently routed project for a cross-cutting one), so isPickShowing() stops honoring it the
+    // instant the routed project genuinely changes to something else. A bare schedule id here is
+    // what let the pick latch forever regardless of later project switches — see that fix's header.
+    explicitPickRef.current = { id: sch.id, projectId: linked != null ? linked : projectId };
+    post({ type: "planar:nav-select", id: sch.id });
     if (linked != null && linked !== projectId) { try { onProjectChange?.(linked); } catch (_) {} }
   };
 
@@ -626,7 +634,13 @@ export default function Scheduler({
         planSlot={showScheduleCrumb ? (
           <ScheduleCrumb
             schedules={projects}
-            activeId={activeId}
+            // B1341184 — while the empty state applies (this project owns no schedule of its own,
+            // and there's no deliberate cross-cutting pick standing), the embed's `activeId` still
+            // names whatever OTHER project's schedule happened to be open last — the shell has
+            // nowhere to switch it to. Never let the crumb read that foreign schedule's name; fall
+            // back to ScheduleCrumb's own "Select a schedule" label, matching the empty state
+            // rendered below it.
+            activeId={showEmptyState ? null : activeId}
             siteId={projectId}
             siteName={routedSiteName}
             onSelect={selectSchedule}
