@@ -45,6 +45,15 @@ import { siteplanLocationText, pinFallbackText } from "../lib/compLocationText.j
 import { reverseGeocodeLatLon } from "../../../workspaces/site-planner/lib/geocode.js";
 import { COUNTIES } from "../../../workspaces/site-planner/lib/counties.js";
 import { DELETED_RETENTION_DAYS } from "../../../shared/projects/projectModel.js";
+import {
+  PIN_ADDR_STORAGE_KEY, PIN_ADDR_STORAGE_MAX, readPinAddrStorage, persistPinAddr, pinCacheKey,
+} from "../lib/pinAddrCache.js";
+
+// Re-exported for existing importers (test/compPinAddrCache.test.js, and any future one) — the
+// pure, disk-backed half of this cache now lives in lib/pinAddrCache.js (B1497890) so a caller
+// that only needs IT — Dashboard's CompsCard.jsx — never has to pull in this whole component
+// chunk; see that module's own header for the measured bundle regression that made this necessary.
+export { PIN_ADDR_STORAGE_KEY, PIN_ADDR_STORAGE_MAX, readPinAddrStorage, persistPinAddr, pinCacheKey };
 
 // B986096-HARDENING-14 (owner cycle-4 report, minor: "comp list titles a row by rate when Title
 // is empty — should fall back to the reverse-geocoded address instead" + "comp detail view
@@ -67,38 +76,14 @@ function countyEntry(key) {
 // reverse-geocoded the instant this panel mounted — regardless of whether the Comps tab (or even
 // the Map view) was the thing actually on screen. A map PIN only needs the lat/lon it already
 // has; only a RAIL ROW or the detail view needs the resolved street address. So the address
-// lookup is persisted to disk (below — a coordinate is geocoded once per device, not once per
-// page load) AND gated on `enabled`, which every call site below wires to "the Comps tab is the
-// one actually showing" — deferring the whole burst off a plain project open's critical path
-// until someone actually looks at Comps.
-export const PIN_ADDR_STORAGE_KEY = "planyr:compPinAddr:v1";
-export const PIN_ADDR_STORAGE_MAX = 500; // a bound so a very active account's cache can't grow forever
-export function readPinAddrStorage() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(PIN_ADDR_STORAGE_KEY) || "null");
-    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-  } catch (_) { return {}; }
-}
-// Only a SUCCESSFUL resolution is persisted — a failed/unreachable lookup stays in-memory-only
-// (below) so it retries on the next page load rather than being remembered as permanently absent.
-export function persistPinAddr(key, label) {
-  try {
-    const store = readPinAddrStorage();
-    store[key] = label;
-    const entries = Object.entries(store);
-    const trimmed = entries.length > PIN_ADDR_STORAGE_MAX ? entries.slice(entries.length - PIN_ADDR_STORAGE_MAX) : entries;
-    localStorage.setItem(PIN_ADDR_STORAGE_KEY, JSON.stringify(Object.fromEntries(trimmed)));
-  } catch (_) { /* quota / private mode */ }
-}
+// lookup is persisted to disk (lib/pinAddrCache.js — a coordinate is geocoded once per device, not
+// once per page load) AND gated on `enabled`, which every call site below wires to "the Comps tab
+// is the one actually showing" — deferring the whole burst off a plain project open's critical
+// path until someone actually looks at Comps.
 // "lat,lon" -> resolved address string | null, shared across every mounted row/detail view this
 // session, seeded from the persisted disk copy so a returning visit starts warm.
 const _pinAddrCache = new Map(Object.entries(readPinAddrStorage()));
 const _pinAddrInflight = new Map();
-export function pinCacheKey(anchor) {
-  return anchor && typeof anchor.lat === "number" && typeof anchor.lon === "number"
-    ? `${anchor.lat.toFixed(6)},${anchor.lon.toFixed(6)}`
-    : null;
-}
 // Test-only: clear the in-memory cache/in-flight map so one test's resolved pins can't leak
 // into the next (mirrors colorRecents.js's own `_resetRecentsCache` convention).
 export function _resetPinAddrCache() { _pinAddrCache.clear(); _pinAddrInflight.clear(); }
