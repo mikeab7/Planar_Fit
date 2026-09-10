@@ -97,6 +97,34 @@ deep internals are in `/docs/REFERENCE.md` (Site Model, map-layer system, Supaba
   "fix" a recurrence by bumping `data.updatedAt` in `rename_site_group.sql` instead — that treats
   the symptom on one write path and leaves the merge still ignorant of the stamp it was designed to
   honor.
+  **⛔ NEW-1 (2026-09-10) — AND THE STAMP ITSELF WAS BEING WRITTEN EMPTY, WHICH MAKES EVERY RULE
+  ABOVE MOOT ON THE ROWS IT HIT.** B1440976 taught the merge to READ the stamp; this is about the
+  stamp not being there to read. `createSiteModel` normalises an unknown `siteRenamedAt` to an
+  explicit `null` (correct in memory), `cloudSync.siteRowFor` sends the whole model as `data`, and a
+  cloud write REPLACES the row's jsonb — so any device whose cached copy predated a rename wrote
+  that null over the rename's own stamp. Measured on `planyr_production` 2026-09-10: **64 of 116
+  rows carried a present-but-EMPTY marker, 34 a real number, 18 no key at all.** A key that is
+  present and null is a WRITE, not an absence — nothing absent-by-default produces it. And it is not
+  theoretical: Silvestri (`smrp1wrgg6u5`) was renamed 2026-07-31T19:23:15.307Z, four of its five
+  live plans still carry that exact stamp, and plan `sms9c5oc7jnt` carries JSON null with
+  `updated_at` five days LATER. `nameAuthority` lost a stamped voter and fell back to the legacy
+  majority rule — the coin flip the marker exists to replace. **Two halves, and neither alone is
+  enough:** the client now OMITS a marker it does not know
+  (`projectName.normalizeRenameStampForWrite`, applied in `slimForCloud`) — but omitting still
+  erases, because the write replaces the whole jsonb — so `db/sites_rename_stamp_guard.sql` (a
+  BEFORE UPDATE trigger) makes the row keep what it already holds: **an UPDATE carrying no real
+  stamp may neither clear a stamped row's marker nor change its project name.** The name half is
+  not extra scope — preserving the stamp alone would let a stale name inherit the rename's own
+  timestamp and win a two-plan tie on `updatedAt`. **Do NOT "harden" this into refusing an OLDER
+  stamp:** `renameSiteGroup` computes its stamp from the plans THIS device has cached, so a
+  genuinely later rename can legitimately carry a smaller number, and refusing it would silently
+  freeze a project's name — worse than what it would prevent. Guards: the repo-root `test/` suite
+  **renameStampIntegrity** (mutation-proven — every assertion was required to go red against the
+  untouched source first) and `db/test/sites_rename_stamp_guard.test.sql` (8 checks, run green
+  against production 2026-09-10, and red — cases 1-3 — before the trigger existed). The repair for
+  rows already damaged is `db/rename_stamp_backfill_20260910.sql`: **deliberately NOT run**, and it
+  is ONE row, not 64 — the other 63 belong to groups with no stamp anywhere, where writing a
+  timestamp would be inventing a fact rather than restoring one.
 - **⛔ `layerZoomGate.js` (B323424/B323425) — THE ONE ANSWER TO "IS THIS ROW ACTUALLY DRAWING RIGHT
   NOW?", and the reason it is shared rather than a note on the contour row.** A checked layer that a
   zoom gate suppresses looked exactly like a broken one: the owner ticked *"Contour lines (1 ft)"*

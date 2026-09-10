@@ -24,6 +24,20 @@
  *      (`applyGroupNameAuthority` in storage.js). A stale plan hydrating later therefore READS the
  *      project name instead of re-publishing its own copy over it — the exact move that undid the
  *      owner's rename.
+ *   4. THE MARKER IS NEVER SENT EMPTY (NEW-1, 2026-09-10). Halves 1-3 all assume the stamp is
+ *      THERE to be read. It routinely was not: `createSiteModel` normalises an unknown marker to
+ *      an explicit `siteRenamedAt: null`, and the ordinary cloud push sends the whole model as
+ *      `data`, which REPLACES the row's jsonb — so a device whose cache predated a rename wrote
+ *      that null straight over the rename's own stamp. Measured on production 2026-09-10: 64 of
+ *      116 rows carried a present-but-empty marker (a key that is present and null is a WRITE, not
+ *      an absence), and Silvestri's own plan `sms9c5oc7jnt` had the group's 2026-07-31 stamp
+ *      erased by a document write five days later. Now the write path OMITS what it does not know
+ *      (`normalizeRenameStampForWrite`, applied in `cloudSync.slimForCloud`) and the row keeps what
+ *      it already holds (`db/sites_rename_stamp_guard.sql`). Omitting is the point: a client may
+ *      send a stamp it knows, or say nothing — it may never claim the project has never been
+ *      renamed. Guards: the repo-root `test/` suite **renameStampIntegrity** (mutation-proven —
+ *      every assertion was required to go red against the untouched pre-fix source first) and
+ *      `db/test/sites_rename_stamp_guard.test.sql`.
  *
  * This module is PURE (no storage, no network, no DOM) so the decision is unit-testable on its own.
  */
@@ -39,10 +53,56 @@ const claimOf = (m) => {
   return typeof s === "string" && s.trim() ? s : null;
 };
 
-const stampOf = (m) => {
-  const t = m && m.siteRenamedAt;
-  return typeof t === "number" && isFinite(t) && t > 0 ? t : null;
-};
+/* ⛔ NEW-1 — THE ONE PARSE FOR THE RENAME MARKER, and the one place "empty" is defined.
+ *
+ * Every reader of `siteRenamedAt` asks this and nothing else. Four modules used to hand-roll the
+ * same `typeof … === "number" && isFinite(…)` test (this file, `siteModel.createSiteModel`,
+ * `siteListLight.projectSummaryOf`, and the dashboard feed's `Number(...)`), which is how "we do
+ * not know when this project was renamed" and "this project has never been renamed" drifted into
+ * two different answers to one question. They are the SAME answer — UNKNOWN — and the whole point
+ * of the marker is that an unknown may never win a last-writer-wins comparison.
+ *
+ * A numeric STRING counts as known: PostgREST hands `data->>'siteRenamedAt'` back as text (see
+ * `dashboardSitesFetch`'s own select), and a stamp that arrived as text is still a stamp. It is
+ * canonicalised to a number here so no downstream comparison has to care which it was. */
+export function renameStamp(v) {
+  const n = typeof v === "string" ? Number(v.trim()) : v;
+  return typeof n === "number" && isFinite(n) && n > 0 ? n : null;
+}
+
+const stampOf = (m) => renameStamp(m && m.siteRenamedAt);
+
+/* ⛔ NEW-1 — "IS THIS DOCUMENT ABOUT TO ASSERT AN EMPTY MARKER?"
+ *
+ * A document that OMITS `siteRenamedAt` says nothing about when the project was renamed. A
+ * document that carries `siteRenamedAt: null` CLAIMS it has never been renamed — and because the
+ * cloud write replaces the row's whole `data` jsonb, that claim lands on top of, and destroys, a
+ * real stamp written by `rename_site_group()`. Measured on production 2026-09-10: 64 of 116 rows
+ * carried a present-but-empty marker, and plan `sms9c5oc7jnt` of the Silvestri group
+ * (`smrp1wrgg6u5`) had the group's real 2026-07-31 stamp erased by a document write five days
+ * later, while its four siblings kept it.
+ *
+ * So the rule is: a client may send a stamp it knows, or send nothing. It may never send empty. */
+export const carriesEmptyRenameStamp = (doc) =>
+  !!doc && typeof doc === "object" && "siteRenamedAt" in doc && renameStamp(doc.siteRenamedAt) == null;
+
+/* The write-side normaliser: canonicalise a known stamp to a number, DROP an unknown one.
+ *
+ * IDENTITY-PRESERVING when there is nothing to do — `cloudSync.headerSig` hashes the slimmed
+ * document on every autosave to decide whether a push is needed at all, and three effects in the
+ * planner key off object identity, so allocating a fresh object per call would be a silent cost
+ * with no behavioural gain (the B385040 / VIEW-INDEPENDENT-ONCE §5 shape). */
+export function normalizeRenameStampForWrite(doc) {
+  if (!doc || typeof doc !== "object" || !("siteRenamedAt" in doc)) return doc;
+  const at = renameStamp(doc.siteRenamedAt);
+  // UNKNOWN first, deliberately: `null === null` would otherwise take the identity fast path below
+  // and hand back the very document this function exists to refuse. (Caught by the teeth case in
+  // test/renameStampIntegrity.test.js on this function's first run — which is the argument for
+  // making the predicate assert against the real pre-fix payload rather than a tidy fixture.)
+  if (at == null) { const { siteRenamedAt: _unknown, ...rest } = doc; return rest; }
+  if (at === doc.siteRenamedAt) return doc;                     // already canonical — no churn
+  return { ...doc, siteRenamedAt: at };
+}
 
 const updatedOf = (m) => {
   const t = m && m.updatedAt;
