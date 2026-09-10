@@ -66,7 +66,7 @@ import { MODULE_ACCENT } from "./moduleAccent.js";
 import { MODULE_TAB_LABEL } from "./moduleTabLabel.js";
 import { useTheme } from "../theme/ThemeProvider.jsx";
 import InterfaceSettings from "./InterfaceSettings.jsx";
-import { centerSlotPlan, CENTER_SLOT_GAP } from "./headerCenterFit.js";
+import { centerSlotPlan, centerSlotMaxWidth, CENTER_SLOT_GAP } from "./headerCenterFit.js";
 import FloatingNotice from "./FloatingNotice.jsx";
 
 // Chrome colors are theme tokens (var(--chrome-*)) so the header themes WITH the app
@@ -607,6 +607,119 @@ export default function AppHeader({
   // scrolled to wherever it last was, with the now-ACTIVE tab off the left edge and no sign
   // anything is hidden. The worst case named in the report: the section you are IN disappears.
   const row2Ref = useRef(null);
+  /* ── NEW-2 (2026-09-10 owner amendment) — THE ROW-2 GRID/SPLIT/GANTT CHIP IS CENTRED WHEN IT
+     FITS, IN-FLOW WHEN IT DOES NOT ─────────────────────────────────────────────────────────────
+     Owner, measured live on Goose Creek: the chip sat 54px right of the row's true centre. Root
+     cause is the SAME species as Row 1's B384064 (and explicitly the same fix B1012560 chose NOT
+     to take for Row 2 — see that fix's own comment: "the alternative, centering on the row's own
+     physical midpoint... this is a deliberate choice, not an oversight"): the centre zone is
+     `flex:"1 1 auto"`, so it occupies the LEFTOVER space between the (content-sized, never-
+     growing) tabs zone and toolbar zone — centred WITHIN that leftover space, which is only the
+     row's true centre when the two zones happen to be equal width. They are not (tabs ~108px
+     wider than the toolbar cluster in the reported case), so the "centred" chip drifts by exactly
+     half that difference.
+
+     ⛔ THE OWNER'S OWN AMENDMENT, verbatim: "it cant always be centered but when it can it should"
+     — and he is right, for a reason Row 1 never had to face: Row 1's centre content SHRINKS
+     (the jurisdiction pill abbreviates) when squeezed, so an out-of-flow slot with a measured
+     MAX-WIDTH bound is always safe. This chip's content (Grid/Split/Gantt + the review inbox)
+     does NOT shrink — it is fixed-width — so simply pinning it to the row's midpoint whenever
+     `toolbarCenter` exists would, below the width where BOTH sides can clear it, run the chip
+     straight into the tab strip or the toolbar buttons. **PROVED, not assumed, before writing this
+     branch:** a plain CSS Grid `1fr auto 1fr` (the "likely implementation" floated in the
+     dispatch) was built and measured in isolation with Playwright — unconstrained, it just
+     reproduces the SAME leftover-space drift (measured offset 115.6px, same species as the
+     reported bug); with `min-width:0` added to force the two side tracks to genuinely equal
+     widths, the chip does land exactly on the row's centre (offset 0.0px) but the wider side's
+     REAL CONTENT then overflows its track by the same 115.6px, landing directly under/over the
+     chip (`elementFromPoint` at the chip's own left edge resolved to the chip, meaning the tab
+     text was rendered underneath it) — a measured collision, not a theoretical one. Grid alone
+     does not hold up against the collision case; the fix below is the explicit measured condition
+     the amendment asks for instead.
+
+     THE RULE (the owner's own two-inequality form, and it is algebraically the SAME bound
+     `centerSlotMaxWidth` already computes for Row 1 — reused verbatim, not reimplemented):
+     centre only when BOTH `leftGroupRight + minGap <= rowCentre - chipW/2` AND
+     `rowCentre + chipW/2 <= rightGroupLeft - minGap` hold. Substituting rowCentre = rowW/2 and
+     solving both for chipW gives `chipW <= rowW - 2*(max(leftW, rightW) + minGap)` — exactly
+     `centerSlotMaxWidth`'s formula, because the tighter of the two inequalities is always the one
+     from the WIDER side group. So centring is chosen when that bound is at least the chip's own
+     measured (fixed, never-shrinking) width — never a max-width squeeze, since there is nothing
+     to squeeze; the bound is a pure feasibility test here.
+
+     HYSTERESIS (the owner's own explicit ask — "a condition evaluated continuously during a
+     window drag flips centred/not-centred repeatedly within a few pixels"): entering `centered`
+     requires the bound to clear the chip's width by `ROW2_CENTER_HYSTERESIS_PX` (a real margin);
+     leaving it only requires the bound to fall below the chip's bare width (no margin on exit).
+     A slow drag through the resulting band flips at most once per direction — proven live below
+     (`verify-schedule-header-widths.mjs`'s hysteresis section drives the viewport across the
+     threshold in both directions and counts transitions).
+
+     SNAP, NOT ANIMATE (owner's explicit ask): neither this zone nor its wrapper carries a CSS
+     `transition` on `left`/`transform`/`flex` — a layout correction reads as a bug if it slides.
+
+     NEVER OVERLAP: the bound structurally cannot let the centred slot reach either side group
+     (identical guarantee to Row 1's B384064), and the FALLBACK (not-centred) state is the
+     UNTOUCHED B1012560 in-flow layout — today's already-correct position, never a new invention.
+
+     WHAT GIVES WAY BELOW THE THRESHOLD: already answered, unchanged, by B1012560/B1017840's own
+     wrap mechanism — the tabs zone never shrinks (primary navigation), the centre zone is the
+     `flex:"1 1 auto"` fallback so it stays on line one as long as anything can, and the TOOLBAR
+     (secondary controls) is what wraps to a second line first. This fix only adds the CENTRED
+     state on top of that untouched fallback; it does not touch what gives way when nothing fits.
+
+     ⛔ "AUTOMATION HIDDEN IN SOME STATES" — CHECKED AND NOT FOUND (AUDIT-FIRST). The dispatch cited
+     a rule that the Automation button hides in some states; `ScheduleActions` (ScheduleToolbar.jsx)
+     renders it UNCONDITIONALLY whenever the toolbar is ready, in both Dashboard and Projects
+     sections — no gating exists anywhere in the shell or the embedded scheduler's own
+     `planar:toolbar-state` report. Flagged rather than silently built around. The REAL, already-
+     shipped case that changes the right zone's width the same way — the zoom cluster, shown only
+     in Split/Gantt, absent in Grid — is used instead as the adjacent-case proof below; it is
+     exactly the SCOPES=["grid","split"] split this harness already carries. */
+  const ROW2_CENTER_HYSTERESIS_PX = 12; // a real margin to enter `centered`; none required to leave it
+  const row2LeftZoneRef = useRef(null);
+  const row2RightZoneRef = useRef(null);
+  const row2CenterContentRef = useRef(null);
+  const row2CenteredRef = useRef(false); // the LATEST committed mode, read synchronously inside measure() — a React-state read here would race a burst of ResizeObserver callbacks between renders and could apply the wrong side of the hysteresis band
+  const [row2Center, setRow2Center] = useState({ mode: "flow", max: null });
+  useLayoutEffect(() => {
+    if (narrow) { row2CenteredRef.current = false; setRow2Center((prev) => (prev.mode === "flow" ? prev : { mode: "flow", max: null })); return undefined; }
+    const row = row2Ref.current, left = row2LeftZoneRef.current, right = row2RightZoneRef.current, content = row2CenterContentRef.current;
+    if (!row || !content) return undefined; // no centre content rendered (the 2-zone layout, or not yet mounted) — nothing to centre
+    const measure = () => {
+      const rowW = row.clientWidth;
+      const leftW = left ? left.getBoundingClientRect().width : 0;
+      const rightW = right ? right.getBoundingClientRect().width : 0;
+      const min = content.getBoundingClientRect().width;
+      if (![rowW, leftW, rightW, min].every(Number.isFinite) || rowW <= 0 || min <= 0) {
+        row2CenteredRef.current = false;
+        setRow2Center((prev) => (prev.mode === "flow" ? prev : { mode: "flow", max: null }));
+        return;
+      }
+      const max = centerSlotMaxWidth({ rowW, leftW, rightW, gap: CENTER_SLOT_GAP });
+      const wasCentered = row2CenteredRef.current;
+      const nowCentered = max != null && (wasCentered ? max >= min : max >= min + ROW2_CENTER_HYSTERESIS_PX);
+      row2CenteredRef.current = nowCentered;
+      setRow2Center((prev) => {
+        const nextMode = nowCentered ? "centered" : "flow";
+        const nextMax = nowCentered ? max : null;
+        if (prev.mode === nextMode && (nextMax == null ? prev.max == null : (prev.max != null && Math.abs(prev.max - nextMax) < 0.5))) return prev;
+        return { mode: nextMode, max: nextMax };
+      });
+    };
+    measure();
+    if (typeof ResizeObserver !== "function") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    if (left) ro.observe(left);
+    if (right) ro.observe(right);
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [narrow]);
+  const row2Centered = !narrow && row2Center.mode === "centered";
   // NEW-2 (B917073) — one edge-fade reading per scrolling row; see `useScrollEdges` above.
   const row1Edges = useScrollEdges(rowRef, narrow);
   const row2Edges = useScrollEdges(row2Ref, narrow);
@@ -1094,32 +1207,58 @@ export default function AppHeader({
         // down by the difference. 30 covers both children at their real measured heights from
         // the very first paint, so the row's cross-axis size — and therefore where every child
         // centers — never depends on which of the two has rendered yet.
-        <div ref={row2Ref} className={narrow ? "no-hscrollbar" : undefined} style={{ minHeight: 30, display: "flex", alignItems: "center", flexWrap: narrow ? "nowrap" : "wrap", justifyContent: "flex-end", rowGap: 2, borderTop: `1px solid ${LINE}`, WebkitMaskImage: row2Mask, maskImage: row2Mask, ...rowScroll }}>
+        <div ref={row2Ref} className={narrow ? "no-hscrollbar" : undefined} style={{ minHeight: 30, display: "flex", alignItems: "center", position: "relative", flexWrap: narrow ? "nowrap" : "wrap", justifyContent: "flex-end", rowGap: 2, borderTop: `1px solid ${LINE}`, WebkitMaskImage: row2Mask, maskImage: row2Mask, ...rowScroll }}>
           {/* Left zone — module tabs. B1012560: content-sized (`"none"` = `0 0 auto`) and
               never shrinks, same as the 2-zone layout's tabs zone below — primary navigation
               is the last thing to lose space. Omitted entirely when showModuleTabs is false
               (B651873) — no unrendered spacer, since nothing currently pairs toolbarCenter
               with a hidden-tabs caller. */}
           {showModuleTabs && (
-            <div style={{ display: "flex", alignItems: "stretch", alignSelf: "stretch", paddingLeft: 4, flex: "none" }}>
+            <div ref={row2LeftZoneRef} style={{ display: "flex", alignItems: "stretch", alignSelf: "stretch", paddingLeft: 4, flex: "none" }}>
               {moduleTabButtons}
             </div>
           )}
-          {/* Center zone — workspace-supplied center group. B1012560: `1 1 auto` — the ONLY
-              zone that grows, so it alone absorbs the leftover width and splits it evenly on
-              both sides of its own centered content (see the header comment above for why this,
-              not the row's raw midpoint, is what "centered" has to mean when the two side groups
-              are unequal widths). Narrow: don't grow/shrink (ride the row scroll). */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: narrow ? "0 0 auto" : "1 1 auto", minWidth: 0, gap: 4, padding: "0 8px" }}>
-            {toolbarCenter}
+          {/* Center zone — workspace-supplied center group. NEW-2 (2026-09-10) — CENTRED on the
+              row's own midpoint (out of flow) whenever the measured bound clears it with room to
+              spare; otherwise this is the UNTOUCHED B1012560 fallback — `flex:"1 1 auto"`, the
+              ONLY zone that grows, splitting the leftover width evenly around its own centered
+              content. See the header comment above `row2Center`'s declaration for the full rule,
+              the hysteresis, and why a plain CSS Grid centred column does not hold up here.
+              Narrow: don't grow/shrink (ride the row scroll) — untouched. */}
+          <div
+            data-schedule-center-mode={row2Center.mode}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              // The clearance is already inside the measured bound when centred, so padding here
+              // would only eat the chip's own room (same reasoning as Row 1's centre zone).
+              padding: row2Centered ? 0 : "0 8px",
+              ...(narrow
+                ? { flex: "0 0 auto", minWidth: 0 }
+                : row2Centered
+                  ? { position: "absolute", left: "50%", transform: "translateX(-50%)", top: 0, bottom: 0, maxWidth: row2Center.max, minWidth: 0, overflow: "hidden" }
+                  : { flex: "1 1 auto", minWidth: 0, overflow: "hidden" }),
+            }}
+          >
+            {/* The measured, never-shrinking natural width of the chip's own content — read by
+                the layout effect above regardless of which positioning mode the OUTER div is
+                currently in (an `inline-flex` item sizes to its content, not to an ancestor's
+                flex-grow), so there is no self-referential measurement loop. */}
+            <div ref={row2CenterContentRef} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              {toolbarCenter}
+            </div>
           </div>
+          {/* NEW-2 — the slack the centre zone used to absorb, held by an inert spacer while the
+              centre is out of flow (identical role to Row 1's own spacer): without it the row's
+              own `justifyContent:"flex-end"` would pull the tabs and toolbar zones flush together
+              once the centre stops being an in-flow growing item. */}
+          {row2Centered && <div aria-hidden="true" style={{ flex: "1 1 0%", minWidth: CENTER_SLOT_GAP }} />}
           {/* Right zone — toolbar slot. B1012560: content-sized, no grow, no shrink on desktop
               (`"none"`) — it must NOT grow, or it would eat a share of the leftover width that
               belongs to centering the group beside it (that was symptom 2). It still ends up
               flush against the right edge on a single line, because the center zone's growth
               already consumes the row's entire slack and the toolbar is the last item. Narrow
               (phone) is untouched — `1 0 auto`, exactly as before. */}
-          <div style={{ flex: narrow ? "1 0 auto" : "none", display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 6, minWidth: narrow ? "auto" : 0, gap: 4, overflow: narrow ? "visible" : "hidden" }}>
+          <div ref={row2RightZoneRef} style={{ flex: narrow ? "1 0 auto" : "none", display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 6, minWidth: narrow ? "auto" : 0, gap: 4, overflow: narrow ? "visible" : "hidden" }}>
             {toolbarContent}
           </div>
         </div>

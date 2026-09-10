@@ -9,16 +9,30 @@
  *       width from 1280 to 2560, because equal side BOXES don't center a middle item between
  *       two side groups whose VISIBLE CONTENT widths differ.
  * The fix: the tabs and toolbar zones are content-sized and never grow (`flex:"none"`); the
- * center zone is the ONLY zone that grows, so it alone absorbs the leftover width and splits it
- * evenly either side of its own centered content.
+ * center zone is the ONLY zone that grows in the FALLBACK case (see NEW-2 below for when it
+ * isn't), so it alone absorbs the leftover width and splits it evenly either side of its own
+ * centered content.
+ *
+ * ⛔ NEW-2 (2026-09-10 owner amendment) — B1012560's "equal gaps to the two side groups" WAS the
+ * chip's stated centering rule and is no longer the WHOLE story. That design left the chip
+ * centered on the LEFTOVER SPACE, which is only the row's true center when tabs and toolbar are
+ * equal width — B1012560's own comment called this "a deliberate choice, not an oversight," and
+ * the owner has now overridden it: the chip centers on the row's own PHYSICAL midpoint whenever a
+ * measured bound (`centerSlotMaxWidth`, reused from Row 1's B384064 fix) proves it can do so
+ * without touching either side group, with hysteresis so a slow resize doesn't flip repeatedly;
+ * otherwise it falls back to EXACTLY this file's original in-flow layout, unchanged. See
+ * `test/scheduleHeaderCenterSlot.test.js` for the new centering rule itself, and AppHeader.jsx's
+ * own header comment above `row2Center`'s declaration for the full account (including why a plain
+ * CSS Grid `1fr auto 1fr` was tried and measured to fail the collision case).
  *
  * ⛔ THE REAL PROOF IS A REAL BROWSER, and it lives in the ui-audit harness
  * `verify-schedule-header-widths.mjs` (mounts the real AppHeader with realistic Schedule-shaped
  * content, drives it at both narrow widths — 900/960/1024/1108 — and wide widths — 1440/1600/
- * 1920/2560 — and asserts both that every module tab resolves to itself AND that the two gaps
- * either side of the center group are equal within a small tolerance). CI cannot run a browser,
- * so this suite guards the one thing it CAN check without one: reading the real source, no zone
- * may regain a content-independent, competing `flex-grow`.
+ * 1920/2560 — and asserts both that every module tab resolves to itself AND that the chip's own
+ * center sits at the row's true center within a small tolerance when centering applies). CI
+ * cannot run a browser, so this suite guards what it CAN check without one: reading the real
+ * source, the tabs/toolbar zones still never grow, and the FALLBACK center-zone shape (used
+ * whenever the measured bound says centering would collide) is still the untouched original.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -59,12 +73,23 @@ describe("Schedule header Row 2 — exactly ONE zone grows, so leftover width ca
     expect(threeZone).toContain('flex: narrow ? "1 0 auto" : "none"');
   });
 
-  it("the center group is the ONLY flexible zone — it alone absorbs the leftover width", () => {
-    expect(threeZone).toContain('flex: narrow ? "0 0 auto" : "1 1 auto"');
-    // Exactly one `flex-grow: 1` shape (the center's) may appear on the desktop branch —
+  it("the center group's FALLBACK shape is the only flexible zone — it alone absorbs the leftover width when not centered", () => {
+    // NEW-2 — the center zone is no longer unconditionally `flex:"1 1 auto"`: that shape is now
+    // the FALLBACK arm of a ternary (the `row2Centered` branch takes it out of flow entirely
+    // instead). The fallback shape itself must still be exactly this, unchanged.
+    expect(threeZone).toContain('{ flex: "1 1 auto", minWidth: 0, overflow: "hidden" }');
+    expect(threeZone).toContain('{ flex: "0 0 auto", minWidth: 0 }');
+    // Exactly one `flex-grow: 1` shape (the center's fallback) may appear on the desktop branch —
     // counting occurrences of a bare `1 1 auto`/`: 1,` pattern would be fragile, so this is
     // asserted structurally by the two negative checks above instead: tabs and toolbar are
     // both pinned to "none" on desktop, leaving the center as the sole grower by elimination.
+  });
+
+  it("⛔ NEW-2 — the center zone can also go OUT OF FLOW, but only pinned to the row's own midpoint, and only this row is its positioning container", () => {
+    expect(threeZone).toContain('position: "absolute", left: "50%", transform: "translateX(-50%)"');
+    expect(threeZone).toContain("maxWidth: row2Center.max");
+    // The row it is pinned against must declare itself the positioning container.
+    expect(threeZone).toContain('alignItems: "center", position: "relative"');
   });
 
   it("the row justifies content to the end, so a toolbar wrapped onto its own second line still sits flush right", () => {
