@@ -113,28 +113,16 @@ describe("candidateCountiesForPoint — click routing (B11/B130/B787)", () => {
  * found` — both findings were wrong (docs/STATEWIDE-PARCELS.md), and both sources were found by
  * the official-ArcGIS-Online-organization pass NEW-2 makes systematic.
  *
- * ⛔ WHAT THIS DOES *NOT* CLAIM. Neither state has a dialed-in county entry, so its point matches
- * no bbox and `siteState`'s envelopes cover only TX/CO — the list therefore falls through to the
- * every-key branch, which is the SAME coarse routing every out-of-TX/CO statewide source added
- * since B1332016 already has. That coarseness is deliberately not narrowed here (it would change
- * routing for 27 other states); what is asserted is only the property the wiring is for: the
- * state's own source is genuinely among the candidates, and a Texas click is not made to carry it. */
-describe("NEW-1 — California and Rhode Island are reachable by a click in their own state", () => {
-  it("a Fresno point can reach ca_statewide", () => {
-    expect(candidateCountiesForPoint(36.74, -119.79)).toContain("ca_statewide");
-  });
-
-  it("a Providence point can reach ri_statewide", () => {
-    expect(candidateCountiesForPoint(41.824, -71.412)).toContain("ri_statewide");
-  });
-
-  it("a Houston point carries NEITHER — a Texas click must not drag 49 other states' sources along", () => {
-    const cand = candidateCountiesForPoint(29.76, -95.37);
-    expect(cand).not.toContain("ca_statewide");
-    expect(cand).not.toContain("ri_statewide");
-    expect(cand).toContain("txgio_statewide");
-  });
-});
+ * ⛔ MOVED to test/countyStatewideDerivation.test.js (B1457152, 2026-09-10) — this described the
+ * old "falls through to the every-key branch" behaviour as a deliberate, accepted coarseness. It
+ * stopped being deliberate: with ~30 statewide sources now wired (and Michael's own 2026-09-10
+ * instruction to wire the rest county-by-county), that "every key" branch is what fired 67+ parcel
+ * queries for one Las Vegas click. The reachability assertions (a Fresno click can reach
+ * `ca_statewide`, a Providence click can reach `ri_statewide`) now live alongside the fan-out
+ * regression suite in the file that already warms the nationwide county-polygon asset
+ * `candidateCountiesForPoint` needs to answer them narrowly — this file deliberately keeps that
+ * asset cold (see the `countyIdentity` "reports pending" test below), so a test needing it lives
+ * elsewhere rather than warm the singleton here for everyone after it. */
 
 // The statewide TxGIO layer is the universal fallback when a county's own CAD server
 // is down. statewideFallbackFor returns that layer scoped to the requested county, so

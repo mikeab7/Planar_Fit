@@ -357,6 +357,56 @@ describe("identifyParcelEager — a healthy real CAD wins over a faster statewid
   });
 });
 
+/* ⛔ B1457153 (2026-09-10) — A SOLE, HUNG SOURCE MUST NEVER LEAVE A LOOKUP "Looking up lot…" FOREVER.
+ *
+ * Measured live on planyr.io: two Las Vegas lookups never returned at all under the B1457152
+ * fan-out (67+ concurrent candidates queried at once). Every one of the tests above already proves
+ * a HUNG SIBLING can't block a lookup that has a healthy candidate to answer instead — this closes
+ * the remaining, narrower case the fan-out fix (which now typically leaves ONE candidate for a
+ * point) makes the common one: when the SOLE candidate hangs, with nothing else to race it. The
+ * budget reused here is the SAME one PR #1611 measured every statewide source's own envelope query
+ * against (`PARCEL_FETCH_TIMEOUT_MS`, `docs/STATEWIDE-PARCELS.md`'s "the app's own click-lookup hang-
+ * guard") — nothing new invented. */
+describe("identifyParcelEager — the SOLE candidate hanging still resolves within the budget (B1457153)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("a single hung candidate fails visibly at PARCEL_FETCH_TIMEOUT_MS — never hangs forever", async () => {
+    vi.useFakeTimers();
+    let aborted = false;
+    vi.stubGlobal("fetch", vi.fn((_url, { signal }) => new Promise((_res, rej) => {
+      signal.addEventListener("abort", () => { aborted = true; const e = new Error("aborted"); e.name = "AbortError"; rej(e); });
+    })));
+    const p = identifyParcelEager([{ county: "nv_statewide", url: "https://x.test/nv/MapServer/0", statewide: true }], -115.157, 36.1167);
+    // Nothing has aborted yet — a lookup that resolved WITHOUT the timer ever firing would be
+    // trivially "not hung", so this proves the promise genuinely waits on the real budget.
+    expect(aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(PARCEL_FETCH_TIMEOUT_MS - 10);
+    expect(aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(20); // cross PARCEL_FETCH_TIMEOUT_MS
+    const res = await p;
+    expect(aborted).toBe(true);
+    expect(res.complete).toBe(true);
+    expect(res.hits).toHaveLength(0);
+    expect(res.responded).toBe(0); // "couldn't reach any parcel server" — not "no parcel here"
+    vi.useRealTimers();
+  });
+
+  it("an unrelated state's outage is never even in the race — it isn't queried at all", async () => {
+    // The B1457152 fix means an Arkansas 503 (measured live on the SAME Las Vegas click) can no
+    // longer "stall" a Nevada lookup, because candidateCountiesForPoint never hands Arkansas to
+    // identifyParcelEager for a Nevada point in the first place — see
+    // test/countyStatewideDerivation.test.js's B1457152 suite for the candidate-list proof. This
+    // test only pins the OTHER half: even if it somehow were queried, one 503 among several
+    // candidates never blocks a hit from a healthy sibling.
+    vi.stubGlobal("fetch", vi.fn(async (url) => (url.includes("/ar/") ? { ok: false, status: 503, json: async () => ({}) } : ok({ features: [{ geometry: { rings: [] }, attributes: { OBJECTID: 1 } }] }))));
+    const res = await identifyParcelEager([
+      { county: "ar_statewide", url: "https://x.test/ar/FeatureServer/0", statewide: true },
+      { county: "nv_statewide", url: "https://x.test/nv/MapServer/0", statewide: true },
+    ], -115.157, 36.1167);
+    expect(res.hits.map((h) => h.county)).toEqual(["nv_statewide"]);
+  });
+});
+
 describe("humanizeError — plain wording per failure kind", () => {
   it("a timeout reads as the server not responding (not a generic error)", () => {
     expect(humanizeError(new ParcelFetchError("timeout", "x"))).toMatch(/isn.t responding/i);
