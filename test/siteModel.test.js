@@ -347,6 +347,28 @@ describe("toMs + mergeSiteContent newer-wins is timestamp-type-safe (B559)", () 
     const cloudBumped = { id: "trk1", updatedAt: 2000, role: "tracked" };
     expect(mergeSiteContent(staleLocal, cloudBumped).role).toBe("tracked"); // self-heals once genuinely newer
   });
+
+  // B1440976 (NEW-1) — the SAME class of bug as B1181104 above, this time on the project NAME
+  // itself. `rename_site_group()` deliberately stamps `data.siteRenamedAt` instead of bumping
+  // `data.updatedAt` (projectName.js's whole point is that a rename has its own dedicated stamp),
+  // but `mergeSiteContent`'s generic scalar pick never consulted that stamp — it just took `site`
+  // from whichever side had the newer/tied `updatedAt`, exactly like `role`. So a device holding
+  // any locally-cached copy of a plan from BEFORE a rename made on another device kept the OLD
+  // name forever on every later pull, because the freshly-renamed cloud row's `updatedAt` never
+  // moved. Owner-reported 2026-09-09: a rename "doesn't hold." Fixed by resolving `site`/
+  // `siteRenamedAt` through the same `nameAuthority` the list/read paths already trust, regardless
+  // of which side `updatedAt` picks for everything else.
+  it("a stamped rename wins the NAME even on an updatedAt tie or loss — the exact gap B1181104 closed for role, reopened for site", () => {
+    const staleLocal = { id: "p1", groupId: "g1", updatedAt: 1000, site: "Old Name" };
+    const renamedCloud = { id: "p1", groupId: "g1", updatedAt: 1000, site: "New Name", siteRenamedAt: 5000 };
+    expect(mergeSiteContent(staleLocal, renamedCloud).site).toBe("New Name");
+    expect(mergeSiteContent(renamedCloud, staleLocal).site).toBe("New Name"); // order-independent
+    // A local copy whose OWN updatedAt is newer than the cloud's stale updatedAt is the more
+    // dangerous case in production (an actively-used device) — the stamp must still win.
+    const activeLocal = { id: "p1", groupId: "g1", updatedAt: 9_000_000, site: "Old Name" };
+    expect(mergeSiteContent(activeLocal, renamedCloud).site).toBe("New Name");
+    expect(mergeSiteContent(activeLocal, renamedCloud).siteRenamedAt).toBe(5000);
+  });
 });
 
 // B651 — parcel split lineage: `parentId` on children, derived superseded/naming, and the

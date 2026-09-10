@@ -15,12 +15,12 @@
  * NO rule anywhere that hides text pending JS — this file asserts exactly that, plus the
  * cost/pricing-language ban B1315632 added (owner hard rule, 2026-09-06).
  *
- * The cost/pricing ban (below) also covers /privacy/ and /terms/ (B1344528, 2026-09-09) — the
- * standing "the landing page never mentions money" decision applies to every page reachable
- * from it, and a terms-of-service template reaches for a Fees-and-Payment section by reflex.
- * The legibility checks above stay landing-only: /privacy/ and /terms/ are long-form static
- * text with no reveal mechanism and no canvas to begin with, so there is nothing there for
- * that half of the guard to catch.
+ * The cost/pricing ban (below) also covers /privacy/, /terms/ (B1344528, 2026-09-09) and
+ * /404.html (B1433761, 2026-09-09) — the standing "the landing page never mentions money"
+ * decision applies to every page reachable from it, and a terms-of-service template reaches
+ * for a Fees-and-Payment section by reflex. The legibility checks above stay landing-only:
+ * the other three pages are static text/markup with no reveal mechanism and no canvas to
+ * begin with, so there is nothing there for that half of the guard to catch.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -36,6 +36,10 @@ const PRIVACY_HTML = readFileSync(
 );
 const TERMS_HTML = readFileSync(
   fileURLToPath(new URL("../public/terms/index.html", import.meta.url)),
+  "utf8"
+);
+const NOT_FOUND_HTML = readFileSync(
+  fileURLToPath(new URL("../public/404.html", import.meta.url)),
   "utf8"
 );
 
@@ -62,10 +66,8 @@ function rules(css) {
 
 const RULES = rules(CSS);
 
-/* Purely decorative, wordless surfaces: the contour canvas and its scrim, and the fine-print
- * cursor hint (its resting `display: none` is a POINTER-TYPE gate — `@media (pointer: fine)`
- * turns it on — never a JS-readiness gate; it carries no information the page depends on). */
-const DECORATIVE = [/^#bg$/, /^\.scrim$/, /^\.cursor-hint$/, /^\.cursor-hint\.faded$/];
+/* Purely decorative, wordless surfaces: the contour canvas and its scrim. */
+const DECORATIVE = [/^#bg$/, /^\.scrim$/];
 
 describe("landing page copy is legible without JavaScript (B1384, rebuilt B1315632)", () => {
   it("has a <style> block the parser could read", () => {
@@ -123,9 +125,10 @@ const MONEY_SILENT_PAGES = [
   ["/landing/", HTML],
   ["/privacy/", PRIVACY_HTML],
   ["/terms/", TERMS_HTML],
+  ["/404.html", NOT_FOUND_HTML],
 ];
 
-describe.each(MONEY_SILENT_PAGES)("%s never mentions cost in any direction (owner hard rule, 2026-09-06; extended to /privacy/ and /terms/ B1344528)", (_path, html) => {
+describe.each(MONEY_SILENT_PAGES)("%s never mentions cost in any direction (owner hard rule, 2026-09-06; extended to /privacy/ and /terms/ B1344528, and /404.html B1433761)", (_path, html) => {
   it("carries none of the banned cost/pricing words or phrases anywhere in the built file", () => {
     const hits = [];
     html.split("\n").forEach((line, i) => {

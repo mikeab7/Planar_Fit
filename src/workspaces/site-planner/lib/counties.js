@@ -919,10 +919,28 @@ const COUNTIES_MAP_RAW = {
     layerUrl: "https://services1.arcgis.com/GOcSXpzwBHyk2nog/arcgis/rest/services/NDGISHUB_Parcels/FeatureServer/0",
   },
   ne_statewide: {
-    // Verify: live — gis.ne.gov is blocked in this build environment; measured from the owner's
-    // own browser 2026-09-08. "Tax Parcels" layer, full owner + value schema.
+    // ⛔ CORRECTED 2026-09-09 (NEW-1, continuing B1332016). The PRIOR wiring here —
+    // gis.ne.gov/Agency/rest/services/TaxParcelsDED/MapServer/0 — was NOT statewide despite
+    // carrying `statewide: true`: its own layer extent converts to roughly 40.98–41.21°N /
+    // -96.34 to -95.84°W, which is Douglas/Sarpy/Cass/Saunders counties (the Omaha metro) PLUS
+    // Pottawattamie/Mills counties across the state line in Iowa — 75,394 features, and a query
+    // at Omaha's own coordinates (41.2565, -95.9345) returned ZERO because Omaha sits just north
+    // of that layer's own covered extent. Found by the first real spatial (point-in-envelope)
+    // query run against every wired state, 2026-09-09 — every earlier pass had only checked this
+    // layer's METADATA (capabilities, field list), never asked it a question at a real coordinate.
+    // Verify: live — gis.ne.gov is blocked in this build environment; the layer below and every
+    // fact about it were measured from the owner's own browser, 2026-09-09. "Nebraska Statewide
+    // Parcels External" (NE OCIO Enterprise portal — note the path is /Enterprise/, not the old
+    // /Agency/), 1,154,898 features, esriGeometryPolygon, capabilities Query,Extract,
+    // maxRecordCount 2000. Fields: State_PID, Parcel_ID, Situs_Address, Ph_Full_Address,
+    // Legal_Description, Twn, Sect, Rng, Acres_Deeded, GIS_Acres, Subdivision, County_ID. Verified
+    // GENUINELY statewide by five point probes spread across Nebraska, each returning a real
+    // parcel with a DISTINCT county: Omaha (Douglas, 055), Scottsbluff in the far western
+    // panhandle (Scotts Bluff, 157), Norfolk in the north (Madison, 119), McCook in the southwest
+    // (Red Willow, 145), and Lincoln (Lancaster, 109) — the same five-point spread this file's own
+    // NEW-2 extent-coverage check now runs automatically for every wired state.
     state: "NE", center: [41.5, -99.8], zoom: 7, mapServer: null, statewide: true,
-    layerUrl: "https://gis.ne.gov/Agency/rest/services/TaxParcelsDED/MapServer/0",
+    layerUrl: "https://gis.ne.gov/Enterprise/rest/services/StatewideParcelsExternal/FeatureServer/0",
   },
   nh_statewide: {
     // Verify: live — nhgeodata.unh.edu is blocked in this build environment; measured from the
