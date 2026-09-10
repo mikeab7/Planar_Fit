@@ -90,13 +90,12 @@ try {
       return { sampled: xs.length * ys.length, bad, box: { left: r.left, right: r.right, width: r.width } };
     };
     const tabs = [...root.querySelectorAll('[data-testid^="module-tab-"]')];
-    // The center group is THREE controls (B1396192 — the "Schedules" switcher, added first;
-    // Grid/Split/Gantt toggle; the review-inbox button) — its tight content box is the union of
-    // all three, never just a subset, or a real control's width gets mistaken for empty space on
-    // one side (exactly the failure this file's own header warns about — see B1396192's own
-    // header comment in ScheduleToolbar.jsx for why the switcher had to land in THIS zone).
+    // The center group is TWO controls (Grid/Split/Gantt toggle; the review-inbox button) — its
+    // tight content box is the union of both, never just one, or a real control's width gets
+    // mistaken for empty space on one side. (NEW-1, 2026-09-10 — the "Schedules" switcher button
+    // that used to be a third member here was removed; the Row-1 breadcrumb's schedule crumb now
+    // does that job, outside this zone entirely.)
     const centerParts = [
-      root.querySelector('[data-testid="schedule-switcher-btn"]'),
       root.querySelector('[role="group"][aria-label="View"]'),
       root.querySelector('[title="Review suggested updates from forwarded emails"]'),
     ].filter(Boolean);
