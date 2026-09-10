@@ -109,7 +109,7 @@ import { wseSensitivity } from "./lib/wseSensitivity.js";
  * comment for why both hosts have to move together. */
 const LayerPanel = lazy(() => import("./components/LayerPanel.jsx"));
 // NEW-3 — the ONE map-overlay stacking model (an open panel outranks map chrome).
-import { MAP_CHROME_Z } from "./lib/mapChromeStack.js";
+import { MAP_CHROME_Z, zoomStackBottomPx } from "./lib/mapChromeStack.js";
 import { districtDrainageNote } from "./lib/floodGroup.js";
 import { useGroundElevation } from "./components/useGroundElevation.js";
 import CursorChip from "./components/CursorChip.jsx";
@@ -2190,8 +2190,12 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   }, []);
   // `w`/`h` are clamped to a sane minimum for the coordinate math; `rawW` is the TRUE
   // (unclamped) map-pane width, used only to keep the bottom furniture from overlapping
-  // when a docked left panel narrows the pane below the clamp (NEW-1 / B881).
-  const [size, setSize] = useState({ w: 800, h: 560, rawW: 800 });
+  // when a docked left panel narrows the pane below the clamp (NEW-1 / B881). `rawH` is the
+  // same idea for height (B1338272) — a landscape phone's pane can be shorter than the 360
+  // floor, and the zoom stack's own top-right-collision clamp needs the REAL height to react
+  // to, not the floored one (the floored `h` made that clamp a silent no-op on exactly the
+  // device it was written for — measured, not theorized).
+  const [size, setSize] = useState({ w: 800, h: 560, rawW: 800, rawH: 560 });
   /* ⛔ B1234400 — IS `size` A REAL MEASUREMENT, OR STILL THE FALLBACK DEFAULT ABOVE?
    * Only ever set true from a measurement taken while `document.visibilityState === "visible"` —
    * see the ResizeObserver and the visibilitychange effect below, and lib/viewFramingGate.js's
@@ -5610,7 +5614,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
       if (typeof document === "undefined" || document.visibilityState === "visible") sizeMeasuredRef.current = true;
       // Bail when unchanged — the B962 layout effect often syncs the same width one frame earlier
       // (on a panel toggle), so an identical RO callback would otherwise force a redundant re-render.
-      setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width }));
+      setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width, rawH: r.height }));
     });
     ro.observe(wrapRef.current);
     return () => ro.disconnect();
@@ -5631,7 +5635,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
       const r = el.getBoundingClientRect();
       sizeMeasuredRef.current = true;
       const w = Math.max(320, r.width), h = Math.max(360, r.height);
-      setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width }));
+      setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width, rawH: r.height }));
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -6232,7 +6236,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     // ResizeObserver; the functional bail keeps steady-state re-runs a no-op (VIEWPORT-STABLE (a):
     // measure the real edge, fold the delta in the same frame — the panel-open twin of the B837 pan).
     const w = Math.max(320, r.width), h = Math.max(360, r.height);
-    setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width }));
+    setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width, rawH: r.height }));
     // NEW-1/B754752 — the bottom-center canvas toast (flashWarn) centers on the DRAWING, not the
     // window. `r.left + r.width/2` is the canvas's real horizontal center in viewport px — a docked
     // left-rail panel narrows `r` and this follows it, so the toast can never land on a docked
@@ -23995,7 +23999,30 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
             // anchored via `bottom: zoomBottom`, not by its content height), so "Zoom to fit" now
             // occupies the slot nearest the scale bar and this reserve is exactly as necessary as
             // it was with four buttons.
-            const zoomBottom = narrow ? 100 + FAB_RESERVE_PX : 100;
+            const desiredZoomBottom = narrow ? 100 + FAB_RESERVE_PX : 100;
+            // ⛔ B1338272 — THE COLLISION THAT ONLY SHOWS UP ON A SHORT CANVAS. `desiredZoomBottom`
+            // above is a fixed clearance from the map's BOTTOM edge, tuned to clear the scale bar —
+            // it assumes the canvas is tall enough that the stack's own TOP edge is nowhere near the
+            // top-right View + Layers row. On a landscape phone the canvas can be under 300px tall,
+            // so that fixed clearance pushes the stack's top edge up past the row it needs to clear:
+            // measured live on the smallest current iPhone in landscape (263px of canvas height),
+            // the unconstrained stack's top edge lands at y11 — squarely inside the row's own y11–43
+            // band, a 100% overlap of "Zoom in" under "Layers". Clamping against the canvas's own
+            // REAL, measured height is what makes this hold continuously as the canvas shrinks,
+            // rather than a constant tuned to one device that breaks at the next size down.
+            // ⛔ `size.h` is the WRONG height to clamp against — it's floored at 360 for the
+            // coordinate math (see `size`'s own header comment), so on this exact 263px canvas it
+            // silently read 360 and the clamp below was a no-op (measured: identical pixels before
+            // and after adding it). `size.rawH` is the TRUE unclamped pane height — the height
+            // twin of the `rawW` this file already carries for the same reason (B881's bottom-
+            // furniture reflow). The floor keeps the stack from being pushed low enough to march
+            // into the scale bar's own reserve instead of the row above it.
+            const zoomBottom = zoomStackBottomPx({
+              desired: desiredZoomBottom,
+              paneH: size.rawH ?? size.h,
+              stackH: zb.height * 3, // three stacked buttons, no internal gap
+              floor: FURNITURE_ROW,
+            });
             return (
               <>
               {/* data-canvas-corner: read by the shared help/report control (shared/ui/

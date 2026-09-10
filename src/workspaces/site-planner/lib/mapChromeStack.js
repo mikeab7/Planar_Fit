@@ -170,6 +170,45 @@ export const MAP_OVERLAY_BAR_H_PX = 42;
  * scale bar at every content height without a second measurement. */
 export const SCALE_BAR_CLEARANCE_PX = 44;
 
+/* ⛔ B1338272 (iPhone landscape control overlap) — A BOTTOM-ANCHORED STACK'S "CLEAR THE
+ * FURNITURE" OFFSET IS A CONSTANT; THE CANVAS IT SITS IN IS NOT.
+ *
+ * The Site canvas's own zoom stack (bottom-right) reads a fixed clearance from the map's bottom
+ * edge (see `zoomBottom` at its call site) sized to clear the scale bar underneath it. The
+ * top-right View + Layers row reads a fixed offset from the TOP edge. Both are correct in
+ * isolation — each was tuned against a canvas tall enough that its own opposite edge is nowhere
+ * near. Landscape phones break that assumption: the canvas can be under 300px tall, so the
+ * bottom stack's fixed clearance pushes its OWN top edge up past the top row's bottom edge —
+ * measured live on the smallest current iPhone in landscape (a 568×320 device, 263px of canvas
+ * height once the header/toolbar are subtracted): the top row occupies roughly y11–43, the
+ * unconstrained zoom stack occupies y11–101, a dead-on 100% overlap of the "Zoom in" button
+ * under the "Layers" button.
+ *
+ * `TOP_RIGHT_ROW_RESERVE_PX` is the room that row needs (its own top offset + its measured
+ * collapsed height, rounded up for safety margin the way `SCALE_BAR_CLEARANCE_PX` already is,
+ * plus an 8px breathing gap). The call site clamps the stack's bottom offset against the
+ * canvas's own REAL height so the two can never occupy the same band, at any height — never a
+ * nudge tuned to one device. Nudging the stack (or the row) by a fixed amount would fix this one
+ * screen and reproduce the same collision at the next size down. */
+export const TOP_RIGHT_ROW_RESERVE_PX = 52;
+
+/* The bottom-right zoom stack's actual `bottom` CSS offset, clamped against the canvas's own
+ * REAL height so the stack's top edge can never climb into `TOP_RIGHT_ROW_RESERVE_PX`'s band.
+ *
+ *   desired  — the offset a comfortably tall canvas uses (tuned to clear the scale bar/FABs)
+ *   paneH    — the canvas's TRUE, unclamped height (never a height floored for coordinate math —
+ *              see `size.rawH` at the call site; a floored height silently makes this a no-op)
+ *   stackH   — the stack's own rendered height (its button height × button count)
+ *   floor    — never return less than this, so the stack cannot be pushed low enough to march
+ *              into the bottom furniture's own reserve instead of the row above it
+ *
+ * On any canvas tall enough that `paneH - stackH - TOP_RIGHT_ROW_RESERVE_PX >= desired` (every
+ * desktop size, and most phones), this returns `desired` UNCHANGED — the clamp only ever
+ * activates on a canvas short enough to need it. Pure. */
+export function zoomStackBottomPx({ desired, paneH, stackH, floor }) {
+  return Math.max(floor, Math.min(desired, paneH - stackH - TOP_RIGHT_ROW_RESERVE_PX));
+}
+
 /* ⛔ NEW-1 (regression from B1310209, this item) — A CLEARANCE CONSTANT ASSUMES THE OTHER PANEL IS
  * PASSIVE FURNITURE (a scale bar, a zoom stack) THAT NEVER GROWS TALL. Two PANELS in the same
  * column can each independently size themselves to "the room between my edge and the nearest
