@@ -472,7 +472,14 @@ describe("NEW-3 (round 3) — a rejected commit backs off and eventually gives u
     expect(t).toBeTruthy();
     expect(t.text).toMatch(/out of date/i);
     expect(t.text).toMatch(/[Rr]eload/);
-    expect(t.action).toBe(null);                              // nothing to zoom to — it is not about one element
+    /* ⛔ ROUND EIGHT (B1482353) — this used to assert `action === null`, whose stated reason was
+     * "nothing to zoom to". That reason is still true and is preserved below: this notice is not
+     * about one element and must never offer Zoom/Show/Restore. What changed is that it now
+     * carries the ONE action its own sentence has always instructed — Reload — which the user
+     * previously had to go and find in the browser chrome. The caller makes it non-destructive by
+     * persisting the pending-edit journal first (SitePlanner.jsx's `wideNoticeAction`). */
+    expect(t.action).toBe("reload");
+    expect(["zoom", "restore"]).not.toContain(t.action);       // still not about one element
   });
 
   it("one accepted op breaks the streak (a healthy client never goes stale)", async () => {
