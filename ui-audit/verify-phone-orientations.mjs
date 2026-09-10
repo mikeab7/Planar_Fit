@@ -53,7 +53,7 @@ const CACHE_DIR = fileURLToPath(new URL("./.cache/raster", import.meta.url));
 const SITE_ID = "phone-orient-bain";
 mkdirSync(OUT_DIR, { recursive: true });
 
-const DEVICE_SPECS = [
+const ALL_DEVICE_SPECS = [
   { name: "iPhone SE", orientation: "portrait" },
   { name: "iPhone SE landscape", orientation: "landscape" },
   { name: "iPhone 15", orientation: "portrait" },
@@ -62,7 +62,7 @@ const DEVICE_SPECS = [
   { name: "iPhone 15 Pro Max landscape", orientation: "landscape" },
 ];
 
-const SURFACES = [
+const ALL_SURFACES = [
   { id: "map-landing", label: "Map landing (no project, signed out)", needsProject: false, path: () => "#/site" },
   { id: "site", label: "Site", needsProject: true, path: (id) => `#/project/${id}/site` },
   { id: "schedule", label: "Schedule", needsProject: true, path: (id) => `#/project/${id}/schedule` },
@@ -72,6 +72,18 @@ const SURFACES = [
   { id: "spreadsheet", label: "Spreadsheet", needsProject: true, path: (id) => `#/project/${id}/spreadsheet` },
   { id: "site-properties-sheet", label: "Site properties sheet (open)", needsProject: true, special: "properties-sheet", path: (id) => `#/project/${id}/site` },
 ];
+
+// Optional scoping for a targeted re-run (e.g. verifying one fix without paying for the full
+// sweep every time) — comma-separated substrings matched case-insensitively against device name /
+// surface id. Unset (the default) runs the full matrix exactly as before; this is additive only.
+function scoped(list, envVar, pick) {
+  const raw = process.env[envVar];
+  if (!raw) return list;
+  const needles = raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return list.filter((item) => needles.some((n) => pick(item).toLowerCase().includes(n)));
+}
+const DEVICE_SPECS = scoped(ALL_DEVICE_SPECS, "PLANYR_DEVICES", (d) => d.name);
+const SURFACES = scoped(ALL_SURFACES, "PLANYR_SURFACES", (s) => s.id);
 
 /* STEP 1 of the brief — establish what is actually possible here, and say so plainly. Tries a
  * real WebKit launch (materially closer to Safari than a Chromium viewport, per

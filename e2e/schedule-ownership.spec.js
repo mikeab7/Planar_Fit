@@ -343,6 +343,84 @@ test.describe("B1435888 — the breadcrumb is two independent levels, project th
   });
 });
 
+/* ── B1341184 — switching the PROJECT crumb must re-drive the SCHEDULE crumb ────────────────────
+ *
+ * Owner report: picking a project from LEVEL 1 (the plain project switcher) never changed which
+ * schedule was open — LEVEL 2 kept naming whatever schedule was last active, regardless of which
+ * project the breadcrumb now named. Root cause (navState.js's isPickShowing, see its own header):
+ * once a schedule was explicitly picked from the SCHEDULE crumb, the "deliberate pick" flag latched
+ * TRUE forever — it never checked whether the ROUTED PROJECT itself had since changed — and that
+ * flag gates the self-healing carry-in effect that is supposed to re-drive the embed toward the
+ * newly routed project's own schedule. So the very first deliberate schedule pick in a session
+ * permanently defeated the "switching projects follows a project's own schedule" mechanism.
+ *
+ * These tests exercise the SHELL side only (same idiom as the rest of this file — the embedded
+ * app's own CDN-loaded Babel doesn't run in this sandbox): assert the shell actually POSTS
+ * `planar:nav-select-by-site` for the newly routed project once the PROJECT crumb is switched, and
+ * that the SCHEDULE crumb never keeps naming a foreign project's schedule.
+ */
+test.describe("B1341184 — switching PROJECTS re-drives the SCHEDULE crumb, never leaves it naming a foreign schedule", () => {
+  const postedBySite = (page, siteId) => page.evaluate(
+    (sid) => (window.__posted || []).some((m) => m && m.type === "planar:nav-select-by-site" && m.siteId === sid),
+    siteId,
+  );
+
+  test("picking 'TAS Land Sale' under Goose Creek, then switching to Grand Port, re-posts nav-select-by-site for Grand Port", async ({ page }) => {
+    // ⛔ THE DEADLOCK ONLY ENGAGES ON A REAL, UI-DRIVEN PICK — seeding activeId directly (as
+    // openScheduleActive's other callers do) never sets `explicitPickRef`, so it can't reproduce
+    // this. Drive the actual schedule-crumb dropdown, exactly as the owner's own repro did.
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("schedule-crumb").click();
+    await page.getByTestId("schedule-owner-list").getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).click();
+    // Simulate the embed confirming the switch — this is what actually arms `pickShowing`.
+    await postSeq(page, { type: "planar:nav-state", section: "projects", activeId: 22, projects: SCHEDULES });
+    await expect(page.getByTestId("schedule-crumb")).toContainText("TAS Land Sale", { timeout: 10_000 });
+
+    await page.getByTestId("project-crumb").click();
+    await page.getByTestId(`project-row-${GRAND}`).click();
+    await expect.poll(() => page.url()).toContain(GRAND);
+
+    // ⛔ THE REGRESSION: before the fix, this never posted — `pickShowing` stayed latched true
+    // forever once TAS Land Sale was explicitly picked, permanently gating off the carry-in effect
+    // regardless of which project the breadcrumb was switched to afterward.
+    await expect.poll(() => postedBySite(page, GRAND), { timeout: 10_000 }).toBe(true);
+
+    // Once the embed reports back that it actually switched, the SCHEDULE crumb must read Grand
+    // Port's own schedule — never the one it was stuck on.
+    await postSeq(page, { type: "planar:nav-state", section: "projects", activeId: 2, projects: SCHEDULES });
+    await expect(page.getByTestId("schedule-crumb")).toContainText("Grand Port", { timeout: 10_000 });
+    await expect(page.getByTestId("schedule-crumb")).not.toContainText("TAS Land Sale");
+  });
+
+  test("switching to a project with NO schedule of its own never leaves the crumb naming another project's schedule", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 22);
+    await expect(page.getByTestId("schedule-crumb")).toContainText("TAS Land Sale", { timeout: 10_000 });
+
+    await page.getByTestId("project-crumb").click();
+    await page.getByTestId(`project-row-${ORPHAN}`).click();
+    await expect.poll(() => page.url()).toContain(ORPHAN);
+
+    // Bayou Bend owns no schedule — the empty state takes over, and the crumb must fall back to
+    // its own "no schedule selected" label rather than keep naming Goose Creek's TAS Land Sale.
+    await expect(page.getByRole("region", { name: /No schedule for/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("schedule-crumb")).not.toContainText("TAS Land Sale");
+  });
+
+  test("a deliberately-picked ORGANIZATION schedule (Pursuits) does not stop a later project switch from re-driving the carry-in", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("schedule-crumb").click();
+    await page.getByTestId("schedule-owner-list").getByTestId("schedule-owner-row").filter({ hasText: "Pursuits" }).click();
+    await postSeq(page, { type: "planar:nav-state", section: "projects", activeId: 5, projects: SCHEDULES });
+    await expect(page.getByTestId("schedule-crumb")).toContainText("Pursuits", { timeout: 10_000 });
+
+    // Switching the routed project must not stay blocked by the standing cross-cutting pick.
+    await page.getByTestId("project-crumb").click();
+    await page.getByTestId(`project-row-${GRAND}`).click();
+    await expect.poll(() => page.url()).toContain(GRAND);
+    await expect.poll(() => postedBySite(page, GRAND), { timeout: 10_000 }).toBe(true);
+  });
+});
+
 /* ── B1404352 — a schedule can be RENAMED and DELETED from its own row ───────────────────────────
  *
  * Owner's live click-test on planyr.io: he searched every element on the page for an aria-label

@@ -196,13 +196,30 @@ export function shouldShowLinkPanel({
  *
  * isPickShowing answers "is the schedule the user just picked the one actually active in the
  * embed right now" — true only once the embed's own reported activeId catches up to the pick, and
- * only on its projects section. That is what lets a cross-cutting pick override the route-derived
- * empty state without needing a second, parallel copy of the route logic. Self-clearing: once
- * activeId moves on (a later pick, or the carry-in effect re-asserting the routed site's own
- * schedule after a genuine navigation), this answers false again on its own.
- */
-export function isPickShowing(pickId, activeId, section) {
-  return pickId != null && activeId === pickId && section === "projects";
+ * only on its projects section.
+ *
+ * ⛔ B1341184 — "self-clearing: once activeId moves on… this answers false again on its own" WAS
+ * WRONG, and the gap it left was a permanent deadlock, not a rare edge case. `pickShowing` also
+ * gates the SELF-HEALING CARRY-IN EFFECT in Scheduler.jsx (`if (pickShowing) return;`) — the very
+ * effect responsible for moving `activeId` on after a genuine navigation. So once ANY schedule was
+ * explicitly picked, `pickShowing` latched true FOREVER: nothing could ever move `activeId` away
+ * from the pick again, which made `pickShowing` re-read true on every future render, which kept
+ * blocking the one effect that could have cleared it. Reproduced live: pick "TAS Land Sale" under
+ * Goose Creek, then switch the PROJECT breadcrumb to Mesa/Grand Port/Richfield — the SCHEDULE
+ * breadcrumb stays on "TAS Land Sale" regardless of which project is routed, because the carry-in
+ * effect, the empty-state gate, and the grid-mismatch gate are ALL suppressed by the stuck
+ * `pickShowing`, indefinitely.
+ *
+ * The pick was never meant to survive a genuine change of ROUTED PROJECT — B748064's own scenario
+ * is a pick that stays valid only while the user remains on the project it was made under (a
+ * cross-cutting Organization schedule picked from an empty-state project). So the pick now also
+ * carries the project it belongs to: `projectId` on a linked schedule, or the routed project at
+ * pick time for a cross-cutting one. `isPickShowing` requires that recorded project to still match
+ * the CURRENTLY ROUTED one — a real project switch invalidates the pick, which is what lets the
+ * carry-in effect run again for the newly routed project. */
+export function isPickShowing(pick, activeId, section, projectId) {
+  if (pick == null || activeId == null || pick.id !== activeId || section !== "projects") return false;
+  return pick.projectId === (projectId ?? null);
 }
 
 // Whether the carry-OUT effect may adopt the iframe's active schedule's linked site into an empty
