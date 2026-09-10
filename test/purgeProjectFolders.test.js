@@ -126,7 +126,15 @@ describe("purgeProjectFoldersFor — never purges a project's shared folders whi
     );
   });
 
-  it("purgeExpiredDeletedProjects skips the folder/Drive purge for an expired plan whose group still has live siblings", async () => {
+  /* ⛔ B1469872 (owner report, 2026-09-10) — this test used to assert the OLD, wrong behaviour:
+   * that the expired plan row itself was still hard-deleted here ("the one expired anchor plan is
+   * still hard-deleted"), with only the folder/Drive cascade held back. That was the live data-loss
+   * bug — `listDeletedProjects` already refuses to SHOW a live-group plan as deleted, but this
+   * function still DESTROYED it on schedule with no restore ever having been offered anywhere.
+   * `purgeExpiredDeletedProjects` now asks `groupStillHasLivePlans` (the SAME helper this describe
+   * block already covers for the folder cascade) before hard-deleting the ROW at all, not just
+   * before touching its shared folders — see storage.js's own header on the fix. */
+  it("purgeExpiredDeletedProjects leaves an expired plan's ROW alone (not just its folders) while its group still has live siblings", async () => {
     h.cloudCheckDeletedResult = { ok: true, exists: true, deleted: false };
     h.cloudDeletedRowsResult = {
       ok: true, supported: true,
@@ -134,12 +142,13 @@ describe("purgeProjectFoldersFor — never purges a project's shared folders whi
     };
     const r = await purgeExpiredDeletedProjects();
     expect(r.ok).toBe(true);
-    expect(r.purged).toBe(1); // the one expired anchor plan is still hard-deleted
-    expect(purgeProjectFolders).not.toHaveBeenCalled(); // but its still-live siblings' folders are untouched
+    expect(r.purged).toBe(0);   // the row itself is left soft-deleted, not destroyed
+    expect(r.skipped).toBe(1);  // — and the skip is counted, not silently dropped
+    expect(purgeProjectFolders).not.toHaveBeenCalled(); // its still-live siblings' folders are untouched too
     expect(reportClientEvent).toHaveBeenCalledWith(
-      "project-folder-purge-skipped",
+      "plan-purge-skipped-live-group",
       expect.any(String),
-      expect.objectContaining({ groupId: "smsdrvzr9gzx" }),
+      expect.objectContaining({ id: "smsdrvzr9gzx", groupId: "smsdrvzr9gzx" }),
     );
   });
 
