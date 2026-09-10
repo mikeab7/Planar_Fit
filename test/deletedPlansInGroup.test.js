@@ -46,8 +46,8 @@ describe("listDeletedPlansInGroup — the per-project plan trash", () => {
     h.cloudDeletedRowsResult = {
       ok: true, supported: true,
       rows: [
-        { id: "plan-a", group_id: "group-1", site: "Concept A", deleted_at: "2026-08-12T19:49:01.000Z" },
-        { id: "plan-b", group_id: "group-2", site: "Other project", deleted_at: "2026-08-13T00:00:00.000Z" },
+        { id: "plan-a", group_id: "group-1", site: "Concept A Project", name: "Concept A", deleted_at: "2026-08-12T19:49:01.000Z" },
+        { id: "plan-b", group_id: "group-2", site: "Other project", name: "Concept B", deleted_at: "2026-08-13T00:00:00.000Z" },
       ],
     };
     const r = await listDeletedPlansInGroup("group-1");
@@ -57,10 +57,40 @@ describe("listDeletedPlansInGroup — the per-project plan trash", () => {
     expect(r.plans[0]).toMatchObject({ id: "plan-a", name: "Concept A" });
   });
 
+  /* B1482000 (follow-on to B1469872, owner report 2026-09-10) — THE CORE REPRO: every row this
+   * returned used to read `row.site` (the PROJECT's name — "Bain", "Woods Road") before `row.name`
+   * (the PLAN's own name), so every deleted plan in a project rendered the SAME label — the one
+   * thing this list exists to tell apart. `site` here is deliberately the SAME for both rows (as
+   * it always is for two plans of one project); only `name` differs, and that's what must come
+   * back. */
+  it("names each row with its own PLAN name (`row.name`), never the PROJECT name (`row.site`)", async () => {
+    h.cloudDeletedRowsResult = {
+      ok: true, supported: true,
+      rows: [
+        { id: "bain-plan2", group_id: "group-bain", site: "Bain", name: "Concept A - Quiddity V1", deleted_at: "2026-08-12T19:49:01.000Z" },
+      ],
+    };
+    const r = await listDeletedPlansInGroup("group-bain");
+    expect(r.plans[0].name).toBe("Concept A - Quiddity V1");
+    expect(r.plans[0].name).not.toBe("Bain");
+  });
+
+  it("keeps two same-project deleted plans distinguishable — different names, same project", async () => {
+    h.cloudDeletedRowsResult = {
+      ok: true, supported: true,
+      rows: [
+        { id: "wr-1", group_id: "group-wr", site: "Woods Road", name: "Concept A", deleted_at: "2026-08-13T21:21:18.000Z" },
+        { id: "wr-2", group_id: "group-wr", site: "Woods Road", name: "Concept A PRINT", deleted_at: "2026-08-17T16:33:14.000Z" },
+      ],
+    };
+    const r = await listDeletedPlansInGroup("group-wr");
+    expect(r.plans.map((p) => p.name)).toEqual(["Concept A PRINT", "Concept A"]); // newest first
+  });
+
   it("falls back to a row's own id as its group when it carries no group_id (a fresh single-plan project's anchor)", async () => {
     h.cloudDeletedRowsResult = {
       ok: true, supported: true,
-      rows: [{ id: "solo-anchor", group_id: null, site: "Solo", deleted_at: "2026-08-12T00:00:00.000Z" }],
+      rows: [{ id: "solo-anchor", group_id: null, site: "Solo", name: "Concept A", deleted_at: "2026-08-12T00:00:00.000Z" }],
     };
     const r = await listDeletedPlansInGroup("solo-anchor");
     expect(r.plans).toHaveLength(1);
@@ -76,12 +106,23 @@ describe("listDeletedPlansInGroup — the per-project plan trash", () => {
     expect(r.plans[0].name).toBe("Untitled plan");
   });
 
+  // Even a row that still carries a `site` (project name) but no `name` of its own must fall back
+  // to "Untitled plan" — never silently borrow the project's name for the plan.
+  it("names an untitled row instead of leaving it blank, even when the row still carries a project `site`", async () => {
+    h.cloudDeletedRowsResult = {
+      ok: true, supported: true,
+      rows: [{ id: "plan-a", group_id: "group-1", site: "Bain", name: null, deleted_at: "2026-08-12T00:00:00.000Z" }],
+    };
+    const r = await listDeletedPlansInGroup("group-1");
+    expect(r.plans[0].name).toBe("Untitled plan");
+  });
+
   it("sorts most-recently-deleted first", async () => {
     h.cloudDeletedRowsResult = {
       ok: true, supported: true,
       rows: [
-        { id: "older", group_id: "group-1", site: "Older", deleted_at: "2026-08-01T00:00:00.000Z" },
-        { id: "newer", group_id: "group-1", site: "Newer", deleted_at: "2026-08-20T00:00:00.000Z" },
+        { id: "older", group_id: "group-1", site: "A Project", name: "Older", deleted_at: "2026-08-01T00:00:00.000Z" },
+        { id: "newer", group_id: "group-1", site: "A Project", name: "Newer", deleted_at: "2026-08-20T00:00:00.000Z" },
       ],
     };
     const r = await listDeletedPlansInGroup("group-1");

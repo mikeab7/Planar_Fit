@@ -464,12 +464,19 @@ export async function cloudCheckDeleted(uid, id) {
     if (live) {
       return { ok: true, exists: true, deleted: false, deletedAt: null, name: live.site || live.name || null, groupId: live.group_id || live.id };
     }
-    // Every plan row in the group is soft-deleted — the project genuinely is gone. Surface the
-    // most recently deleted row (the one whose facts a "restore this project" offer would want).
+    // Every plan row THIS QUERY found is soft-deleted — surface the most recently deleted one (the
+    // one whose facts a "restore" offer would want). `name` stays the PROJECT name (`site`) here —
+    // this branch is reached when `id` IS the group's anchor (or the row's own id, for a
+    // single-plan project), so `byGroup` above already gathered every sibling and "every plan row
+    // found" really does mean the whole project. `planName` is carried separately (the row's own
+    // `name` column) for a caller that needs to tell the two apart — see `checkProjectDeletionStatus`
+    // in storage.js, which asks a SECOND question when `id` instead named one non-anchor plan
+    // inside an otherwise-live project (B1482000, follow-on to B1469872).
     const newest = all.reduce((a, b) => ((Date.parse(b.deleted_at) || 0) > (Date.parse(a.deleted_at) || 0) ? b : a));
     return {
       ok: true, exists: true, deleted: true,
-      deletedAt: newest.deleted_at || null, name: newest.site || newest.name || null, groupId: newest.group_id || newest.id,
+      deletedAt: newest.deleted_at || null, name: newest.site || newest.name || null,
+      planName: newest.name || null, groupId: newest.group_id || newest.id,
     };
   } catch (e) {
     return { ok: false, exists: false, deleted: false, error: (e && e.message) || "deletion check threw" };
