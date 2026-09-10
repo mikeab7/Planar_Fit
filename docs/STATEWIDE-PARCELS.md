@@ -55,13 +55,13 @@
 | California (CA) | county | measured-reachable | [California Statewide Parcels Public View (CAL FIRE — CA Dept. of Forestry & Fire Protection, org ITS.CALFIRE)](https://bz1uwWPKUInZBK94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/rest/services/CA_Statewide_Parcels_Public_view/FeatureServer/0) | agol | yes (200, 456ms) | 13,138,000 | esriGeometryPolygon | parcelId=`PARCEL_APN`, owner=absent, situsAddress=`SITE_ADDR`, landArea=absent, appraisedValue=absent | lat 102% · lon 112% of state | 655ms, 2000 feat. | ✅ |
 | Colorado (CO) | county | already-wired | none found | — | — | — | — | — | — | — | ✅ (already) |
 | Connecticut (CT) | town/municipal (no functioning county government); CT OPM GIS Office aggregates via the regional Councils of Government under CGS §4d-90–92 | measured-reachable | [Connecticut State Parcel Layer 2023](https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_State_Parcel_Layer_2023/FeatureServer/0) | gov | yes (200, 215ms) | 1,247,506 | esriGeometryPolygon | parcelId=absent, owner=`Owner`, situsAddress=absent, landArea=absent, appraisedValue=absent | lat 93% · lon 97% of state | 719ms, 2000 feat. | ✅ |
-| District of Columbia (DC) | none — single consolidated city government (DC Office of Tax & Revenue) | shape-mismatch | ITSPE attribute table (arcgis.com-hosted, reachable) + Tax Lots geometry layer (maps2.dcgis.dc.gov) — real, joined by an SSL key, two services | — | — | — | — | — | — | — | — |
+| District of Columbia (DC) | none — single consolidated city government (DC Office of Tax & Revenue) | measured-reachable | [Owner Polygons / Common Ownership Layer, layer 40 (DC GIS, Property_and_Land_WebMercator)](https://maps2.dcgis.dc.gov/dcgis/rest/services/DCGIS_DATA/Property_and_Land_WebMercator/FeatureServer/40) | gov | blocked (sandbox policy) | 137,400 | esriGeometryPolygon | parcelId=absent (OWNERNAME/PREMISEADD carry identity), owner=`OWNERNAME`, situsAddress=`PREMISEADD`, landArea=`LANDAREA`, appraisedValue=`NEWTOTAL` | — | — | ✅ (Verify: live — maps2.dcgis.dc.gov) |
 | Delaware (DE) | county (3: Kent, New Castle, Sussex) | blocked-in-sandbox | [Delaware State Parcels 2.0 — without Ownership Information (FirstMap)](https://enterprise.firstmap.delaware.gov/arcgis/rest/services/PlanningCadastre/DE_StateParcels/FeatureServer/0) | gov | blocked (sandbox policy) | — | — | — | — | — | ✅ (Verify: live — enterprise.firstmap.delaware.gov) |
 | Florida (FL) | county | measured-reachable | [Florida Statewide Cadastral (FL Dept. of Revenue, Property Tax Oversight)](https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0) | gov | yes (200, 346ms) | 10,831,924 | esriGeometryPolygon | parcelId=`PARCEL_ID`, owner=absent, situsAddress=absent, landArea=`LND_SQFOOT`, appraisedValue=absent | lat 99% · lon 102% of state | ⛔ 8002ms (timed out) | ✅ |
 | Georgia (GA) | county | no-free-source | none found | — | — | — | — | — | — | — | — |
 | Hawaii (HI) | county (4 counties only; state has had zero role in valuation since a 1981 constitutional amendment) | blocked-in-sandbox | [Hawaii Statewide TMKs (State Office of Planning & Sustainable Development, ParcelsZoning MapServer layer 25)](https://geodata.hawaii.gov/arcgis/rest/services/ParcelsZoning/MapServer/25) | gov | blocked (sandbox policy) | — | — | — | — | — | ✅ (Verify: live — geodata.hawaii.gov) |
 | Iowa (IA) | county assessor generally; 8 larger cities (Cedar Rapids, Iowa City, Des Moines, etc.) run an independent City Assessor | no-free-source | none found | — | — | — | — | — | — | — | — |
-| Idaho (ID) | county | measured-reachable | [Public Idaho Parcels (Idaho Geospatial Office)](https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/0) | gov | yes (200, 304ms) | 380,988 | esriGeometryPoint | parcelId=`PARCEL_ID`, owner=`OWNER1`, situsAddress=`SITE_ADD`, landArea=`ASR_ACRES`, appraisedValue=absent | lat 66% · lon 104% of state | 228ms, 2000 feat. | — |
+| Idaho (ID) | county | measured-reachable | [Public Idaho Parcels — layer 7 "Parcels Public" (Idaho OITS)](https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7) | gov | yes (200) | 381,144 | esriGeometryPolygon | parcelId=`PARCEL_ID`, owner=`OWNER1`, situsAddress=`SITE_ADD`, landArea=`ASR_ACRES`, appraisedValue=`VAL_TOTAL` | lat 66% · lon 104% of state | 1682ms, 2000 feat. | ✅ (13 of 44 counties — see County-level section) |
 | Illinois (IL) | township assessors within most counties do the initial valuation (Cook County is the exception, assessing directly); county Supervisor of Assessments reviews/equalizes | no-free-source | none found | — | — | — | — | — | — | — | — |
 | Indiana (IN) | county assessor by default since a 2008 reform; a handful of larger townships above a population threshold retain their own elected township assessor | blocked-in-sandbox | [Parcel Boundaries of Indiana (Indiana Geographic Information Office, Data Harvest)](https://gisdata.in.gov/server/rest/services/Hosted/Parcel_Boundaries_of_Indiana_Current/FeatureServer/0) | gov | blocked (sandbox policy) | — | — | — | — | — | ✅ (Verify: live — gisdata.in.gov) |
 | Kansas (KS) | county | no-free-source | none found | — | — | — | — | — | — | — | — |
@@ -69,7 +69,7 @@
 | Louisiana (LA) | parish (64 parishes, each with an elected parish assessor — no county, no appraisal-district concept) | no-free-source | none found | — | — | — | — | — | — | — | — |
 | Massachusetts (MA) | city/town (351 cities/towns; counties have no assessing function) | measured-reachable | [Massachusetts Property Tax Parcels (MassGIS, EOTSS)](https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0) | gov | yes (200, 119ms) | 2,559,319 | esriGeometryPolygon | parcelId=`PROP_ID`, owner=`OWNER1`, situsAddress=`SITE_ADDR`, landArea=`LOT_SIZE`, appraisedValue=`LAND_VAL` | lat 98% · lon 100% of state | 5684ms, 2000 feat. | ✅ |
 | Maryland (MD) | state-run — SDAT (Dept. of Assessments & Taxation) runs 24 local offices directly; not independent county assessors | blocked-in-sandbox | [MD iMAP — Parcel Boundaries (SDAT-sourced, monthly)](https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer/0) | gov | blocked (sandbox policy) | — | — | — | — | — | ✅ (Verify: live — mdgeodata.md.gov) |
-| Maine (ME) | town/municipality (482 towns); Unorganized Territory assessed directly by Maine Revenue Services | shape-mismatch | "Maine Parcels Organized Towns" mosaic (arcgis.com-hosted, reachable, 708,382 parcels) + a separate ADB ownership/value table — real, needs a join, publisher disclaims currency | — | — | — | — | — | — | — | — |
+| Maine (ME) | town/municipality (482 towns); Unorganized Territory assessed directly by Maine Revenue Services | measured-reachable | ["Maine Parcels Organized Towns", layer 10 (the ONLY layer on this service)](https://services1.arcgis.com/RbMX0mRVOFNTdLzd/ArcGIS/rest/services/Maine_Parcels_Organized_Towns/FeatureServer/10) | agol | yes (200, 158–174ms) | 708,382 | esriGeometryPolygon | parcelId=`STATE_ID`, owner=absent, situsAddress=`PROP_LOC`, landArea=absent, appraisedValue=absent | lat 98% · lon 102% of state | 378ms, 2000 feat. | ✅ |
 | Michigan (MI) | township/city (local unit assessor); county Equalization Department only reviews aggregate classes, cannot change an individual assessment | no-free-source | none found | — | — | — | — | — | — | — | — |
 | Minnesota (MN) | county (87 counties) | measured-reachable | [Minnesota Parcels — Opt-In Open Data (MnGeo)](https://utility.arcgis.com/usrsvcs/servers/1627519e8d3f42bcb55532d48e9a61e5/rest/services/OpenParcels/plan_parcels_open/MapServer/0) | gov | yes (200, 180ms) | — | esriGeometryPolygon | parcelId=`county_pin`, owner=`owner_name`, situsAddress=absent, landArea=`acres_poly`, appraisedValue=absent | lat 3051% · lon 1162% of state | 114ms, 20000 feat. | ✅ |
 | Missouri (MO) | county | no-free-source | none found | — | — | — | — | — | — | — | — |
@@ -81,7 +81,7 @@
 | New Hampshire (NH) | town/municipal (RSA 76; NH DRA provides oversight/equalization only) | blocked-in-sandbox | [NH Parcel Mosaic — layer 1 'Parcels' (NH GRANIT / UNH)](https://nhgeodata.unh.edu/nhgeodata/rest/services/CAD/ParcelMosaic/MapServer/1) | gov | blocked (sandbox policy) | — | — | — | — | — | ✅ (Verify: live — nhgeodata.unh.edu) |
 | New Jersey (NJ) | municipal (each municipality has its own Tax Assessor) | blocked-in-sandbox | [Parcels and MOD-IV Composite of New Jersey (NJOGIS + NJ Treasury MOD-IV)](https://maps.nj.gov/arcgis/rest/services/Framework/Cadastral/MapServer/0) | gov | blocked (sandbox policy) | — | — | — | — | — | ✅ (Verify: live — maps.nj.gov) |
 | New Mexico (NM) | county | no-free-source | none found | — | — | — | — | — | — | — | — |
-| Nevada (NV) | county | no-free-source | none found | — | — | — | — | — | — | — | — |
+| Nevada (NV) | county | measured-reachable | [County_Parcels_in_Nevada (Nevada Division of Water Resources)](https://arcgis.water.nv.gov/arcgis/rest/services/BaseLayers/County_Parcels_in_Nevada/MapServer/0) | gov | blocked (sandbox policy) | 1,394,188 | esriGeometryPolygon | parcelId=`APN`, owner=absent, situsAddress=absent (`SiteCity` only), landArea=`Acres`, appraisedValue=absent | — | 5-point spread: Las Vegas 117ms · Reno 333ms · Elko 215ms · Carson City 216ms · Pahrump 114ms | ✅ (Verify: live — arcgis.water.nv.gov) |
 | New York (NY) | town/municipal (city/town assessors; NYS ORPTS provides oversight/certification) | measured-reachable | [NYS Tax Parcels Public — official ArcGIS Online mirror (NYS ITS Geospatial Services + Dept. of Taxation & Finance ORPTS, org account NYSGIS_GPO)](https://services6.arcgis.com/EbVsqZ18sv1kVJ3k/arcgis/rest/services/NYS_Tax_Parcels_Public/FeatureServer/1) | gov | yes (200, 342ms) | 3,827,530 | esriGeometryPolygon | parcelId=`MUNI_PARCEL_ID`, owner=`PRIMARY_OWNER`, situsAddress=absent, landArea=`ACRES`, appraisedValue=`FULL_MARKET_VAL` | lat 100% · lon 101% of state | 501ms, 1000 feat. | ✅ |
 | Ohio (OH) | county (elected County Auditor) | measured-reachable | [Ohio Statewide Parcels — public view (OGRIP)](https://services2.arcgis.com/MlJ0G8iWUyC7jAmu/arcgis/rest/services/OhioStatewidePacels_full_view/FeatureServer/0) | gov | yes (200, 226ms) | 6,313,610 | esriGeometryPolygon | parcelId=`LocalParcelID`, owner=absent, situsAddress=`SitusAddressAll`, landArea=`LandArea`, appraisedValue=absent | lat 92% · lon 103% of state | ⛔ 8001ms (timed out) | ✅ |
 | Oklahoma (OK) | county | no-free-source | none found | — | — | — | — | — | — | — | — |
@@ -100,7 +100,7 @@
 | West Virginia (WV) | county (55 counties) | blocked-in-sandbox | [WVParcels (WV GIS Technical Center)](https://services.wvgis.wvu.edu/arcgis/rest/services/Planning_Cadastre/WV_Parcels/MapServer/0) | gov | blocked (sandbox policy) | — | — | — | — | — | ✅ (Verify: live — services.wvgis.wvu.edu) |
 | Wyoming (WY) | county (23 counties) | measured-reachable | [Wyoming Parcels for 2026 (WY Dept. of Revenue Property Tax Division)](https://services3.arcgis.com/r0iJ85SKZ4zAzz3P/arcgis/rest/services/Wyoming_Parcels_for_2026/FeatureServer/0) | gov | yes (200, 176ms) | 373,666 | esriGeometryPolygon | parcelId=`parcelnb`, owner=`ownername1`, situsAddress=absent, landArea=absent, appraisedValue=`actualvalu` | lat 100% · lon 100% of state | 95ms | ✅ |
 
-**29 states wired** (incl. TX/CO already live): AK, AR, CA, CO, CT, DE, FL, HI, IN, MA, MD, MN, MT, NC, ND, NE, NH, NJ, NY, OH, RI, TN, TX, UT, VA, VT, WI, WV, WY.
+**32 states + DC wired** (incl. TX/CO already live): AK, AR, CA, CO, CT, DC, DE, FL, HI, IN, MA, ME, MD, MN, MT, NC, ND, NE, NH, NJ, NV, NY, OH, RI, TN, TX, UT, VA, VT, WI, WV, WY. (Idaho is wired too, but as 13 individual counties, not a statewide composite — see the County-level section.)
 
 ### ⛔ WIRED SOURCES FLAGGED BY THE NEW-1/NEW-2 SPATIAL CHECKS — look at these before trusting the row above
 
@@ -198,13 +198,13 @@ because the link test is not sound in one direction: Rhode Island's own statewid
 - **California (CA):** MEASURED FROM THIS SANDBOX (HTTP 200) and independently from the owner's own browser, 2026-09-08. 13,138,000 parcels — the largest source in counties.js, ~21% above Florida's 10.8M, which the same wiring already handles (nothing ever fetches a layer whole: the display layer is viewport-queried and gated at PARCEL_MINZOOM, and a truncated draw is reported loudly). Polygon, 21 fields: PARCEL_APN, FIPS_CODE, PARCEL_DMP_ID, COUNTYNAME, SITE_ADDR/CITY/STATE/ZIP, FullStreetAddress, Search_PARCELAPN. NO owner and NO appraised value — attribute-light, the same standing already given to Hawaii, New Hampshire and Virginia. ⛔ FOUND BY THE AGOL PASS (NEW-2), NOT BY A .gov PROBE: the prior 'no free source' finding came from searching California's own .gov GIS hosts, which this sandbox cannot reach, and never searching California's state-agency ArcGIS Online organization, which it can. That blind spot is what NEW-2 closes systematically.
 - **Colorado (CO):** Already wired (co_statewide) — Colorado Public Parcels composite, gis.colorado.gov. Not re-probed here; that host is blocked in this sandbox (as expected — production reaches it fine).
 - **Connecticut (CT):** Rich CAMA-style schema (owner/situs/value present) but no dedicated parcel-ID field surfaced on this hosted copy — only OBJECTID.
-- **District of Columbia (DC):** Real, rich data exists but is split across two services — an attribute table (ITSPE, arcgis.com-hosted, reachable) and a separate Tax Lots geometry layer (maps2.dcgis.dc.gov, blocked), joined by an SSL key. Not wired this round: the existing per-county pattern is a single layerUrl, and joining two services is real follow-up work, not a same-shape wire.
+- **District of Columbia (DC):** ⛔ RETRACTED 2026-09-10 (B1455632). The `shape-mismatch` verdict above (an ITSPE attribute table joined to a separate Tax Lots geometry layer by an SSL key) was a real finding about a DIFFERENT candidate on this same service — it did not rule out the service having a single, already-joined layer, and it does. Layer 40 ("Owner Polygons / Common Ownership Layer") carries BOTH the geometry and the richest attribute set of anything wired in this repo in ONE layer, no join needed: OWNERNAME, owner mailing address, PREMISEADD, LANDAREA, PROPTYPE, USECODE, NEWLAND/NEWIMPR/NEWTOTAL assessed values, SALEPRICE, SALEDATE, ASSESSMENT, ANNUALTAX, TAXRATE, NBHDNAME. MEASURED FROM THE OWNER'S OWN BROWSER 2026-09-10 (maps2.dcgis.dc.gov is blocked in this sandbox) — 137,400 features, 632ms. ⛔ Layer 33 ("Parcel Lots"), on the SAME service, is a trap: only 1,124 features and returns ZERO downtown — not wired.
 - **Delaware (DE):** id + acreage confirmed via Hub metadata (451,344 features); owner/situs deliberately absent from this public copy (a fuller version requires a FirstMap login). enterprise.firstmap.delaware.gov blocked in this sandbox.
 - **Florida (FL):** Best-in-class: full attribute set, 10.8M parcels, updated annually every August from all 67 counties.
 - **Georgia (GA):** Georgia GIS Clearinghouse covers 'more than 20% of counties' and is a per-county directory, not a mosaic; DOR's 'tax digest' is tabular jurisdiction totals, not parcel geometry. No state aggregation effort found.
 - **Hawaii (HI):** MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-08), not this sandbox — geodata.hawaii.gov is blocked here. Layer 25 'Statewide TMKs', polygon, 18 fields: tmk, tmk_txt, county, island, gisacres, qpub_link. No owner, no value. ⛔ Layer 0 is a GROUP LAYER with zero fields; layers 5/9/11/30 are per-county and were deliberately NOT wired — layer 25 is the statewide mosaic.
 - **Iowa (IA):** The only free statewide layer found (Iowa_Parcels_2017, reachable, id+owner present) is EXPLICITLY disclaimed by its own publisher as deprecated/frozen at Nov 2017 and 'not current' — 9 years stale. Not wired: a data-currency disqualification, not a reachability one.
-- **Idaho (ID):** Reachable with real fields, but geometry is POINT (parcel centroids), not polygon — incompatible with the app's polygon-outline click routing — and only 13 of 44 counties currently participate. Not wired: geometry-type mismatch, not a reachability problem.
+- **Idaho (ID):** ⛔ CORRECTED 2026-09-10 (B1455633). The `esriGeometryPoint` finding above was real but INCOMPLETE — it read layer 0 ("Idaho Parcels Public Centroids", point, parcel centroids) and never checked whether the SAME service published a polygon layer too. It does: layer 7, "Parcels Public", `esriGeometryPolygon`, 381,144 features, confirmed live from this sandbox. The "only 13 of 44 counties" finding stands and is NOT a defect to fix — it is why Idaho is wired as 13 individual per-county entries (`id_ada` … `id_washington`) rather than a statewide composite; wiring it as `id_statewide` would silently return zero for the other 31 counties, the same shape that produced the Nebraska defect (B1332016). See the County-level section below for the full per-county wiring.
 - **Illinois (IL):** Illinois State Geological Survey clearinghouse hosts many statewide layers but no parcel mosaic. No aggregation found — matches the township-assessed pattern the brief names.
 - **Indiana (IN):** Schema confirmed via ArcGIS item metadata XML: id + address present, owner and value fields absent from this layer entirely. gisdata.in.gov blocked in this sandbox.
 - **Kansas (KS):** RETRACTED, corrected 2026-09-08 from the owner's own browser (not this sandbox): services.kansasgis.org root has ZERO services; its folders are FIRSTNET, ORKA, Utilities, water, wimas, wizard, and ORKA — the one folder that could plausibly hold parcels — holds only KS_ORKA_Extras and sketch. No parcel mosaic exists there. This replaces the prior 'not confirmed either way' finding, which is now a confirmed no.
@@ -212,7 +212,7 @@ because the link test is not sound in one direction: Rhode Island's own statewid
 - **Louisiana (LA):** LAGIC / LSU Atlas / LA Division of Administration GIS / LA Tax Commission checked — no state-run parcel aggregation found. qpublic.net/la is a private directory of parish links, not a state service.
 - **Massachusetts (MA):** Best-in-class of the whole probe: full schema (id/owner/situs/area/value), 2.56M parcels, semi-annual refresh.
 - **Maryland (MD):** MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-08), not this sandbox — mdgeodata.md.gov is blocked here. 'Parcel Boundaries', polygon, 117 fields: ACCTID, ADDRESS, ACRES, LANDAREA, NFMTTLVL (total value). Owner NAME is absent — only owner MAILING ADDRESS (OWNADD1 etc); the app leaves owner absent rather than fabricating it from the mailing fields.
-- **Maine (ME):** A real, live 'Maine Parcels Organized Towns' mosaic exists (arcgis.com-hosted, reachable, 708,382 parcels) but requires joining a separate ADB ownership/value table by ID, and the publisher's own notice states 'there is no complete statewide parcel data layer for Maine... data for many towns is more than fifteen years old.' Not wired this round: the join isn't the existing single-layerUrl shape, and the publisher itself disclaims completeness/currency.
+- **Maine (ME):** ⛔ CORRECTED 2026-09-10 (B1455632). The `shape-mismatch` finding above read layer 0 of this service (which does need the ADB join for owner/value) and never checked layer 10, the service's ONLY OTHER layer — confirmed live from this sandbox: `esriGeometryPolygon`, 708,382 features, fields TOWN/COUNTY/STATE_ID/MAP_BK_LOT/PROP_LOC — everything the app's id/situs lookup needs, no join required. Owner and appraised value are still absent (they genuinely do live only in the un-joined ADB table) — left absent, never fabricated. **⛔ COVERAGE CAVEAT, stated plainly per the dispatch's own instruction: "Organized Towns" excludes Maine's UNORGANIZED TERRITORY — roughly HALF the state's LAND AREA (the North Woods) but almost none of its parcels (a handful of residents, no municipal government to assess them). This is NOT full statewide coverage; do not let it read as such anywhere in the app or in future docs.** The publisher's currency disclaimer ("data for many towns is more than fifteen years old") still applies to the organized-town data this layer DOES carry.
 - **Michigan (MI):** Michigan DTMB confirms a statewide parcel layer exists inside its Michigan Geographic Framework, but states outright it is for internal state use only and is not published to the public Open Data portal — a real effort, deliberately not public.
 - **Minnesota (MN):** Live-confirmed with real owner/value data on a sample feature. Coverage is OPT-IN — counties choose to participate quarterly, so completeness varies by county.
 - **Missouri (MO):** MSDIS's full open-data catalog (176 datasets, checked directly) contains no parcels/cadastral dataset; the one parcel-shaped layer found (gis.mo.gov FMDCrealEstate) is scoped to state-OWNED real estate, not general private parcels.
@@ -224,7 +224,7 @@ because the link test is not sound in one direction: Rhode Island's own statewid
 - **New Hampshire (NH):** MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-08), not this sandbox — nhgeodata.unh.edu is blocked here. ⛔ Layer 1 ('Parcels', polygon) — NOT layer 0 ('Parcel Points', POINT geometry, unusable for the app's polygon click routing). 20 fields: PID, Town, StreetAddress, DisplayId, CountyId, SLU. No owner, no value.
 - **New Jersey (NJ):** Full schema confirmed via item metadata XML (id/owner/situs/area/value all present in the field list) — but owner-name values are reported REDACTED for many records under NJ's Daniel's Law privacy statute, so the field exists without always carrying data. maps.nj.gov blocked in this sandbox.
 - **New Mexico (NM):** NM Taxation & Revenue Dept. explicitly disclaims distributing parcel data ('contact the assessor's office'); a same-named layer under the Office of the State Engineer is unverified and not listed in OSE's own public catalog. No confirmed statewide source.
-- **Nevada (NV):** A real statewide mosaic exists (NV DCNR / State Demographer) but its own ArcGIS item description states plainly it is legally restricted under NRS 250 from being downloaded, exported, or shared with the public or another government agency. Disqualified on a legal basis, independent of reachability.
+- **Nevada (NV):** The DCNR/State Demographer mosaic's NRS 250 disqualification above STANDS — that is a different, real service, and this note does not overturn it. A SEPARATE candidate exists: "County_Parcels_in_Nevada", published by the Nevada DIVISION OF WATER RESOURCES rather than the state GIS office or the demographer's org — exactly why every earlier GIS-office-targeted search missed it. No public-record restriction is stated on this item. MEASURED FROM THE OWNER'S OWN BROWSER 2026-09-09/10 (arcgis.water.nv.gov is blocked in this sandbox) — 1,394,188 features, point-identify verified at five spread points (Las Vegas 117ms, Reno 333ms, Elko 215ms, Carson City 216ms, Pahrump 114ms), all real parcels. Fields: APN, County, SiteCity, Acres, SourceDate, Website — `Website` is a per-parcel deep link to the county assessor's own record, the only wired source in this repo with that field. Clark and Washoe counties' OWN per-county layers are superseded by this statewide layer and are deliberately NOT wired separately.
 - **New York (NY):** The publicly-cited host (gisservices.its.ny.gov) is blocked in this sandbox — same as production is expected to reach it — but the SAME dataset is independently reachable via NY's own official ArcGIS Online organizational account (not a third party), so this wires the mirror rather than parking the whole state on an unreachable primary. 3,827,530 parcels, full schema, covers the 38 counties+NYC that opted in (a companion Footprint layer names which).
 - **Ohio (OH):** 6.3M parcels; owner name and appraised value are deliberately absent from this privacy-scrubbed public view (a MailAddressAll field is present as a proxy).
 - **Oklahoma (OK):** A real statewide mosaic exists (Property Records Preservation LLC for the OK Office of Geographic Information) but is explicitly published as view/WMS-only with no downloadable or queryable REST FeatureServer/MapServer found on any reachable host.
@@ -242,3 +242,110 @@ because the link test is not sound in one direction: Rhode Island's own statewid
 - **Wisconsin (WI):** Fullest field set of the whole probe (id/owner/situs/three acreage measures/five value fields), 3,574,646 parcels, hosted by the official WI DOA account, explicitly 'free for public consumption.'
 - **West Virginia (WV):** MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-08), not this sandbox — services.wvgis.wvu.edu is blocked here. B1345824 round 1 declined this state on 'the only reachable copy is a third-party rehost under a named individual's personal account' — WRONG, same mistake as Virginia: this sandbox never reached the WV GIS Technical Center's own host at all. 'WVParcels', polygon, 21 fields: CleanParcelID, FullOwnerName, OWNER1, OWNER2, FullPhysicalAddress, CALC_ACRE, COUNTY, Map, Parcel, Dist, CountyID. No appraised-value field — left absent, never zero or blank. ⛔ Layer 0 is the parcels; sibling layers on the same service are 1 (Districts) and 5 (Site Address Points).
 - **Wyoming (WY):** Full schema, 373,666 parcels, hosted directly by the state Property Tax Division's own org, annually updated.
+
+## County-level parcel endpoints (B1455633 / B1455634, 2026-09-10)
+
+This section is per-COUNTY discovery, distinct from the statewide-mosaic hunt above — no statewide
+aggregation exists for any of the states below (that is exactly why each county was probed
+individually). Wiring detail (idField/addrField/scopeWhere) lives in `counties.js`'s own comments;
+verification provenance lives in `countiesProvenance.js`'s `COUNTY_VERIFICATION`. This table records
+WHICH DISCOVERY ROUTES WERE TRIED and WHEN, per **STANDING RULE #2** — a county a route did not find
+is recorded as "not found by routes 1-2 on 2026-09-10", **never** as "no source", because several of
+these almost certainly publish parcels and a stronger search (routes 3+) would likely find them.
+
+**Discovery routes, referenced by number below:**
+1. The county's own `.gov`/self-hosted GIS search (this build environment's egress policy blocks
+   most such hosts; where blocked, the dispatch's own live-browser measurement is the record).
+2. ArcGIS Online's public search API (`www.arcgis.com/sharing/rest/search`), reachable from this
+   sandbox — the same "search the state/county's own AGOL organization" method NEW-2 (above)
+   systematized for statewide sources, applied here at county granularity.
+
+### Idaho — 13 participating counties (B1455633)
+
+All 13 ride ONE shared service, "Public Idaho Parcels" layer 7 (`services1.arcgis.com/
+CNPdEkvnGl65jCX8/.../Public_Idaho_Parcels_/FeatureServer/7`), scoped per county via `scopeWhere` on
+the `County` field. Verified live from this sandbox 2026-09-10 (route 2 — services1.arcgis.com):
+layer metadata, geometry (`esriGeometryPolygon`, NOT layer 0's `esriGeometryPoint` centroids), a
+`County` distinct-values query returning exactly these 13 names, and an `extentCoverageCheck`
+confirming the layer covers only 66% of Idaho's latitude span — consistent with 13 of 44 counties,
+not statewide. A pin in any of Idaho's other 31 counties correctly reports no source.
+
+| County | Wired key | Notes |
+|---|---|---|
+| Ada (Boise) | `id_ada` | Boise envelope query answered in 1,682ms — inside the app's 8s budget despite this being a comparatively slow service. |
+| Bear Lake | `id_bearlake` | |
+| Boise (Idaho City) | `id_boise` | Not the city of Boise, which sits in Ada County. |
+| Camas | `id_camas` | |
+| Gooding | `id_gooding` | |
+| Jerome | `id_jerome` | |
+| Lincoln | `id_lincoln` | |
+| Minidoka | `id_minidoka` | |
+| Nez Perce (Lewiston) | `id_nezperce` | |
+| Oneida | `id_oneida` | |
+| Teton (Driggs) | `id_teton` | |
+| Valley (Cascade/McCall) | `id_valley` | |
+| Washington (Weiser) | `id_washington` | Not Washington County, TX. |
+
+**Not participating** (all 31 remaining Idaho counties, incl. Coeur d'Alene/Kootenai, Sandpoint/Bonner,
+Idaho Falls/Bonneville, Twin Falls) — confirmed live: the dispatch's own point queries at Coeur
+d'Alene, Sandpoint, Idaho Falls and Twin Falls all returned ZERO (3.8–5.1s), the same wrong-scope
+signature the county-level `County` distinct-values query independently confirms. A pin in any of
+these must report no source, never a silent zero drawn as if the layer covered them.
+
+### 19 measured county endpoints across 12 states (B1455634)
+
+| State | County | Wired key | Route | Date | Notes |
+|---|---|---|---|---|---|
+| IL | Cook | `il_cook` | 1 (dispatch browser; host blocked here) | 2026-09-10 | |
+| IL | DuPage | `il_dupage` | 1 (dispatch browser; host blocked here) | 2026-09-10 | |
+| IL | Will | `il_will` | 1 (dispatch browser; host blocked here) | 2026-09-10 | |
+| PA | Allegheny | `pa_allegheny` | 1 (dispatch browser; host blocked here) | 2026-09-10 | |
+| PA | Northampton | `pa_northampton` | 1 + re-verified route 2 (sandbox-reachable) | 2026-09-10 | 122,379 parcels, 57 fields. |
+| PA | Cumberland | `pa_cumberland` | 1 + re-verified route 2 (sandbox-reachable) | 2026-09-10 | 104,637 parcels, 41 fields. |
+| GA | Gwinnett | `ga_gwinnett` | 1 + re-verified route 2 (sandbox-reachable) | 2026-09-10 | 309,658 parcels; independently corroborated in this doc's own "unlinked hits" table above. |
+| MI | Oakland | `mi_oakland` | 1 (dispatch; URL truncated) + route 2 to re-resolve the exact layer | 2026-09-10 | Resolved to "OC Tax Parcels (Public)", layer 1 of `EnterpriseOpenParcelDataMapService` — owner OCAGOAdmin, the county's own org. |
+| KS | Wyandotte | `ks_wyandotte` | 1 + re-verified route 2 (sandbox-reachable) | 2026-09-10 | 68,993 parcels; attribute-light by design (id + acreage only). |
+| MO | Platte | `mo_platte` | 1 + re-verified route 2 (sandbox-reachable) | 2026-09-10 | 45,149 parcels; attribute-light by design. |
+| OR | Multnomah | `or_multnomah` | 1 + re-verified route 2 (sandbox-reachable) | 2026-09-10 | 284,349 parcels, 49 fields. |
+| OR | Clackamas | `or_clackamas` | 1 (dispatch URL was a different, wrong layer) + route 2 to find the real one | 2026-09-10 | ⛔ TRAP: the dispatch's URL (`Taxlot_additional_records_public/FeatureServer/2`) is a supplementary POINT table, 3,470 features, published by the regional OregonMetro.RLIS account. Resolved to Clackamas County's OWN GIS org (CCGISWebService) "Taxlots" service instead — 163,927 polygon parcels, verified live. |
+| KY | Jefferson (Louisville) | `ky_jefferson` | 1 (dispatch browser; host blocked here) | 2026-09-10 | LOJIC (Louisville/Jefferson County Information Consortium). |
+| MS | DeSoto | `ms_desoto` | 1 + re-verified route 2 (sandbox-reachable) | 2026-09-10 | 80,950 parcels, 55 fields. |
+| MS | Hinds | **excluded — see below** | 1 + 2 (both confirm it is NOT wireable) | 2026-09-10 | |
+| OK | Oklahoma | `ok_oklahoma` | 1 + re-verified route 2 (sandbox-reachable) | 2026-09-10 | 337,029 parcels, 45 fields. |
+| OK | Tulsa | `ok_tulsa` | 1 (dispatch; URL truncated) + route 2 to re-resolve | 2026-09-10 | Resolved to the Tulsa County Assessor's own service (`asps0305.tulsacounty.org`, owner `tca_cperkins`) — the dispatch's cited `services3.arcgis.com` host under this same account carries only ancillary tables, not the main parcel layer. |
+| LA | East Baton Rouge | `la_eastbatonrouge` | 1 + re-verified route 2 (sandbox-reachable) | 2026-09-10 | 205,820 parcels, 13 fields. |
+| AL | Jefferson (Birmingham) | `al_jefferson` | 1 (dispatch browser; host blocked here) | 2026-09-10 | |
+
+### Excluded — measured, answered, and deliberately NOT wired
+
+Recorded here so nobody re-adds them without re-deriving the same answer:
+
+- **Hinds County, MS.** The dispatch's URL (`services8.arcgis.com/dXKNoCSoFLBzx24o/.../Parcels/
+  FeatureServer/0`) is published by a Jackson State University STUDENT account
+  (`J00937011@students.jsums.edu_OneJSU`), not the county, and holds only 188 features against a
+  county of ~250,000 people — objectively too small to be the real parcel fabric, confirmed live
+  from this sandbox (route 2). The county's own real candidates — `gisweb.co.hinds.ms.us` (owner
+  `kadcock`, "Hinds County Parcel Map") and `gis.cmpdd.org` (Central Mississippi Planning &
+  Development District, "Parcels - MS - Hinds County") — are both blocked from this sandbox (route
+  1 could not confirm them) and are recorded as **candidates, not shipped** — the same
+  evidence bar as every other `candidateUrl` in `countiesProvenance.js`.
+- **Fulton County, GA** — `Tax_Parcels2018`: a 2018 snapshot, stale.
+- **Greenville County, SC** — `Parcel_Sizes_2018_WFL1`: 2018 AND a derived-acreage layer, not the
+  parcel layer itself.
+- **Maricopa County, AZ** — `parcels_maricnty_2007`: a 2007 snapshot. Maricopa publishes six
+  vintages side by side (2004/2007/2008/2011/2019/2021); a search returned 2007 on one run and 2019
+  on another, arbitrarily — needs a deliberate current-vintage pick, not a re-run of the same search.
+- **Lehigh County, PA** — `ATestParcel`: named as a test service by its own publisher.
+- **Wayne County, MI** — `Detroit_MP_Parcel_Authoritative`: this is the CITY OF DETROIT, not Wayne
+  County — the same wrong-scope failure mode as the Nebraska defect (answers correctly downtown,
+  silently returns nothing across most of the county).
+
+### Not found by routes 1-2 on 2026-09-10 — recorded as such, NEVER as "no source"
+
+Sixteen counties returned nothing after both discovery routes above. Several almost certainly
+publish parcels through a route this pass didn't try (Johnson County KS and Chatham County GA both
+run large public GIS portals) — a stronger search is future work, not a closed question:
+
+Winnebago (IL) · Luzerne (PA) · Henry (GA) · Chatham (GA) · Bartow (GA) · Pinal (AZ) · Ingham (MI) ·
+Johnson (KS) · Jackson (MO) · Clay (MO) · Spartanburg (SC) · Washington (OR) · Boone (KY) · Polk (IA) ·
+Orleans (LA) · Bernalillo (NM).

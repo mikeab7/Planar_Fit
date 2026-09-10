@@ -95,6 +95,101 @@ export const COUNTY_VERIFICATION = {
     candidateProvenance: "ArcGIS Online item 'Parcels - Boulder County' (owner gis@mhfd); host maps.bouldercounty.org still blocked by build-environment egress policy — RE-PROBED 2026-08-03 (NEW-1) and still pending. Boulder County's OWN reachable AGOL copy ('Boulder County Parcel / Address Look Up', services3.arcgis.com/0jWpHMuhmHsukKE3, native SR EPSG:2876, 259 ms) carries only 30,803 features and its own Updated column reads 2/14/2020 — a partial six-year-old extract would show a lot as MISSING rather than as slow, so it is recorded and not shipped.",
     verifiedOn: null,
   },
+
+  /* ═══ B1455633 — Idaho's 13 participating counties, all one shared service (layer 7 of
+   * "Public Idaho Parcels", not layer 0 — see counties.js's own header for the point/polygon
+   * trap). All 13 verified together: live from THIS sandbox (services1.arcgis.com is reachable),
+   * layer metadata read, a `County` distinct-values query returned exactly these 13 names, and
+   * `extentCoverageCheck` confirmed the layer is NOT statewide (lat 66% / lon 104% of Idaho's
+   * bbox) — consistent with only 13 of 44 counties participating. A Boise envelope query answered
+   * in 1,682ms, inside the app's 8s budget. → V1055873. */
+  id_ada: { verifiedOn: "2026-09-10" },
+  id_bearlake: { verifiedOn: "2026-09-10" },
+  id_boise: { verifiedOn: "2026-09-10" },
+  id_camas: { verifiedOn: "2026-09-10" },
+  id_gooding: { verifiedOn: "2026-09-10" },
+  id_jerome: { verifiedOn: "2026-09-10" },
+  id_lincoln: { verifiedOn: "2026-09-10" },
+  id_minidoka: { verifiedOn: "2026-09-10" },
+  id_nezperce: { verifiedOn: "2026-09-10" },
+  id_oneida: { verifiedOn: "2026-09-10" },
+  id_teton: { verifiedOn: "2026-09-10" },
+  id_valley: { verifiedOn: "2026-09-10" },
+  id_washington: { verifiedOn: "2026-09-10" },
+
+  /* ═══ B1455634 — 21-item dispatch batch (19 distinct county rows; Hinds MS is documented, not
+   * wired — see counties.js). Ten sit on `*.arcgis.com` and were re-verified live from THIS
+   * sandbox on 2026-09-10 (feature count, geometry, a real 3-point spread query); eight sit on
+   * county-owned/regional custom hosts this build environment's egress policy blocks, verified
+   * only via the dispatch's own live-browser measurement (or, for Oakland/Tulsa, re-RESOLVED to
+   * the correct layer via the allowlisted arcgis.com search API even though the origin host
+   * itself could not be re-probed). → V1055874. */
+  il_cook: {
+    verifiedNote: "gis.cookcountyil.gov is blocked by this build environment's egress policy. Endpoint, feature count (95ms/23 populated fields) and county provenance are from the dispatch's own live-browser measurement, 2026-09-10 — not independently re-probed here.",
+  },
+  il_dupage: {
+    verifiedNote: "gis.dupageco.org is blocked by this build environment's egress policy. Endpoint, feature count (275ms/66 populated fields) and county provenance are from the dispatch's own live-browser measurement, 2026-09-10 — not independently re-probed here.",
+  },
+  il_will: {
+    verifiedNote: "gis.willcountyillinois.com is blocked by this build environment's egress policy. Endpoint, feature count (329ms/18 populated fields) and county provenance are from the dispatch's own live-browser measurement, 2026-09-10 — not independently re-probed here.",
+  },
+  pa_allegheny: {
+    verifiedNote: "gisdata.alleghenycounty.us is blocked by this build environment's egress policy. Endpoint, feature count (469ms/8 populated fields) and county provenance are from the dispatch's own live-browser measurement, 2026-09-10 — not independently re-probed here.",
+  },
+  pa_northampton: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "VERIFIED LIVE from this sandbox (services2.arcgis.com is reachable): 122,379 parcel polygons, count query 275ms, 57 populated fields, esriGeometryPolygon.",
+  },
+  pa_cumberland: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "VERIFIED LIVE from this sandbox: 104,637 parcel polygons, count query 496ms, 41 populated fields, esriGeometryPolygon.",
+  },
+  ga_gwinnett: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "VERIFIED LIVE from this sandbox: 309,658 parcel polygons, count query 304ms, 16 populated fields, esriGeometryPolygon. Also independently surfaced in this repo's own statewide-parcel probe (docs/STATEWIDE-PARCELS.md, 'unlinked hits' table) as a real county publisher, corroborating the county provenance.",
+  },
+  mi_oakland: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "The dispatch's own URL was truncated ('gisservices.oakgov.com... my capture truncated it'). Re-RESOLVED via the allowlisted arcgis.com search API (which reaches ArcGIS Online item metadata even for a host whose ORIGIN is blocked): item 'OC Tax Parcels (Public)', owner OCAGOAdmin (Oakland County's own GIS org) — layer 1 of EnterpriseOpenParcelDataMapService, distinct from layer 0 (Site Address), layer 2 (Right of Way) and layer 3 (Parcel History) on the same service; that resolution IS a live confirmation of the correct endpoint, even though gisservices.oakgov.com's own /query cannot be independently re-probed from this sandbox (blocked by egress policy). PIN/SITESTREETADDRESS come from the dispatch's own live-browser measurement (540ms/12 populated fields).",
+  },
+  ks_wyandotte: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "VERIFIED LIVE from this sandbox: 68,993 parcel polygons, count query 289ms, esriGeometryPolygon. Attribute-light by design (id + acreage only, no owner/situs/value on this layer).",
+  },
+  mo_platte: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "VERIFIED LIVE from this sandbox: 45,149 parcel polygons, count query 744ms, esriGeometryPolygon. Attribute-light by design (id/legal/acreage/zoning only).",
+  },
+  or_multnomah: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "VERIFIED LIVE from this sandbox: 284,349 parcel polygons, count query 585ms, 49 populated fields, esriGeometryPolygon. A 3-point spread (Portland/Gresham/Troutdale) all answered with real parcels.",
+  },
+  or_clackamas: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "⛔ CORRECTS the dispatch's URL. The originally-measured endpoint (services2.arcgis.com/…/Taxlot_additional_records_public/FeatureServer/2, 'Taxlot Additional Records Public', OregonMetro.RLIS org) is a supplementary POINT table — esriGeometryPoint, only 3,470 features — not the county's parcel fabric; confirmed live from this sandbox. RESOLVED to Clackamas County's OWN GIS org account (CCGISWebService, not the regional OregonMetro.RLIS account): 'Taxlots', 163,927 parcel polygons, esriGeometryPolygon, VERIFIED LIVE from this sandbox, count query returned real data at all 3 of a spread across the county (Oregon City 3,775ms/2000 feat., Milwaukie 2,581ms/2000 feat., Molalla 973ms/707 feat.).",
+  },
+  ky_jefferson: {
+    verifiedNote: "gis.lojic.org is blocked by this build environment's egress policy. Endpoint, feature count (272ms/7 populated fields) and county provenance (LOJIC — the Louisville/Jefferson County Information Consortium's own open-data service) are from the dispatch's own live-browser measurement, 2026-09-10 — not independently re-probed here.",
+  },
+  ms_desoto: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "VERIFIED LIVE from this sandbox: 80,950 parcel polygons, count query 830ms, 55 populated fields, esriGeometryPolygon. A 3-point spread (Southaven/Hernando/Horn Lake) all answered with real parcels.",
+  },
+  ok_oklahoma: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "VERIFIED LIVE from this sandbox: 337,029 parcel polygons, count query 149ms, 45 populated fields, esriGeometryPolygon. A 3-point spread (OKC/Edmond/Midwest City) all answered with real parcels.",
+  },
+  ok_tulsa: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "The dispatch's own URL was truncated ('Tulsa County parcels on services3.arcgis.com... my capture truncated it'). No services3.arcgis.com item matching '122 populated fields, densest in the set' was found under the Tulsa County Assessor's own AGOL account (tca_cperkins) — that account's services3.arcgis.com items are ancillary tables (Building Permit, Historical Parcels, Records), not the main parcel layer. RESOLVED to the assessor's own primary service instead: asps0305.tulsacounty.org, owner tca_cperkins (Tulsa County Assessor's own org, confirmed via that account's public AGOL item listing, including a 'Tulsa County Assessor' Hub site under the same account) — that resolution IS a live confirmation of the correct endpoint, even though the host itself is blocked by this build environment's egress policy and its field list could not be independently re-read here.",
+  },
+  la_eastbatonrouge: {
+    verifiedOn: "2026-09-10",
+    verifiedNote: "VERIFIED LIVE from this sandbox: 205,820 parcel polygons, count query 563ms, 13 populated fields, esriGeometryPolygon. A 3-point spread (Baton Rouge/Zachary/Baker) all answered with real parcels.",
+  },
+  al_jefferson: {
+    verifiedNote: "jccgis.jccal.org is blocked by this build environment's egress policy. Endpoint, feature count (652ms/68 populated fields) and county provenance are from the dispatch's own live-browser measurement, 2026-09-10 — not independently re-probed here.",
+  },
 };
 
 /* Convenience accessors so callers never reach into the shape directly. */

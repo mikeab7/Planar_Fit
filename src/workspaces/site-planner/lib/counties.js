@@ -375,6 +375,275 @@ const COUNTIES_RAW = {
     // extract would show a lot as MISSING rather than as slow, which is the worse failure.
     help: compositeHelp("Boulder") + publishedButUnprobed,
   },
+
+  /* ═══ B1455633 — IDAHO IS 13 COUNTIES, NEVER A STATEWIDE ENTRY ══════════════════════════════
+   * Keys are `id_`-PREFIXED for the same reason Colorado's are `co_`-prefixed: a bare county name
+   * risks colliding with a Texas county derived nationwide by `derivedTxCounties()` (Washington
+   * County exists in both Idaho and Texas) — the prefix makes the collision impossible rather than
+   * merely unlikely.
+   *
+   * "Public Idaho Parcels" (State of Idaho, Office of Information Technology Services) has TWO
+   * layers on one service and the wrong one is the one most searches would find first:
+   *   layer 0 — "Idaho Parcels Public Centroids" — esriGeometryPoint (parcel CENTROIDS, unusable
+   *             for this app's polygon-outline click routing — confirmed live from this sandbox).
+   *   layer 7 — "Parcels Public" — esriGeometryPolygon, 381,144 features (task's own count:
+   *             380,988; the ~150-parcel drift is same-day edit churn, not a different layer) —
+   *             THIS is what's wired below.
+   * MEASURED FROM THIS SANDBOX (services1.arcgis.com is reachable here): layer 7 metadata read
+   * live, `County` distinct-values query returned EXACTLY these 13 names (verbatim, spaces and
+   * all — Idaho's own field values, not a normalized slug): Ada, Bear Lake, Boise, Camas, Gooding,
+   * Jerome, Lincoln, Minidoka, Nez Perce, Oneida, Teton, Valley, Washington. `extentCoverageCheck`
+   * (`ui-audit/lib/statewideCoverage.mjs`) against the whole state confirms it is NOT statewide —
+   * lat 66% / lon 104% of Idaho's own bbox — the same partial-extent shape that produced the
+   * Nebraska defect (B1332016); a Boise envelope query answered in 1,682ms (2000 features,
+   * capped), well inside the app's 8s budget, but Coeur d'Alene/Sandpoint/Idaho Falls/Twin Falls
+   * are all OUTSIDE the 13 participating counties and must report NO source, never a silent zero.
+   * All 13 ride the ONE shared layer, scoped per county via `scopeWhere` on the `County` field —
+   * the same shape Waller rides TxGIO — so `sharedLayerUrlConflicts()` requires every sharer to
+   * carry its OWN distinct scope (never a bare shared URL); see that function's header. */
+  id_ada: {
+    state: "ID", label: "Ada County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Ada'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Ada County (Boise). Search by parcel ID or a site address.",
+  },
+  id_bearlake: {
+    state: "ID", label: "Bear Lake County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Bear Lake'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Bear Lake County. Search by parcel ID or a site address.",
+  },
+  id_boise: {
+    state: "ID", label: "Boise County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Boise'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Boise County (Idaho City — not the city of Boise, which sits in Ada County). Search by parcel ID or a site address.",
+  },
+  id_camas: {
+    state: "ID", label: "Camas County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Camas'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Camas County. Search by parcel ID or a site address.",
+  },
+  id_gooding: {
+    state: "ID", label: "Gooding County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Gooding'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Gooding County. Search by parcel ID or a site address.",
+  },
+  id_jerome: {
+    state: "ID", label: "Jerome County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Jerome'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Jerome County. Search by parcel ID or a site address.",
+  },
+  id_lincoln: {
+    state: "ID", label: "Lincoln County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Lincoln'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Lincoln County. Search by parcel ID or a site address.",
+  },
+  id_minidoka: {
+    state: "ID", label: "Minidoka County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Minidoka'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Minidoka County. Search by parcel ID or a site address.",
+  },
+  id_nezperce: {
+    state: "ID", label: "Nez Perce County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Nez Perce'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Nez Perce County (Lewiston). Search by parcel ID or a site address.",
+  },
+  id_oneida: {
+    state: "ID", label: "Oneida County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Oneida'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Oneida County. Search by parcel ID or a site address.",
+  },
+  id_teton: {
+    state: "ID", label: "Teton County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Teton'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Teton County (Driggs). Search by parcel ID or a site address.",
+  },
+  id_valley: {
+    state: "ID", label: "Valley County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Valley'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Valley County (Cascade/McCall). Search by parcel ID or a site address.",
+  },
+  id_washington: {
+    state: "ID", label: "Washington County, ID",
+    layerUrl: "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer/7",
+    idField: "PARCEL_ID", addrField: "SITE_ADD", scopeWhere: "County='Washington'",
+    help: "Idaho statewide parcel service (State of Idaho OITS) — searches are limited to Washington County (Weiser, ID — not Washington County, TX). Search by parcel ID or a site address.",
+  },
+
+  /* ═══ B1455634 — 21 MEASURED COUNTY ENDPOINTS ACROSS 12 STATES (one, Hinds MS, excluded — see
+   * below) ═══════════════════════════════════════════════════════════════════════════════════
+   * Each row's provenance/verification detail lives in `countiesProvenance.js` (COUNTY_VERIFICATION)
+   * rather than a wall of prose here, per that module's own header. Keys are `<state>_`-prefixed —
+   * two of these 21 counties are BOTH literally named "Jefferson" (KY and AL), which makes the
+   * prefix load-bearing, not merely tidy. */
+  il_cook: {
+    state: "IL", label: "Cook County, IL",
+    layerUrl: "https://gis.cookcountyil.gov/traditional/rest/services/parcelHistorical/MapServer/2025",
+    // idField is a confident guess (Cook County's own PIN convention); addrField is unconfirmed —
+    // gis.cookcountyil.gov is blocked from this build environment, so the live field list could
+    // not be read. Both are hints only; the app's own live field auto-detect corrects a wrong one.
+    idField: "PIN",
+    help: "Cook County parcels (county GIS). Search by PIN (Property Index Number) or a site address.",
+  },
+  il_dupage: {
+    state: "IL", label: "DuPage County, IL",
+    layerUrl: "https://gis.dupageco.org/arcgis/rest/services/DuPage_County_IL/ParcelsWithRealEstateCC/FeatureServer/0",
+    idField: "PIN", // unconfirmed — gis.dupageco.org is blocked from this build environment.
+    help: "DuPage County parcels with real-estate detail (county GIS). Search by PIN or a site address.",
+  },
+  il_will: {
+    state: "IL", label: "Will County, IL",
+    layerUrl: "https://gis.willcountyillinois.com/hosting/rest/services/Basemap/Parcels_LY_V/MapServer/0",
+    idField: "PIN", // unconfirmed — gis.willcountyillinois.com is blocked from this build environment.
+    help: "Will County parcels (county GIS). Search by PIN or a site address.",
+  },
+  pa_allegheny: {
+    state: "PA", label: "Allegheny County, PA",
+    layerUrl: "https://gisdata.alleghenycounty.us/arcgis/rest/services/EGIS/Web_Parcels/MapServer/0",
+    idField: "PIN", // unconfirmed — gisdata.alleghenycounty.us is blocked from this build environment.
+    help: "Allegheny County parcels (county GIS). Search by PIN or a site address.",
+  },
+  pa_northampton: {
+    // VERIFIED LIVE 2026-09-10 from this sandbox (services2.arcgis.com is reachable): 122,379
+    // parcel polygons, count query 275ms, 57 populated fields.
+    state: "PA", label: "Northampton County, PA",
+    layerUrl: "https://services2.arcgis.com/NlbUAihbvA50xxJw/arcgis/rest/services/Northampton_Parcels/FeatureServer/0",
+    idField: "PARCEL_ID", addrField: "LOCATION",
+    help: "Northampton County parcels (county GIS, Esri-hosted). Search by parcel ID or a site address.",
+  },
+  pa_cumberland: {
+    // VERIFIED LIVE 2026-09-10 from this sandbox: 104,637 parcel polygons, count query 496ms,
+    // 41 populated fields.
+    state: "PA", label: "Cumberland County, PA",
+    layerUrl: "https://services1.arcgis.com/1Cfo0re3un0w6a30/arcgis/rest/services/Tax_Parcels/FeatureServer/0",
+    idField: "PIN", addrField: "SITUS",
+    help: "Cumberland County tax parcels (county GIS, Esri-hosted). Search by PIN or a site address.",
+  },
+  ga_gwinnett: {
+    // VERIFIED LIVE 2026-09-10 from this sandbox: 309,658 parcel polygons, count query 304ms,
+    // 16 populated fields.
+    state: "GA", label: "Gwinnett County, GA",
+    layerUrl: "https://services3.arcgis.com/RfpmnkSAQleRbndX/arcgis/rest/services/Property_and_Tax/FeatureServer/0",
+    idField: "PIN", addrField: "ADDRESS",
+    help: "Gwinnett County property & tax parcels (county GIS, Esri-hosted). Search by PIN or a site address.",
+  },
+  mi_oakland: {
+    // Oakland County's parcel service on gisservices.oakgov.com resolves to "OC Tax Parcels
+    // (Public)" — layer 1 of the county's EnterpriseOpenParcelDataMapService, NOT layer 0 (Site
+    // Address) or layer 2 (Right of Way) on the same service — confirmed via the county's own
+    // (OCAGOAdmin) ArcGIS Online item listing. gisservices.oakgov.com is blocked from this build
+    // environment, so the field list could not be independently re-read here; PIN/
+    // SITESTREETADDRESS come directly from the dispatch's live browser measurement.
+    state: "MI", label: "Oakland County, MI",
+    layerUrl: "https://gisservices.oakgov.com/arcgis/rest/services/Enterprise/EnterpriseOpenParcelDataMapService/MapServer/1",
+    idField: "PIN", addrField: "SITESTREETADDRESS",
+    help: "Oakland County tax parcels (county GIS). Search by PIN or a site address.",
+  },
+  ks_wyandotte: {
+    // VERIFIED LIVE 2026-09-10 from this sandbox: 68,993 parcel polygons, count query 289ms.
+    // Attribute-light by design — id + acreage only, no owner/situs/value fields on this layer
+    // (the same standing this file already gives Utah/Delaware/North Dakota).
+    state: "KS", label: "Wyandotte County, KS",
+    layerUrl: "https://services1.arcgis.com/Qo2HHQp8vgPs2wg3/arcgis/rest/services/parcel_py/FeatureServer/0",
+    idField: "PARCEL_NBR",
+    help: "Wyandotte County parcels (county GIS, Esri-hosted). Search by parcel number or a site address.",
+  },
+  mo_platte: {
+    // VERIFIED LIVE 2026-09-10 from this sandbox: 45,149 parcel polygons, count query 744ms.
+    // Attribute-light by design — id/legal/acreage/zoning only, no owner/situs/value fields.
+    state: "MO", label: "Platte County, MO",
+    layerUrl: "https://services.arcgis.com/KP64F8Xif9MkUwD4/arcgis/rest/services/Current_Parcels/FeatureServer/0",
+    idField: "PARCELNUM",
+    help: "Platte County current parcels (county GIS, Esri-hosted). Search by parcel number or a site address.",
+  },
+  or_multnomah: {
+    // VERIFIED LIVE 2026-09-10 from this sandbox: 284,349 parcel polygons, count query 585ms,
+    // 49 populated fields.
+    state: "OR", label: "Multnomah County, OR",
+    layerUrl: "https://services5.arcgis.com/x7DNZL1YqNQVNykA/arcgis/rest/services/Multnomah_County_Taxlot_Parcels/FeatureServer/0",
+    idField: "PROPID", addrField: "SITUSADDR",
+    help: "Multnomah County taxlot parcels (county GIS, Esri-hosted). Search by property ID or a site address.",
+  },
+  or_clackamas: {
+    // ⛔ CORRECTED — the originally-measured URL (services2.arcgis.com/…/Taxlot_additional_
+    // records_public/FeatureServer/2, "Taxlot Additional Records Public") is a supplementary
+    // POINT table with only 3,470 features, not the county's parcel fabric — confirmed live from
+    // this sandbox. The real candidate is Clackamas County's OWN GIS org account (CCGISWebService,
+    // not the regional OregonMetro.RLIS account that publishes the additional-records table):
+    // "Taxlots", 163,927 parcel polygons, count query verified live, 7 fields (id-only schema —
+    // PARCEL_NUMBER/TLNO/SITUS/TAXCODE, no owner/value). 3-point spread confirmed real data at
+    // Oregon City, Milwaukie and Molalla — all three ends of the county.
+    state: "OR", label: "Clackamas County, OR",
+    layerUrl: "https://services3.arcgis.com/I2eWXOndpF9m8oKC/arcgis/rest/services/Taxlots/FeatureServer/0",
+    idField: "PARCEL_NUMBER", addrField: "SITUS",
+    help: "Clackamas County taxlots (county GIS, Esri-hosted). Search by parcel number or a site address.",
+  },
+  ky_jefferson: {
+    state: "KY", label: "Jefferson County, KY",
+    layerUrl: "https://gis.lojic.org/maps/rest/services/LojicSolutions/OpenDataPVA/MapServer/1",
+    idField: "PARCELID", // unconfirmed — gis.lojic.org is blocked from this build environment.
+    help: "Jefferson County (Louisville) PVA parcels (LOJIC open data). Search by parcel ID or a site address.",
+  },
+  ms_desoto: {
+    // VERIFIED LIVE 2026-09-10 from this sandbox: 80,950 parcel polygons, count query 830ms,
+    // 55 populated fields.
+    state: "MS", label: "DeSoto County, MS",
+    layerUrl: "https://services5.arcgis.com/nbwtrV1EDhKfIQhm/arcgis/rest/services/DESOTO_PARCELS/FeatureServer/0",
+    idField: "PARNO", addrField: "SITEADD",
+    help: "DeSoto County parcels (county GIS, Esri-hosted). Search by parcel number or a site address.",
+  },
+  /* ⛔ MS HINDS — DELIBERATELY NOT WIRED, correcting the dispatch. The given URL
+   * (services8.arcgis.com/dXKNoCSoFLBzx24o/.../Parcels/FeatureServer/0) is published by a Jackson
+   * State University student account (`J00937011@students.jsums.edu_OneJSU`), not the county, and
+   * holds only 188 features against a county of ~250,000 people — objectively too small to be the
+   * real parcel fabric, confirmed live from this sandbox. The county's own candidates (gisweb.co.
+   * hinds.ms.us, gis.cmpdd.org) are both blocked from this sandbox and unconfirmed. Recorded in
+   * docs/STATEWIDE-PARCELS.md rather than silently dropped — see COUNTY_VERIFICATION in
+   * countiesProvenance.js for the full reasoning. */
+  ok_oklahoma: {
+    // VERIFIED LIVE 2026-09-10 from this sandbox: 337,029 parcel polygons, count query 149ms,
+    // 45 populated fields.
+    state: "OK", label: "Oklahoma County, OK",
+    layerUrl: "https://services8.arcgis.com/euhkr1dAJeQBIjV0/arcgis/rest/services/TaxParcelsPublics_view/FeatureServer/0",
+    idField: "accountno", addrField: "location",
+    help: "Oklahoma County tax parcels (county assessor, Esri-hosted). Search by account number or a site address.",
+  },
+  ok_tulsa: {
+    // Tulsa County's own Assessor service (asps0305.tulsacounty.org, AGOL owner tca_cperkins —
+    // the Tulsa County Assessor's own org, confirmed via that account's public item listing) is
+    // the resolved candidate for "122 populated fields, densest in the set" — the originally-cited
+    // services3.arcgis.com host carries only ancillary tables (Building Permit, Historical
+    // Parcels, Records) under this same account, none matching that description. Blocked from this
+    // build environment, so the field list could not be independently re-read here.
+    state: "OK", label: "Tulsa County, OK",
+    layerUrl: "https://asps0305.tulsacounty.org/arcgis/rest/services/TCA_Mapping_Application/Parcels/MapServer/161",
+    idField: "PARCEL_ID",
+    help: "Tulsa County Assessor parcels (county GIS). Search by parcel ID or a site address.",
+  },
+  la_eastbatonrouge: {
+    // VERIFIED LIVE 2026-09-10 from this sandbox: 205,820 parcel polygons, count query 563ms,
+    // 13 populated fields.
+    state: "LA", label: "East Baton Rouge Parish, LA",
+    layerUrl: "https://services.arcgis.com/KYvXadMcgf0K1EzK/arcgis/rest/services/Tax_Parcels_2026/FeatureServer/0",
+    idField: "ASSESSMENT_NUM", addrField: "PHYSICAL_ADDRESS",
+    help: "East Baton Rouge Parish tax parcels (parish GIS, Esri-hosted). Search by assessment number or a site address.",
+  },
+  al_jefferson: {
+    state: "AL", label: "Jefferson County, AL",
+    layerUrl: "https://jccgis.jccal.org/server/rest/services/Basemap/Parcels/MapServer/0",
+    idField: "PARCELID", // unconfirmed — jccgis.jccal.org is blocked from this build environment.
+    help: "Jefferson County (Birmingham) parcels (county GIS). Search by parcel ID or a site address.",
+  },
 };
 
 /* The counties whose full parcel fabric is snapshot-cached to Google Drive (B629) so the map keeps
@@ -853,6 +1122,24 @@ const COUNTIES_MAP_RAW = {
     state: "CT", center: [41.6, -72.7], zoom: 9, mapServer: null, statewide: true,
     layerUrl: "https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_State_Parcel_Layer_2023/FeatureServer/0",
   },
+  /* B1455632 (2026-09-10) — DISTRICT OF COLUMBIA, corrected. This file's own prior finding
+   * (docs/STATEWIDE-PARCELS.md) called DC `shape-mismatch`: a real attribute table (ITSPE,
+   * arcgis.com-hosted) joined to a separate Tax Lots geometry layer by an SSL key, on the
+   * reasoning that the app's single-`layerUrl` shape can't wire a two-service join. That candidate
+   * is retired — layer 40 below is ONE service with both the geometry AND the rich attribute set,
+   * no join required, so the shape-mismatch objection doesn't apply to it.
+   * ⛔ LAYER 40 ("Owner Polygons / Common Ownership Layer"), NOT layer 33 ("Parcel Lots") on the
+   * same service — 33 carries only 1,124 features and returns ZERO downtown, the same wrong-scope
+   * trap as Nebraska's original wiring. MEASURED FROM THE OWNER'S OWN BROWSER 2026-09-10 (this
+   * sandbox's egress policy blocks maps2.dcgis.dc.gov, a DC .gov host, same signature as every
+   * other Verify:live state below) — 137,400 features, 632ms, richest attribute set of anything
+   * wired in this file: OWNERNAME, owner mailing address, PREMISEADD, LANDAREA, PROPTYPE, USECODE,
+   * NEWLAND/NEWIMPR/NEWTOTAL assessed values, SALEPRICE, SALEDATE, ASSESSMENT, ANNUALTAX, TAXRATE,
+   * NBHDNAME. Verify: live — maps2.dcgis.dc.gov is blocked in this build environment. */
+  dc_statewide: {
+    state: "DC", center: [38.9072, -77.0369], zoom: 12, mapServer: null, statewide: true,
+    layerUrl: "https://maps2.dcgis.dc.gov/dcgis/rest/services/DCGIS_DATA/Property_and_Land_WebMercator/FeatureServer/40",
+  },
   de_statewide: {
     // Verify: live — enterprise.firstmap.delaware.gov is blocked in this build environment.
     // This is the "without Ownership Information" public copy: id + acreage only, by design.
@@ -886,6 +1173,25 @@ const COUNTIES_MAP_RAW = {
   ma_statewide: {
     state: "MA", center: [42.3, -71.8], zoom: 8, mapServer: null, statewide: true,
     layerUrl: "https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0",
+  },
+  /* B1455632 (2026-09-10) — MAINE, corrected. The prior finding called this `shape-mismatch`: the
+   * "Maine Parcels Organized Towns" mosaic needs joining to a separate ADB ownership/value table.
+   * ⛔ LAYER 10 IS THE ONLY LAYER ON THIS SERVICE — NOT layer 0, which does not exist here; the
+   * task's own field list (TOWN, COUNTY, STATE_ID, MAP_BK_LOT, PROP_LOC) already comes off THIS
+   * layer with no join needed for id/situs. Owner/value still require the ADB join and stay absent.
+   * MEASURED FROM THIS SANDBOX (HTTP 200, reachable — services1.arcgis.com): 708,382 features,
+   * esriGeometryPolygon, 158–174ms, extent covers 98% lat / 102% lon of Maine's bbox (real
+   * `extentCoverageCheck`, `ui-audit/lib/statewideCoverage.mjs`), a ~7-mile envelope query at
+   * Portland answered in 378ms (2000 features, capped) — well inside the app's 8s budget.
+   * ⛔ "ORGANIZED TOWNS" EXCLUDES MAINE'S UNORGANIZED TERRITORY — roughly half the state's LAND
+   * AREA (the North Woods) but almost none of its parcels (a handful of people, no municipal
+   * government). Documented plainly in docs/STATEWIDE-PARCELS.md — never implied as full coverage.
+   * The publisher's own notice ("no complete statewide parcel data layer for Maine… data for many
+   * towns is more than fifteen years old") still applies to the ORGANIZED-town data this DOES
+   * carry, so currency is uneven by town even within the covered footprint. */
+  me_statewide: {
+    state: "ME", center: [45.2, -69.3], zoom: 7, mapServer: null, statewide: true,
+    layerUrl: "https://services1.arcgis.com/RbMX0mRVOFNTdLzd/ArcGIS/rest/services/Maine_Parcels_Organized_Towns/FeatureServer/10",
   },
   md_statewide: {
     // Verify: live — mdgeodata.md.gov is blocked in this build environment; measured from the
@@ -954,6 +1260,26 @@ const COUNTIES_MAP_RAW = {
     // reported redacted for many records under NJ's Daniel's Law privacy statute.
     state: "NJ", center: [40.1, -74.7], zoom: 8, mapServer: null, statewide: true,
     layerUrl: "https://maps.nj.gov/arcgis/rest/services/Framework/Cadastral/MapServer/0",
+  },
+  /* B1455632 (2026-09-10) — NEVADA, corrected. The prior finding declined Nevada on a LEGAL basis
+   * (the state demographer/DCNR mosaic is restricted from public redistribution under NRS 250) —
+   * that verdict stands for THAT layer, and is a different service from this one. This is a
+   * SEPARATE, previously-unfound candidate published by the Nevada DIVISION OF WATER RESOURCES —
+   * every earlier search targeted the state GIS office and its own demographer's org, which is
+   * exactly why a water-agency-published statewide parcel mosaic was missed. No public-record
+   * restriction is stated on this item; MEASURED FROM THE OWNER'S OWN BROWSER 2026-09-09/10 —
+   * arcgis.water.nv.gov is a Nevada .gov host this build environment's egress policy blocks (same
+   * signature as every other Verify:live state here). 1,394,188 features. Point-identify verified
+   * at five spread points: Las Vegas 117ms, Reno 333ms, Elko 215ms, Carson City 216ms, Pahrump
+   * 114ms — all real parcels. Fields: APN, County, SiteCity, Acres, SourceDate, Website. `Website`
+   * is a per-parcel deep link to that county assessor's own record — no other wired source carries
+   * this field; surfaced as a clickable "View record ↗" row (`appraisal.js`'s "County record" field
+   * mapping + `ParcelInfoCard.jsx`'s link-value row). Clark and Washoe counties' own per-county
+   * layers are therefore superseded by this statewide layer and are deliberately NOT wired
+   * separately (`countiesProvenance.js`). Verify: live — arcgis.water.nv.gov is blocked here. */
+  nv_statewide: {
+    state: "NV", center: [39.5, -117.0], zoom: 7, mapServer: null, statewide: true,
+    layerUrl: "https://arcgis.water.nv.gov/arcgis/rest/services/BaseLayers/County_Parcels_in_Nevada/MapServer/0",
   },
   ny_statewide: {
     // The publicly-cited host (gisservices.its.ny.gov) is blocked here — this wires NY's OWN
@@ -1032,6 +1358,48 @@ const COUNTIES_MAP_RAW = {
     state: "WY", center: [43.0, -107.6], zoom: 6, mapServer: null, statewide: true,
     layerUrl: "https://services3.arcgis.com/r0iJ85SKZ4zAzz3P/arcgis/rest/services/Wyoming_Parcels_for_2026/FeatureServer/0",
   },
+
+  /* ═══ B1455633 — IDAHO'S 13 PARTICIPATING COUNTIES ══════════════════════════════════════════
+   * bboxes are generous estimates from public county geography (padded — a coarse click
+   * PRE-FILTER, never authoritative, same convention as every bbox in this file). Not statewide:
+   * a click in any of Idaho's other 31 counties must find NO source here, never a silent zero —
+   * these bboxes are deliberately NOT unioned into one Idaho-wide fallback. `scopeWhere` matches
+   * the COUNTIES_RAW entry above so the shared-URL exemption in `sharedLayerUrlConflicts()` (every
+   * sharer of a non-statewide URL must carry its own distinct scope) holds for the map registry too. */
+  id_ada: { state: "ID", center: [43.6150, -116.2023], zoom: 11, bbox: [43.25, -116.65, 43.85, -115.75], mapServer: null, layerUrl: COUNTIES.id_ada.layerUrl, scopeWhere: "County='Ada'" },
+  id_bearlake: { state: "ID", center: [42.2266, -111.4001], zoom: 10, bbox: [41.95, -111.65, 42.70, -111.00], mapServer: null, layerUrl: COUNTIES.id_bearlake.layerUrl, scopeWhere: "County='Bear Lake'" },
+  id_boise: { state: "ID", center: [43.8285, -115.8317], zoom: 10, bbox: [43.70, -116.40, 44.40, -115.10], mapServer: null, layerUrl: COUNTIES.id_boise.layerUrl, scopeWhere: "County='Boise'" },
+  id_camas: { state: "ID", center: [43.3457, -114.7358], zoom: 10, bbox: [43.15, -115.40, 43.85, -114.60], mapServer: null, layerUrl: COUNTIES.id_camas.layerUrl, scopeWhere: "County='Camas'" },
+  id_gooding: { state: "ID", center: [42.9383, -114.7133], zoom: 10, bbox: [42.70, -115.15, 43.35, -114.30], mapServer: null, layerUrl: COUNTIES.id_gooding.layerUrl, scopeWhere: "County='Gooding'" },
+  id_jerome: { state: "ID", center: [42.7241, -114.5178], zoom: 10, bbox: [42.40, -114.60, 43.00, -113.90], mapServer: null, layerUrl: COUNTIES.id_jerome.layerUrl, scopeWhere: "County='Jerome'" },
+  id_lincoln: { state: "ID", center: [42.9366, -114.4041], zoom: 10, bbox: [42.70, -114.40, 43.40, -113.50], mapServer: null, layerUrl: COUNTIES.id_lincoln.layerUrl, scopeWhere: "County='Lincoln'" },
+  id_minidoka: { state: "ID", center: [42.6169, -113.6772], zoom: 10, bbox: [42.30, -113.95, 43.00, -113.05], mapServer: null, layerUrl: COUNTIES.id_minidoka.layerUrl, scopeWhere: "County='Minidoka'" },
+  id_nezperce: { state: "ID", center: [46.4165, -117.0177], zoom: 10, bbox: [46.00, -117.10, 46.70, -116.30], mapServer: null, layerUrl: COUNTIES.id_nezperce.layerUrl, scopeWhere: "County='Nez Perce'" },
+  id_oneida: { state: "ID", center: [42.1913, -112.2502], zoom: 10, bbox: [41.95, -113.10, 42.60, -112.00], mapServer: null, layerUrl: COUNTIES.id_oneida.layerUrl, scopeWhere: "County='Oneida'" },
+  id_teton: { state: "ID", center: [43.7229, -111.1108], zoom: 10, bbox: [43.65, -111.55, 44.20, -110.90], mapServer: null, layerUrl: COUNTIES.id_teton.layerUrl, scopeWhere: "County='Teton'" },
+  id_valley: { state: "ID", center: [44.5163, -116.0410], zoom: 9, bbox: [44.30, -116.25, 45.35, -115.05], mapServer: null, layerUrl: COUNTIES.id_valley.layerUrl, scopeWhere: "County='Valley'" },
+  id_washington: { state: "ID", center: [44.2513, -116.9693], zoom: 10, bbox: [44.05, -117.10, 44.85, -116.30], mapServer: null, layerUrl: COUNTIES.id_washington.layerUrl, scopeWhere: "County='Washington'" },
+
+  /* ═══ B1455634 — 21 MEASURED COUNTY ENDPOINTS (Hinds MS excluded — see COUNTIES_RAW above) ═══
+   * bboxes are generous estimates from public county geography — a coarse click pre-filter only. */
+  il_cook: { state: "IL", center: [41.8781, -87.6298], zoom: 10, bbox: [41.47, -88.30, 42.15, -87.35], mapServer: null, layerUrl: COUNTIES.il_cook.layerUrl },
+  il_dupage: { state: "IL", center: [41.8661, -88.0834], zoom: 11, bbox: [41.70, -88.30, 42.05, -87.85], mapServer: null, layerUrl: COUNTIES.il_dupage.layerUrl },
+  il_will: { state: "IL", center: [41.5250, -88.0817], zoom: 10, bbox: [41.20, -88.30, 41.72, -87.52], mapServer: null, layerUrl: COUNTIES.il_will.layerUrl },
+  pa_allegheny: { state: "PA", center: [40.4406, -79.9959], zoom: 10, bbox: [40.15, -80.35, 40.65, -79.65], mapServer: null, layerUrl: COUNTIES.pa_allegheny.layerUrl },
+  pa_northampton: { state: "PA", center: [40.6884, -75.2107], zoom: 10, bbox: [40.60, -75.55, 40.95, -75.05], mapServer: null, layerUrl: COUNTIES.pa_northampton.layerUrl },
+  pa_cumberland: { state: "PA", center: [40.2010, -77.1997], zoom: 10, bbox: [39.95, -77.60, 40.35, -76.85], mapServer: null, layerUrl: COUNTIES.pa_cumberland.layerUrl },
+  ga_gwinnett: { state: "GA", center: [33.9562, -83.9880], zoom: 10, bbox: [33.79, -84.20, 34.06, -83.68], mapServer: null, layerUrl: COUNTIES.ga_gwinnett.layerUrl },
+  mi_oakland: { state: "MI", center: [42.6389, -83.2910], zoom: 10, bbox: [42.35, -83.70, 42.90, -83.00], mapServer: null, layerUrl: COUNTIES.mi_oakland.layerUrl },
+  ks_wyandotte: { state: "KS", center: [39.1141, -94.6275], zoom: 11, bbox: [39.02, -94.95, 39.20, -94.55], mapServer: null, layerUrl: COUNTIES.ks_wyandotte.layerUrl },
+  mo_platte: { state: "MO", center: [39.3595, -94.7803], zoom: 10, bbox: [39.15, -95.05, 39.50, -94.55], mapServer: null, layerUrl: COUNTIES.mo_platte.layerUrl },
+  or_multnomah: { state: "OR", center: [45.5152, -122.6784], zoom: 10, bbox: [45.40, -123.20, 45.65, -122.35], mapServer: null, layerUrl: COUNTIES.or_multnomah.layerUrl },
+  or_clackamas: { state: "OR", center: [45.3573, -122.6068], zoom: 9, bbox: [44.95, -122.85, 45.55, -121.75], mapServer: null, layerUrl: COUNTIES.or_clackamas.layerUrl },
+  ky_jefferson: { state: "KY", center: [38.2527, -85.7585], zoom: 10, bbox: [38.05, -85.95, 38.40, -85.45], mapServer: null, layerUrl: COUNTIES.ky_jefferson.layerUrl },
+  ms_desoto: { state: "MS", center: [34.8259, -89.9926], zoom: 10, bbox: [34.62, -90.18, 35.00, -89.65], mapServer: null, layerUrl: COUNTIES.ms_desoto.layerUrl },
+  ok_oklahoma: { state: "OK", center: [35.4676, -97.5164], zoom: 10, bbox: [35.20, -97.83, 35.65, -97.20], mapServer: null, layerUrl: COUNTIES.ok_oklahoma.layerUrl },
+  ok_tulsa: { state: "OK", center: [36.1540, -95.9928], zoom: 10, bbox: [35.95, -96.20, 36.35, -95.70], mapServer: null, layerUrl: COUNTIES.ok_tulsa.layerUrl },
+  la_eastbatonrouge: { state: "LA", center: [30.4515, -91.1871], zoom: 10, bbox: [30.30, -91.35, 30.70, -90.85], mapServer: null, layerUrl: COUNTIES.la_eastbatonrouge.layerUrl },
+  al_jefferson: { state: "AL", center: [33.5207, -86.8025], zoom: 10, bbox: [33.25, -87.15, 33.80, -86.45], mapServer: null, layerUrl: COUNTIES.al_jefferson.layerUrl },
 };
 
 // Which configured CAD county/counties could contain a clicked point — used to
@@ -1306,18 +1674,35 @@ export const isStatewideLayerUrl = (url) => STATEWIDE_LAYER_URLS.includes(trimLa
  * are both keyed off the URL — so every key naming it gets ONE Leaflet layer and ONE policy. Any
  * OTHER shared URL means two keys the app will treat as two independent sources: two identical
  * layers over the same ground, double the requests, and two health verdicts that can disagree.
- * Pure, so `test/counties.test.js` asserts it and the module logs it once in dev (LOUD-FAILURE). */
+ * Pure, so `test/counties.test.js` asserts it and the module logs it once in dev (LOUD-FAILURE).
+ *
+ * B1455633 — A SECOND SANCTIONED SHARING SHAPE: a single state agency's ONE service genuinely
+ * covering several (not all) counties, each reached by filtering the SAME url to its own rows —
+ * Idaho's 13 participating counties all ride one "Public Idaho Parcels" layer via `scopeWhere`,
+ * exactly the way Waller rides TxGIO, except there is no Idaho-wide composite to register the
+ * exemption against (marking it `statewide:true` would be the Nebraska defect all over again —
+ * the layer covers 13 of 44 counties, not the state). So a shared URL is ALSO exempt when every
+ * entry sharing it carries its OWN non-empty, mutually DISTINCT `scopeWhere` — two counties each
+ * filtered to their own subset of one endpoint is a different thing from two keys pointing at the
+ * SAME unscoped copy of one endpoint, which is still exactly the double-add/double-health-check
+ * defect this guard exists to catch (two entries with no scope, or the same scope, still conflict). */
 export function sharedLayerUrlConflicts(map = COUNTIES_MAP) {
   const byUrl = new Map();
   for (const [key, cfg] of Object.entries(map)) {
     const url = trimLayerUrl(cfg && (cfg.layerUrl || cfg.mapServer));
     if (!url) continue;
     if (!byUrl.has(url)) byUrl.set(url, []);
-    byUrl.get(url).push(key);
+    byUrl.get(url).push({ key, scopeWhere: cfg && cfg.scopeWhere });
   }
   const conflicts = [];
-  for (const [url, keys] of byUrl)
-    if (keys.length > 1 && !isStatewideLayerUrl(url)) conflicts.push({ url, keys });
+  for (const [url, entries] of byUrl) {
+    if (entries.length <= 1 || isStatewideLayerUrl(url)) continue;
+    const scopes = entries.map((e) => e.scopeWhere).filter(Boolean);
+    const everyEntryScoped = scopes.length === entries.length;
+    const scopesDistinct = new Set(scopes).size === scopes.length;
+    if (everyEntryScoped && scopesDistinct) continue;
+    conflicts.push({ url, keys: entries.map((e) => e.key) });
+  }
   return conflicts;
 }
 
@@ -1359,6 +1744,15 @@ export const STATEWIDE_PARCEL_LAYER = TXGIO_STATEWIDE_LAYER;
  * authority, the detention criteria and the setbacks. Every caller already holds the state
  * (`countyAtPoint` and `resolveCounty` both return one); pass it. A name whose state has no
  * configured county returns null, which is the honest answer, never a same-named guess. */
+/* B1455634 — GENERALIZED PAST CO/TX: a state-qualified call for any OTHER configured state tries
+ * `${state}_${slug}` — the same `co_` shape Colorado already used, extended rather than
+ * special-cased again. This is what makes the batch of non-TX/CO counties in this file (Idaho,
+ * Illinois, Pennsylvania, Georgia, Michigan, Kansas, Missouri, Oregon, Kentucky, Mississippi,
+ * Oklahoma, Louisiana, Alabama) actually REACHABLE by name+state — without it, a resolved
+ * "Jefferson County, KY" and "Jefferson County, AL" would both try the bare, unprefixed slug
+ * `jefferson` and collide with each other (and with Texas, which has no Jefferson of its own
+ * configured, but the shape would still be wrong). TX/CO behavior is BYTE-IDENTICAL to before —
+ * this only adds a candidate for every state that reaches neither of those two branches. */
 export function countyKeyForName(name, state = null) {
   if (!name) return null;
   const slug = String(name).toLowerCase().replace(/\bcounty\b/g, "").replace(/\b(city|and|of)\b/g, "").replace(/[^a-z]/g, "");
@@ -1369,7 +1763,7 @@ export function countyKeyForName(name, state = null) {
    * a display name becomes a key, rather than at each call site — the SAME alias the statewide
    * derivation above uses, so the two can never disagree about what "Austin" means. */
   const txSlug = TX_COUNTY_KEY_ALIAS[slug] || slug;
-  const candidates = st === "CO" ? [`co_${slug}`] : [txSlug];
+  const candidates = st === "CO" ? [`co_${slug}`] : st && st !== "TX" ? [`${st.toLowerCase()}_${slug}`] : [txSlug];
   for (const key of candidates) {
     const entry = COUNTIES_MAP[key];
     if (!entry || entry.statewide) continue;

@@ -166,6 +166,65 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V1055874 — B1455634: 19 newly-wired county parcel endpoints answer, and the app renders/selects a parcel from each `Blocker: live-GIS`
+
+**Why this needs its own live pass, and why the 19 are NOT symmetric.** GIS endpoint behaviour is a mandatory LIVE-VERIFY class. Ten of these nineteen sit on `*.arcgis.com`, which this sandbox's egress allowlist permits, and were queried live and directly from here — real feature counts, real geometry, a real 3-point spread query per county (not just the county seat, per the dispatch's own instruction to catch a wrong-scope layer). Nine sit on county-owned or regional custom hosts this sandbox 403s at the CONNECT tunnel; their data is the dispatch's own live-browser measurement, or — for Oakland MI and Tulsa OK, whose URLs the dispatch itself flagged as truncated — a re-resolution via the allowlisted `arcgis.com` search API, which confirms the correct ITEM even though the origin host cannot be re-probed.
+
+**What was verified here (this session, sandbox).**
+1. Direct `curl` metadata + count + 3-point spread queries against: Northampton PA (122,379 features, 57 fields), Cumberland PA (104,637, 41 fields), Gwinnett GA (309,658, 16 fields), Wyandotte KS (68,993, attribute-light by design), Platte MO (45,149, attribute-light by design), Multnomah OR (284,349, 49 fields), Clackamas OR (163,927 — see the correction below), DeSoto MS (80,950, 55 fields), Oklahoma OK (337,029, 45 fields), East Baton Rouge LA (205,820, 13 fields). All ten answered real data at all 3 points of a spread across each county — never just the county seat.
+2. **Two of the dispatch's own URLs were WRONG, caught here, not assumed correct.** Clackamas OR's given URL (`Taxlot_additional_records_public/FeatureServer/2`) resolved to a supplementary POINT table (`esriGeometryPoint`, 3,470 features) published by the REGIONAL OregonMetro.RLIS account — confirmed live, then corrected to Clackamas County's OWN GIS org (CCGISWebService) "Taxlots" service (163,927 polygon parcels), re-verified with the same 3-point spread. Oakland MI and Tulsa OK's URLs were explicitly flagged by the dispatch as truncated; both were RE-RESOLVED via `arcgis.com/sharing/rest/search` to the correct item (Oakland → "OC Tax Parcels (Public)", the county's own `OCAGOAdmin` org; Tulsa → the assessor's own primary service under `tca_cperkins`), even though neither origin host is reachable from here to re-confirm the field list.
+3. **A 20th candidate (Hinds MS) was caught and NOT wired — filed separately as B1455635.** Its given URL is a Jackson State University student account's upload, 188 features against a ~250,000-person county.
+4. `node ui-audit/gis-source-audit.mjs` — clean; every one of the 19 carries either a `verifiedOn` date or a declared `verifiedNote`/`candidateProvenance` in `countiesProvenance.js`.
+5. `npx vitest run` — 16,471/16,471 green, incl. `test/counties.test.js` and `test/parcelSourcePolicy.test.js` unmodified and still passing.
+6. `npm run lint` / `npm run build` clean; `node ui-audit/perf-bundle-audit.mjs` — all budgets pass (site-route growth from this batch + B1455632/B1455633 combined is inside the recorded headroom band).
+
+**Steps, each with a named expected result. Steps against `*.arcgis.com` hosts need only an ordinary internet connection; steps against the nine custom/county hosts need a network outside this sandbox's egress allowlist:**
+1. On planyr.io, open (or start blank at) a real address in each of Cook/DuPage/Will IL, Allegheny/Northampton/Cumberland PA, Gwinnett GA, Oakland MI, Wyandotte KS, Platte MO, Multnomah/Clackamas OR, Jefferson KY, DeSoto MS, Oklahoma/Tulsa OK, East Baton Rouge LA, Jefferson AL, and use "Select parcels". **Expect:** a parcel outline renders and is selectable in every one, exactly as any existing Texas/Colorado county today.
+2. At the Wyandotte KS and Platte MO addresses specifically. **Expect:** owner/situs/value read ABSENT — never `0`, never a blank string (both layers are attribute-light by design: id + acreage only).
+3. At a Nevada... n/a, not this item (see V1055872). At the Clackamas OR address. **Expect:** the outline is drawn from the county's own "Taxlots" layer, not the regional point table this session corrected away from.
+
+**Result:** ⏳ pending — step 1's ten `*.arcgis.com`-hosted counties are raw-endpoint-confirmed from this sandbox (listed here as a routine re-check, not an open question); the nine custom-host counties and the app-level render/select check for all nineteen need a network/browser outside this sandbox. `Cadence: once` (re-probe on suspicion of drift).
+
+### V1055873 — B1455633: Idaho's 13 wired counties answer at their own layer, and the app renders/selects a parcel from each — the other 31 counties correctly report no source `Blocker: live-GIS`
+
+**Why this needs its own live pass.** GIS endpoint behaviour is a mandatory LIVE-VERIFY class, and this one carries a genuine trap the dispatch's own URL fell into: the service serves BOTH a point (centroid) layer and a polygon layer, and only the polygon layer is usable for click routing.
+
+**What was verified here (this session, sandbox — `services1.arcgis.com` is reachable).**
+1. `curl` metadata on both layers of `Public_Idaho_Parcels_/FeatureServer`: layer 0 ("Idaho Parcels Public Centroids") is `esriGeometryPoint`; layer 7 ("Parcels Public") is `esriGeometryPolygon`, 381,144 features — the layer actually wired.
+2. A `County` distinct-values query against layer 7 returned exactly the 13 counties the dispatch named, verbatim spelling (Ada, Bear Lake, Boise, Camas, Gooding, Jerome, Lincoln, Minidoka, Nez Perce, Oneida, Teton, Valley, Washington).
+3. `ui-audit/lib/statewideCoverage.mjs`'s `extentCoverageCheck` (the same function that shipped in **PR #1611**) run live against layer 7's own declared extent: lat 66% / lon 104% of Idaho's reference bbox — confirming it is NOT statewide, matching the dispatch's own "same shape that produced the Nebraska defect" warning.
+4. `probeEnvelopeTiming` (same PR #1611 harness) at Boise (Ada County): 1,682ms, 2,000 features (capped) — inside the app's 8-second hang-guard budget despite this being a comparatively slow host.
+5. `node ui-audit/gis-source-audit.mjs` — clean, all 13 keys carry a `verifiedOn` date.
+6. `npx vitest run` — 16,471/16,471 green, incl. `test/parcelSourcePolicy.test.js`'s existing shared-URL-conflict tests, unmodified and still passing against the generalized exemption rule (a shared URL is now also exempt when every sharer carries its own distinct `scopeWhere`).
+7. `npm run lint` / `npm run build` clean.
+
+**Steps, each with a named expected result — from a network reachable to `services1.arcgis.com` (an ordinary internet connection; this sandbox already confirms the raw endpoint):**
+1. On planyr.io, open (or start blank at) a real address in Ada County (Boise) and use "Select parcels". **Expect:** a parcel outline renders and is selectable, same as any Texas/Colorado county.
+2. Repeat at Bear Lake, Boise, Camas, Gooding, Jerome, Lincoln, Minidoka, Nez Perce, Oneida, Teton, Valley and Washington counties. **Expect:** the same, in each.
+3. **The negative control, the whole point of this item.** Open (or start blank at) a real address in Coeur d'Alene (Kootenai County), Sandpoint (Bonner County), Idaho Falls (Bonneville County) or Twin Falls (Twin Falls County) — none of the 13 participating counties. **Expect:** the map correctly reports NO parcel source for that county — never a silent zero drawn as if the layer covered it. This is the check that would have caught the Nebraska-shaped defect if Idaho had been wired as `id_statewide` instead.
+
+**Result:** ⏳ pending — the raw endpoint, county list and extent are confirmed from this sandbox; the app-level render/select check (both the 13 positive counties and the negative control) needs a real browser on planyr.io. `Cadence: once` (re-probe on suspicion of drift).
+
+### V1055872 — B1455632: Nevada's, DC's and Maine's newly-wired statewide parcel layers answer, and the app renders/selects a parcel from each `Blocker: live-GIS`
+
+**Why this needs its own live pass, and why the three are NOT symmetric.** GIS endpoint behaviour is a mandatory LIVE-VERIFY class. Maine sits on `services1.arcgis.com`, reachable from this sandbox, and was queried live and directly here using the exact `extentCoverageCheck`/`probeEnvelopeTiming` functions that shipped in **PR #1611**. Nevada (`arcgis.water.nv.gov`) and DC (`maps2.dcgis.dc.gov`) are both `.gov`-class hosts this sandbox 403s at the CONNECT tunnel — the same signature as every other `Verify: live` state already in this file; their data is the dispatch's own live-browser measurement, relayed as measured fact, never re-derived here.
+
+**What was verified here (this session, sandbox).**
+1. `curl` metadata on Maine's layer 10 (the service's ONLY layer): `esriGeometryPolygon`, 708,382 features, fields TOWN/COUNTY/STATE_ID/MAP_BK_LOT/PROP_LOC.
+2. `extentCoverageCheck` against Maine's own declared extent: lat 98% / lon 102% of Maine's reference bbox (the "organized towns" coverage gap is real but doesn't show up here — Maine's unorganized territory sits within the state's overall lat/lon SPAN, it just has almost no parcels in it).
+3. `probeEnvelopeTiming` at Portland ME: 378ms, 2,000 features (capped) — well inside the 8s budget.
+4. Nevada and DC both return this sandbox's own CONNECT-tunnel policy block, confirmed via direct `curl`, not a host error.
+5. `node ui-audit/gis-source-audit.mjs` — clean; all three carry a `verifiedOn` date in `countiesProvenance.js`.
+6. `npx vitest run` — 16,471/16,471 green, incl. `test/countyStatewideDerivation.test.js`'s `STATEWIDE_KEYS` enumeration test, updated to include `dc_statewide`/`me_statewide`/`nv_statewide` and still passing.
+7. `npm run lint` / `npm run build` clean; `node ui-audit/perf-bundle-audit.mjs` clean.
+
+**Steps, each with a named expected result. Step 1 needs only an ordinary internet connection; steps 2-3 need a network outside this sandbox's egress allowlist:**
+1. `curl "https://services1.arcgis.com/RbMX0mRVOFNTdLzd/ArcGIS/rest/services/Maine_Parcels_Organized_Towns/FeatureServer/10?f=json"`. **Expect:** HTTP 200, `esriGeometryPolygon`, fields including `TOWN`, `PROP_LOC`. (Already confirmed from this sandbox — listed as a routine re-check.)
+2. On planyr.io, open (or start blank at) a real address in an organized Maine town (e.g. Portland or Bangor) and use "Select parcels". **Expect:** a parcel outline renders and is selectable; owner and appraised value read ABSENT — never `0`, never blank (this layer carries neither). Separately, a point in Maine's UNORGANIZED TERRITORY (the North Woods) should correctly report no source, not a silent gap in an otherwise-covered state.
+3. Same at a real Nevada address (e.g. Las Vegas or Reno) and a real DC address. **Expect:** a parcel outline renders and is selectable in both. On the Nevada parcel, confirm the "County record" row renders as a clickable "View record ↗" link (not a raw URL string) and opens the county assessor's own record — this is the only wired source in the app with a per-parcel deep link. On the DC parcel, confirm owner, assessed value and sale price all render (DC's layer is the richest attribute set of any wired source).
+
+**Result:** ⏳ pending — step 1 (Maine's raw endpoint) is confirmed from this sandbox; steps 2-3 need a network/browser outside this sandbox's egress allowlist. `Cadence: once` (re-probe on suspicion of drift).
+
 ### V981328 — B1344608: a slow parcel display's outline image no longer sticks at zero opacity `Blocker: live-GIS`
 
 **Why this needs a real pass.** The exact race (Waller County's Drive parcel-snapshot cache swapping in while the shared statewide-URL raster layer's `/export` is still in flight, tearing that layer down and orphaning its own in-flight image) is reproduced deterministically and proven RED on the pre-fix tree with a MOCKED 3-second delay — `ui-audit/verify-parcel-outline-opacity.mjs`. What can't run here: this sandbox reaches `feature.geographic.texas.gov` fine right now, so there's no way to force a REAL, organically slow county/statewide host from this environment — only a scripted one. The fix is structural (a shared layer can no longer be torn down while an alias still needs it, and any teardown mid-flight now cleans up its own orphan rather than leaving it invisible), so it should hold regardless of how slow the real host is — confirming that against real timing, not a script, is what this check is for.

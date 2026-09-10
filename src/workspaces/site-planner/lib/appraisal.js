@@ -230,6 +230,11 @@ export const APPR_FIELDS = [
   [/(land_?use|state_?use|use_?cd|use_?desc|^class|prop_?type|stat_?land_?use|land_?state_?code|categor)/i, "Land use"],
   [/zoning/i, "Zoning"],
   [/(year_?built|yr_?built)/i, "Year built"],
+  // B1455632 — Nevada's statewide layer publishes a per-parcel deep link to the county assessor's
+  // own record (field `Website`) — no other wired source carries this. `apprVal` leaves it
+  // untouched (only a "value"-labeled row gets $ formatting) and `InfoRow` (ParcelInfoCard.jsx)
+  // renders an http(s) value as a link rather than plain text.
+  [/^website$/i, "County record"],
   // ...|^legal matches CCAD's Legal1–Legal4 (first match, Legal1, wins).
   [/(legal_?desc|^legal|subdiv|abstract|^abst)/i, "Legal"],
 ];
