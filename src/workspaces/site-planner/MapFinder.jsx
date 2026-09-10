@@ -2966,7 +2966,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
       // The breaker is fed for EVERY source via onSettled once they all finish — even
       // the slow ones we didn't wait for — so the next click skips a dead host (B244).
       const res = await identifyParcelEager(candidates, latlng.lng, latlng.lat, {
-        onSettled: (sources) => sources.forEach((s) => recordSourceResult(s.county, s.ok)),
+        onSettled: (sources) => sources.forEach((s) => recordSourceResult(s.county, s.ok, Date.now(), { ms: s.ms })),
       });
       if (!res.hits.length) {
         // Live returned nothing. If the optimistic highlight came from a loaded Drive snapshot
@@ -3063,7 +3063,7 @@ export default function MapFinder({ visible, isActive = true, overlays, setOverl
     let res;
     try {
       res = await identifyParcelEager(candidates, latlng.lng, latlng.lat, {
-        onSettled: (sources) => sources.forEach((s) => recordSourceResult(s.county, s.ok)), // feed the circuit breaker
+        onSettled: (sources) => sources.forEach((s) => recordSourceResult(s.county, s.ok, Date.now(), { ms: s.ms })), // feed the circuit breaker
       });
     } catch (_) {
       if (live()) setParcelInfo({ status: "unavailable", label }); return;

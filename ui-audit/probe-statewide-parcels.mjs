@@ -53,6 +53,8 @@ import {
   STATE_PROBE_POINT, ENVELOPE_QUERY_BUDGET_MS,
   projectExtentToWgs84, extentCoverageCheck, probeEnvelopeTiming, pointInsideExtent,
 } from "./lib/statewideCoverage.mjs";
+import { hostnameOf, isHostOpen, hostCooldownMs, recordHostOutcome, waitForHostSlot } from "./lib/hostThrottle.mjs";
+import { walkForReplacement } from "./lib/serviceNeighbourWalk.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -193,8 +195,8 @@ export const CANDIDATES = {
     // that layer's own covered extent. Every prior probe of this row checked METADATA only
     // (capabilities, field list) and never asked it a question at a real coordinate.
     note: "MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-09), not this sandbox — gis.ne.gov is blocked here. \"Nebraska Statewide Parcels External\" (note the path is /Enterprise/, not the old /Agency/), polygon, 1,154,898 features (the retracted TaxParcelsDED layer was 75,394), capabilities Query,Extract, maxRecordCount 2000. Fields: State_PID, Parcel_ID, Situs_Address, Ph_Full_Address, Legal_Description, Twn, Sect, Rng, Acres_Deeded, GIS_Acres, Subdivision, County_ID. Verified GENUINELY statewide by five point probes spread across Nebraska, each returning a real parcel with a DISTINCT county: Omaha 41.2565/-95.9345 → County_ID 055 (Douglas), Scottsbluff 41.8666/-103.6672 in the far western panhandle → 157 (Scotts Bluff), Norfolk 42.0286/-97.4170 in the north → 119 (Madison), McCook 40.2019/-100.6254 in the southwest → 145 (Red Willow), Lincoln 40.8136/-96.7026 → 109 (Lancaster). A whole-layer `returnExtentOnly` request timed out at 12s (this layer is slow at that specific op — see NEW-3's timing-budget note), so the five-point spread is the coverage evidence on record rather than a converted layer extent." },
-  NV: { name: "Nevada", assessingUnit: "county", sources: [],
-    noSource: "A real statewide mosaic exists (NV DCNR / State Demographer) but its own ArcGIS item description states plainly it is legally restricted under NRS 250 from being downloaded, exported, or shared with the public or another government agency. Disqualified on a legal basis, independent of reachability." },
+  NV: { name: "Nevada", assessingUnit: "county", sources: [], alreadyWired: true,
+    noSource: "The NV DCNR / State Demographer mosaic is legally restricted under NRS 250 from being downloaded, exported, or shared with the public or another government agency — disqualified on a legal basis, independent of reachability. A SEPARATE service, published by the Nevada Division of Water Resources (arcgis.water.nv.gov — a distinct agency from DCNR, not represented as a `sources` entry here), is what's actually wired as nv_statewide in counties.js. Not re-probed here: that host is blocked in this sandbox (as expected); see docs/STATEWIDE-PARCELS.md's Nevada row for its live-verified status, and counties.js's own nv_statewide comment for the 2026-09-11 service-rename incident (B1455632)." },
   NH: { name: "New Hampshire", wired: true, verify: "live", blocker: "nhgeodata.unh.edu", assessingUnit: "town/municipal (RSA 76; NH DRA provides oversight/equalization only)",
     sources: [{ name: "NH Parcel Mosaic — layer 1 'Parcels' (NH GRANIT / UNH)", url: "https://nhgeodata.unh.edu/nhgeodata/rest/services/CAD/ParcelMosaic/MapServer/1", cite: "measured live in the owner's own browser, 2026-09-08 — not this sandbox" }],
     note: "MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-08), not this sandbox — nhgeodata.unh.edu is blocked here. ⛔ Layer 1 ('Parcels', polygon) — NOT layer 0 ('Parcel Points', POINT geometry, unusable for the app's polygon click routing). 20 fields: PID, Town, StreetAddress, DisplayId, CountyId, SLU. No owner, no value." },
@@ -264,13 +266,26 @@ delete CANDIDATES.AZ_UNUSED;
 /* ---------------------------------------------------------------------------------------------
  * Measurement engine
  * -------------------------------------------------------------------------------------------- */
-async function fetchJson(url, { timeout = TIMEOUT_MS } = {}) {
+export async function fetchJson(url, { timeout = TIMEOUT_MS } = {}) {
+  // B1461731 — a host with an OPEN breaker (repeated failures or repeated slow responses — see
+  // hostThrottle.mjs / sourceHealth.js) is skipped outright rather than retried into: the exact
+  // response to Nevada's window (one 18s error, then the host going fully unresponsive). This
+  // never issues the request, so it costs nothing and doesn't restart the host's own cooldown.
+  if (isHostOpen(url)) {
+    return { ok: false, status: 0, ms: 0, error: `host breaker open, cooling off ${Math.ceil(hostCooldownMs(url) / 1000)}s — ${hostnameOf(url)}`, breakerOpen: true };
+  }
+  await waitForHostSlot(url); // a floor on spacing between requests to the SAME host
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
   const started = Date.now();
   try {
     const res = await fetch(url, { signal: ctrl.signal });
     const ms = Date.now() - started;
+    // Host-level health is about the TRANSPORT (did the host answer, and how fast) — an ArcGIS
+    // error body or an HTTP error status still means the host responded, so those are a SOURCE
+    // problem (handled by probeSource/walkForReplacement reading the body) and not counted against
+    // the host itself here. A response landing at/after the timeout counts as slow either way.
+    recordHostOutcome(url, true, ms);
     const text = await res.text();
     let json = null;
     try { json = JSON.parse(text); } catch { /* non-JSON response */ }
@@ -292,6 +307,7 @@ async function fetchJson(url, { timeout = TIMEOUT_MS } = {}) {
     return { ok: res.ok, status: res.status, ms, json, blocked };
   } catch (err) {
     const ms = Date.now() - started;
+    recordHostOutcome(url, false, ms); // a thrown fetch (timeout, network, or a blocked tunnel) is a genuine host-level miss
     const msg = String((err && err.message) || err);
     // A CONNECT-tunnel policy denial surfaces as a generic fetch failure with no HTTP status at
     // all (the TLS tunnel itself never opened) — distinct from a real host timeout/DNS failure,
@@ -322,7 +338,7 @@ const FIELD_PATTERNS = {
   appraisedValue: /(assess|apprais|market|mkt|total|land).{0,6}val|actualvalu|assessedva/i,
 };
 
-function matchFields(fieldNames) {
+export function matchFields(fieldNames) {
   const out = {};
   for (const [key, re] of Object.entries(FIELD_PATTERNS)) {
     out[key] = fieldNames.find((f) => re.test(f)) || null;
@@ -330,15 +346,36 @@ function matchFields(fieldNames) {
   return out;
 }
 
-async function probeSource(src, abbr) {
+export async function probeSource(src, abbr) {
   const meta = await fetchJson(`${src.url}?f=json`);
   if (!meta.ok || !meta.json) {
     return { ...src, reachable: false, blocked: !!meta.blocked, status: meta.status, ms: meta.ms, error: meta.error };
+  }
+  // B1461729 — ArcGIS answers a dead/misconfigured layer with HTTP 200 and a JSON `{error:{…}}`
+  // body (measured live against Nevada's emptied service, 2026-09-10: HTTP 200, `{"error":
+  // {"code":400,"message":"Failed to execute query."}}`, zero features). A check reading the HTTP
+  // status alone — `meta.ok` — calls that healthy; this is exactly what recorded Nevada as
+  // reachable while it was already failing. `meta.ok` only proves the TRANSPORT succeeded, never
+  // that the SERVICE answered the question, so the body is checked before anything downstream
+  // (field list, extent, count, envelope) is trusted — none of it means anything against an error
+  // response, and probing further would just manufacture a plausible-looking empty result.
+  if (meta.json.error) {
+    const code = meta.json.error.code != null ? ` (code ${meta.json.error.code})` : "";
+    return { ...src, reachable: false, arcgisError: true, status: meta.status, ms: meta.ms, error: `${meta.json.error.message || "ArcGIS error"}${code}` };
   }
   const fieldNames = Array.isArray(meta.json.fields) ? meta.json.fields.map((f) => f.name) : [];
   const geometryType = meta.json.geometryType || (meta.json.type === "Table" ? "table" : null);
   let featureCount = null;
   const countRes = await fetchJson(`${src.url}/query?where=1%3D1&returnCountOnly=true&f=json`);
+  // Same body check as the metadata call above, against the actual QUERY endpoint this time — a
+  // layer can describe itself fine (the metadata call above succeeds) while its own /query 400s,
+  // which is at least as disqualifying as an unreachable metadata call: nothing that draws or
+  // clicks a parcel goes through metadata alone. Short-circuits like the metadata check, for the
+  // same reason — a source whose basic count query is broken has nothing left worth measuring.
+  if (countRes.json && countRes.json.error) {
+    const code = countRes.json.error.code != null ? ` (code ${countRes.json.error.code})` : "";
+    return { ...src, reachable: false, arcgisError: true, status: meta.status, ms: meta.ms, geometryType, fieldNames, fields: matchFields(fieldNames), error: `${countRes.json.error.message || "ArcGIS error"}${code}` };
+  }
   if (countRes.ok && countRes.json && typeof countRes.json.count === "number") featureCount = countRes.json.count;
   const extentLatLon = await projectExtentToWgs84(meta.json.extent, { fetchJson });
   const coverage = extentCoverageCheck(extentLatLon, abbr);
@@ -472,7 +509,7 @@ async function runAgolPass(results) {
   return out;
 }
 
-function verdictFor(state) {
+export function verdictFor(state) {
   if (state.alreadyWired) return "already-wired";
   // Owner correction, 2026-09-08 (round 2): a real, findable, sometimes fully-measured source
   // that is declined on SHAPE (needs a join, or ships as more than one service) is not the same
@@ -484,6 +521,12 @@ function verdictFor(state) {
   if (!state.sources.length) return "no-free-source";
   const any = state.sources.some((s) => s.reachable);
   if (any) return "measured-reachable";
+  // B1461729 — HTTP 200 with an ArcGIS `{error}` body is neither "blocked" (the transport worked)
+  // nor a bare "host-error" (something answered, and it named a real problem) — a source whose
+  // service root or layer index itself reports an ArcGIS error gets its own verdict so a reader
+  // (or a future neighbour-walk pass, B1461730) can tell "the endpoint moved/broke" apart from
+  // "this sandbox can't reach the host at all."
+  if (state.sources.some((s) => s.arcgisError)) return "arcgis-error";
   const allBlocked = state.sources.every((s) => s.blocked);
   return allBlocked ? "blocked-in-sandbox" : "host-error";
 }
@@ -507,6 +550,26 @@ async function probeAll() {
         }
         if (probed.envelopeTiming && probed.envelopeTiming.emptyDespiteCoverage) {
           console.error(`⛔ [empty] ${abbr} — a point inside this layer's OWN declared extent returned zero features (${probed.envelopeTiming.ms}ms) — ${src.url}`);
+        }
+      } else if (probed.arcgisError) {
+        console.error(`⛔ [arcgis-error] ${abbr} — HTTP ${probed.status ?? "200"} with an ArcGIS error body: ${probed.error} — ${src.url}`);
+      }
+      // B1461730 — a WIRED source (this run already re-verifying it, not merely a discovery
+      // candidate) that has genuinely gone missing gets its own server's neighbours walked, so the
+      // report names a replacement candidate instead of only "this source failed" — exactly what
+      // would have caught the Nevada rename on the same run that found the outage. Skipped for a
+      // source this sandbox's own egress policy blocked (`probed.blocked`) — that host answers
+      // nothing at all here, so walking its directory would just be more blocked requests.
+      if ((cfg.wired || cfg.alreadyWired) && !probed.reachable && !probed.blocked) {
+        console.error(`⛔ [missing] ${abbr} — wired source unreachable, walking its own server for a replacement — ${src.url}`);
+        const walk = await walkForReplacement({ failedUrl: src.url, knownGood: src.lastKnownGood, fetchJson });
+        probed.neighbourWalk = walk;
+        if (!walk.ok) {
+          console.error(`   → ${walk.reason}`);
+        } else {
+          const best = walk.results.find((r) => r.matchesKnownGood) || walk.results[0];
+          if (best) console.error(`   → candidate: ${best.url} (name similarity ${best.similarity.toFixed(2)}${best.matchesKnownGood != null ? `, ${best.matchesKnownGood ? "CONFIRMED match on count + fields" : "unconfirmed"}` : ""})`);
+          else console.error(`   → no plausible candidate found on the same server (${walk.candidatesChecked} checked)`);
         }
       }
     }
@@ -818,4 +881,8 @@ async function main() {
   console.log("\nVerdict counts:", counts);
 }
 
-main();
+// B1461729 — guarded so importing this module's testable pieces (probeSource, verdictFor,
+// fetchJson, matchFields — added for unit tests covering the 200-with-ArcGIS-error-body fix)
+// never triggers a real 50-state network probe as a side effect. `node
+// ui-audit/probe-statewide-parcels.mjs` (the only way this ran before) still executes normally.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();

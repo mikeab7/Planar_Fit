@@ -16,16 +16,32 @@
 export const SOURCE_FAIL_THRESHOLD = 3; // consecutive failures before the breaker opens
 export const SOURCE_COOLDOWN_MS = 5 * 60_000; // skip-the-primary window (5 min), then retry
 
+/* B1461731 — a source that keeps answering just short of a timeout is exactly as unusable as one
+ * that is erroring, and waiting for it to fully time out (PARCEL_FETCH_TIMEOUT_MS, 8000ms in
+ * arcgis.js) before backing off wastes that same wait on every subsequent click. Measured during
+ * the Nevada outage this was built for: one query took 18 SECONDS to return an error before the
+ * host stopped responding entirely — a response this slow is a symptom of the same struggling host,
+ * whether or not it happens to carry an error body. Set comfortably under the hard timeout so a
+ * source trending slow trips the breaker before it starts timing out outright. */
+export const SOURCE_SLOW_MS = 6000;
+
 const _state = new Map(); // key -> { fails, openUntil }
 
 /* Record the outcome of a query against a source. A success clears the source back
  * to healthy; a failure increments the streak and opens the breaker once it reaches
  * the threshold. Only pass `ok=false` for a genuine source FAILURE (server down /
  * timeout / HTTP or ArcGIS error) — never for a healthy "no parcel at this point",
- * which is a valid answer, not a failure (B245). */
-export function recordSourceResult(key, ok, now = Date.now()) {
+ * which is a valid answer, not a failure (B245).
+ *
+ * `ms` (optional, B1461731) — how long the request took. A response that took ≥ SOURCE_SLOW_MS
+ * counts toward the failure streak exactly like `ok=false` would, EVEN WHEN `ok` is true — three
+ * consecutive slow-but-technically-successful responses open the breaker just as three outright
+ * failures would, so a struggling host is backed off before it starts hard-timing-out. Omit `ms`
+ * (or pass a value under the threshold) for the old ok/fail-only behavior. */
+export function recordSourceResult(key, ok, now = Date.now(), { ms } = {}) {
   if (!key) return;
-  if (ok) { _state.delete(key); return; }
+  const slow = ms != null && ms >= SOURCE_SLOW_MS;
+  if (ok && !slow) { _state.delete(key); return; }
   const s = _state.get(key) || { fails: 0, openUntil: 0 };
   s.fails += 1;
   if (s.fails >= SOURCE_FAIL_THRESHOLD) s.openUntil = now + SOURCE_COOLDOWN_MS;

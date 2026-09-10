@@ -177,11 +177,20 @@ export async function probeEnvelopeTiming(url, centerLat, centerLng, { timeoutMs
     spatialRel: "esriSpatialRelIntersects", outFields: "OBJECTID", returnGeometry: "false",
   });
   const res = await fetchJson(`${url}/query?${qs}`, { timeout: timeoutMs });
-  const overBudget = !res.ok || res.ms > timeoutMs;
+  // B1461729 — ArcGIS answers a broken query with HTTP 200 and a JSON `{error:…}` body (measured
+  // live against Nevada's emptied service, 2026-09-10: 200, `{"error":{"code":400,"message":
+  // "Failed to execute query."}}`, in well under the timing budget). `res.ok`/`res.ms` alone read
+  // that as a clean, fast, empty answer — `overBudget:false`, `featureCountInEnvelope:0` — exactly
+  // as healthy as a genuine "nothing here." The body has to be checked before either verdict.
+  const arcgisError = !!(res.json && res.json.error);
+  const overBudget = !res.ok || res.ms > timeoutMs || arcgisError;
   const timedOut = !res.ok && /abort/i.test(String(res.error || ""));
+  const errorMessage = arcgisError
+    ? `${res.json.error.message || "ArcGIS error"}${res.json.error.code != null ? ` (code ${res.json.error.code})` : ""}`
+    : res.error;
   return {
-    ms: res.ms, overBudget, timedOut,
-    featureCountInEnvelope: res.json && Array.isArray(res.json.features) ? res.json.features.length : null,
-    status: res.status, error: overBudget ? res.error : undefined,
+    ms: res.ms, overBudget, timedOut, arcgisError,
+    featureCountInEnvelope: !arcgisError && res.json && Array.isArray(res.json.features) ? res.json.features.length : null,
+    status: res.status, error: overBudget ? errorMessage : undefined,
   };
 }

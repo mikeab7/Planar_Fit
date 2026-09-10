@@ -114,6 +114,17 @@ describe("queryAtPoint — body validation + typed failures (B245)", () => {
     await expect(queryAtPoint(LAYER, -95, 29)).rejects.toMatchObject({ kind: "arcgis", status: 499, unavailable: true });
   });
 
+  // B1461729 — the exact fixture from the Nevada incident: HTTP 200, fast, with ArcGIS's
+  // "Failed to execute query" error body. This runtime path (queryAtPoint → fetchJson) was already
+  // checking `j.error` before this item landed — this fixture is the regression guard so it can
+  // never again be recorded as a working source, matching the other two fixed call sites
+  // (ui-audit/probe-statewide-parcels.mjs's probeSource, ui-audit/lib/statewideCoverage.mjs's
+  // probeEnvelopeTiming).
+  it("the exact Nevada incident body — HTTP 200, {error:{code:400,message:'Failed to execute query.'}}", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ok({ error: { code: 400, message: "Failed to execute query." } })));
+    await expect(queryAtPoint(LAYER, -95, 29)).rejects.toMatchObject({ kind: "arcgis", status: 400, unavailable: true, message: "Failed to execute query." });
+  });
+
   it("a non-OK HTTP status (503) becomes a typed http failure", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })));
     await expect(queryAtPoint(LAYER, -95, 29)).rejects.toMatchObject({ kind: "http", status: 503, unavailable: true });

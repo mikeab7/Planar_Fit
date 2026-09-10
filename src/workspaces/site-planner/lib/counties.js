@@ -1269,17 +1269,37 @@ const COUNTIES_MAP_RAW = {
    * exactly why a water-agency-published statewide parcel mosaic was missed. No public-record
    * restriction is stated on this item; MEASURED FROM THE OWNER'S OWN BROWSER 2026-09-09/10 —
    * arcgis.water.nv.gov is a Nevada .gov host this build environment's egress policy blocks (same
-   * signature as every other Verify:live state here). 1,394,188 features. Point-identify verified
-   * at five spread points: Las Vegas 117ms, Reno 333ms, Elko 215ms, Carson City 216ms, Pahrump
-   * 114ms — all real parcels. Fields: APN, County, SiteCity, Acres, SourceDate, Website. `Website`
-   * is a per-parcel deep link to that county assessor's own record — no other wired source carries
-   * this field; surfaced as a clickable "View record ↗" row (`appraisal.js`'s "County record" field
-   * mapping + `ParcelInfoCard.jsx`'s link-value row). Clark and Washoe counties' own per-county
-   * layers are therefore superseded by this statewide layer and are deliberately NOT wired
-   * separately (`countiesProvenance.js`). Verify: live — arcgis.water.nv.gov is blocked here. */
+   * signature as every other Verify:live state here). Fields: APN, County, SiteCity, Acres,
+   * SourceDate, Website. `Website` is a per-parcel deep link to that county assessor's own record —
+   * no other wired source carries this field; surfaced as a clickable "View record ↗" row
+   * (`appraisal.js`'s "County record" field mapping + `ParcelInfoCard.jsx`'s link-value row). Clark
+   * and Washoe counties' own per-county layers are therefore superseded by this statewide layer and
+   * are deliberately NOT wired separately (`countiesProvenance.js`).
+   *
+   * ⛔ B1455632 (2026-09-11) — THE ORIGINAL `County_Parcels_in_Nevada` SERVICE WENT EMPTY AND WAS
+   * SWAPPED FOR ITS SIBLING. The service above was healthy at 8:50 PM Central on 2026-09-10 (the
+   * 1,394,188-feature count and the five-point spread verified at that time) and by 10:57 PM the
+   * SAME service was reporting zero layers, with `/0` answering "404 Layer not found" — not a
+   * throttle (an earlier note here blamed rate-limiting after heavy testing; that explanation is
+   * RETRACTED — a throttle cannot empty a service's own layer list). The state republished the same
+   * data one service name over, on the same `arcgis.water.nv.gov` host, and left the old service
+   * name as an empty shell: `BaseLayers/County_Parcels_In_Nevada_Yellow/MapServer/0` ("County
+   * Parcels Yellow"), re-verified 2026-09-11 morning Central — 1,394,188 features (IDENTICAL to the
+   * pre-outage count), esriGeometryPolygon, maxRecordCount 2000, capabilities "Map,Query,Data", same
+   * field list. Five spread probes confirmed real parcels: Las Vegas 132ms (APN 16217899002, Clark),
+   * Reno 203ms (APN 1105125, 0.495 ac, Washoe), Elko 147ms (APN 006090, 1.111 ac, Elko), Carson City
+   * 103ms (APN 420301, 3.920 ac, Carson City), Pahrump 178ms (APN 3529121, 8.129 ac, Nye).
+   * ⛔ WIRING NOTE: this service REJECTS `resultRecordCount` outright with "Pagination is not
+   * supported" — it accepts `returnCountOnly`. Nothing in this app's own query paths sends
+   * `resultRecordCount` against a `COUNTIES_MAP` entry (point identify is a plain intersect query;
+   * esri-leaflet's display FeatureLayer only sends `resultOffset`/`resultRecordCount` when
+   * `fetchAllFeatures` is set, which this layer's config does not set) — confirmed against the
+   * vendored esri-leaflet 3.0.12 source before relying on it. Any NEW query built against this URL
+   * (a probe, a discovery/health-sweep script, a future feature) must not add one either.
+   * Verify: live — arcgis.water.nv.gov is blocked in this sandbox. */
   nv_statewide: {
     state: "NV", center: [39.5, -117.0], zoom: 7, mapServer: null, statewide: true,
-    layerUrl: "https://arcgis.water.nv.gov/arcgis/rest/services/BaseLayers/County_Parcels_in_Nevada/MapServer/0",
+    layerUrl: "https://arcgis.water.nv.gov/arcgis/rest/services/BaseLayers/County_Parcels_In_Nevada_Yellow/MapServer/0",
   },
   ny_statewide: {
     // The publicly-cited host (gisservices.its.ny.gov) is blocked here — this wires NY's OWN

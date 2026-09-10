@@ -173,4 +173,19 @@ describe("probeEnvelopeTiming — NEW-3's timing budget, asserted against the ap
     const r = await probeEnvelopeTiming("https://example.test/FeatureServer/0", NaN, NaN, { fetchJson: async () => { throw new Error("must not be called"); } });
     expect(r.skipped).toBe(true);
   });
+
+  // B1461729 — the exact fixture from the incident this item was filed for: Nevada's emptied
+  // service answered HTTP 200, fast, with a JSON error body — and reading `res.ok`/`res.ms` alone
+  // (the pre-fix shape) called that a clean, fast, empty envelope: healthy. Never again.
+  it("treats a 200-with-ArcGIS-error-body as a failure, never a fast empty success (the Nevada incident fixture)", async () => {
+    const nevadaOutage = async () => ({
+      ok: true, status: 200, ms: 140,
+      json: { error: { code: 400, message: "Failed to execute query." } },
+    });
+    const r = await probeEnvelopeTiming("https://arcgis.water.nv.gov/arcgis/rest/services/BaseLayers/County_Parcels_in_Nevada/MapServer/0", 39.1638, -119.7674, { fetchJson: nevadaOutage, timeoutMs: ENVELOPE_QUERY_BUDGET_MS });
+    expect(r.arcgisError).toBe(true);
+    expect(r.overBudget).toBe(true); // a genuine failure, not "in budget"
+    expect(r.featureCountInEnvelope).toBeNull(); // never 0 — 0 reads as "queried fine, nothing there"
+    expect(r.error).toMatch(/Failed to execute query/);
+  });
 });
