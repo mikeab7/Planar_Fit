@@ -3,7 +3,7 @@ import { flushSync, createPortal } from "react-dom";
 import ContextMenu from "../../shared/ui/ContextMenu.jsx";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { loadSite, saveSite, deleteSite, loadSitesList, isCloudActive, activeUid, pushSiteToCloud, pushModelToCloud, keepaliveFlushSite, listVersions, getVersion, backupNow, reconcileSiteFromCloud } from "./lib/storage.js";
+import { loadSite, saveSite, deleteSite, loadSitesList, isCloudActive, activeUid, pushSiteToCloud, pushModelToCloud, keepaliveFlushSite, listVersions, getVersion, backupNow, reconcileSiteFromCloud, listDeletedPlansInGroup, restoreDeletedProject, purgeDeletedProject } from "./lib/storage.js";
 import { collectAssetRefs, releasePlanForOverlay } from "./lib/sharedAssetRefs.js";
 import { idbGet, idbPut, idbDelete, idbAvailable } from "./lib/localDb.js";
 import { registerFlush } from "../../app/flushRegistry.js";
@@ -1868,6 +1868,13 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   const preCanvasDisplayRef = useRef(null); // showDims/showAreas/showAerial as they were before entering print mode — restored when the whole print flow ends, so toggling them FOR A PRINT never leaves a lasting change on the editing view (Cancel's non-destructive contract, extended to a completed Download too)
   const [planMenu, setPlanMenu] = useState(false);       // header Plan ▾ dropdown open
   const [planDelArm, setPlanDelArm] = useState(null);    // B264: plan id whose inline "Delete?" confirm is showing
+  /* B1469872 — this project's own "Recently deleted" plans: siblings soft-deleted from THIS group
+   * while it still has a live plan (this menu is only reachable while that's true), which the
+   * account-wide bin deliberately never lists (see storage.js's listDeletedProjects /
+   * listDeletedPlansInGroup headers). Fetched fresh whenever the plan menu opens. */
+  const [deletedPlansHere, setDeletedPlansHere] = useState([]);
+  const [deletedPlansBusy, setDeletedPlansBusy] = useState(null);   // id currently being restored/purged
+  const [planPurgeArm, setPlanPurgeArm] = useState(null);           // id whose "Delete forever" confirm is showing
   // anchor refs for the portal-rendered dropdowns (B127) — each points at the menu's
   // trigger so AnchoredMenu can position the flyout against it (see AnchoredMenu.jsx).
   const boundaryAnchor = useRef(null), buildingAnchor = useRef(null), parkingAnchor = useRef(null),
@@ -15846,6 +15853,29 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     closeHdrMenus();
     onDeletePlan?.(id);
   };
+  /* B1469872 — this project's own "Recently deleted" plans (see storage.js's
+   * listDeletedPlansInGroup header): siblings soft-deleted from THIS still-live group, which the
+   * account-wide bin deliberately never lists. Fetched fresh whenever the plan menu opens. */
+  const refreshDeletedPlansHere = () => {
+    Promise.resolve(listDeletedPlansInGroup(groupId)).then((r) => setDeletedPlansHere((r && r.ok && r.plans) || []));
+  };
+  const handleRestoreDeletedPlan = (p) => {
+    setDeletedPlansBusy(p.id);
+    Promise.resolve(restoreDeletedProject(p.id)).then((res) => {
+      if (!res || res.ok === false) flashWarn((res && res.error) || `“${p.name}” couldn't be restored — check your connection and try again.`);
+      refreshDeletedPlansHere();
+      onSiteSaved?.(); // the sites list is device-cached elsewhere; this is the same "something changed server-side" refresh the plan-lock toggle above already uses
+    }).catch(() => flashWarn(`“${p.name}” couldn't be restored — check your connection and try again.`))
+      .finally(() => setDeletedPlansBusy(null));
+  };
+  const handlePurgeDeletedPlan = (p) => {
+    setDeletedPlansBusy(p.id); setPlanPurgeArm(null);
+    Promise.resolve(purgeDeletedProject([p.id], groupId)).then((res) => {
+      if (!res || res.ok === false) flashWarn((res && res.error) || `“${p.name}” couldn't be permanently deleted — check your connection and try again.`);
+      refreshDeletedPlansHere();
+    }).catch(() => flashWarn(`“${p.name}” couldn't be permanently deleted — check your connection and try again.`))
+      .finally(() => setDeletedPlansBusy(null));
+  };
   /* ------------ export (PNG / PDF / KMZ / project file) — LOADED ON DEMAND (B1042) ---
      The whole export path — sheet composition, the aerial tile Stitcher, GIS-layer
      capture, PDF/PNG rasterizing, KMZ — lives in lib/exportSheet.js and is fetched the
@@ -19656,13 +19686,13 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
           fontSize: FONT_SIZE.control, fontWeight: 500, color: "var(--chrome-text)",
           maxWidth: 200, minWidth: CRUMB_MIN_W, whiteSpace: "nowrap",
         }}
-        onClick={() => setPlanMenu((o) => !o)}
+        onClick={() => setPlanMenu((o) => { const next = !o; if (next) refreshDeletedPlansHere(); return next; })}
         title="Switch or rename plan"
         data-testid="plan-crumb"
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{planLabel}</span><span data-testid="plan-caret" style={{ color: "var(--chrome-muted)", fontSize: FONT_SIZE.label, flex: "none" }}>▾</span>
       </button>
-        <AnchoredMenu open={planMenu} onClose={() => { setPlanMenu(false); setPlanDelArm(null); }} anchorRef={planAnchor} placement="below-left" gap={8} width={284} panelStyle={{ ...menuPanel, padding: 10 }}>
+        <AnchoredMenu open={planMenu} onClose={() => { setPlanMenu(false); setPlanDelArm(null); setPlanPurgeArm(null); }} anchorRef={planAnchor} placement="below-left" gap={8} width={284} panelStyle={{ ...menuPanel, padding: 10 }}>
           <div style={{ fontSize: 10.5, color: PAL.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 5 }}>Plan name</div>
           <input value={planLabel} onChange={(e) => setPlanLabel(e.target.value)} onBlur={(e) => commitPlanLabel(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} style={{ ...numInput, width: "100%", fontFamily: "inherit" }} data-testid="plan-name-input" />
@@ -19690,7 +19720,12 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
             const cur = s.id === siteId;
             if (planDelArm === s.id) return (
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", margin: "1px 0", borderRadius: 7, background: "rgba(179,54,27,0.08)" }}>
-                <span style={{ flex: 1, fontSize: 12, color: PAL.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Delete “{s.name || "Untitled plan"}”?</span>
+                {/* B1469872 — this used to say nothing about recoverability at all. It moves to this
+                    project's own "Recently deleted" below (never the whole-site 30-day bin, which
+                    only ever lists a project once EVERY plan in it is gone) and is never auto-purged
+                    while a sibling plan here stays live — restore it any time, or delete it forever
+                    from that same list. */}
+                <span style={{ flex: 1, fontSize: 12, color: PAL.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`Delete “${s.name || "Untitled plan"}”? It moves to this project's Recently deleted below — restore it any time.`}>→ Recently deleted “{s.name || "Untitled plan"}”?</span>
                 <button style={{ ...chip, color: PAL.danger, padding: "2px 9px" }} onClick={() => { setPlanDelArm(null); handleDeletePlan(s.id); }}>Delete</button>
                 <button style={{ ...chip, padding: "2px 9px" }} onClick={() => setPlanDelArm(null)}>Cancel</button>
               </div>
@@ -19715,6 +19750,38 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               </div>
             );
           })}
+          {/* B1469872 — this PROJECT's own plan trash: siblings soft-deleted from this still-live
+              group, which the whole-site "Recently deleted" bin (ProjectBreadcrumb) never lists —
+              that one only shows a project once EVERY plan in it is gone. Before this section
+              existed a plan deleted from here was invisible everywhere and, past 30 days, silently
+              hard-deleted with no restore ever having been offered (see storage.js's
+              purgeExpiredDeletedProjects header) — it is now exempt from that auto-purge for as
+              long as this group stays live, and restorable/purgeable only from right here. */}
+          {deletedPlansHere.length > 0 && (
+            <>
+              <div style={{ fontSize: 10.5, color: PAL.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, margin: "11px 0 5px" }}>Recently deleted</div>
+              {deletedPlansHere.map((p) => {
+                if (planPurgeArm === p.id) return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", margin: "1px 0", borderRadius: 7, background: "rgba(179,54,27,0.08)" }}>
+                    <span style={{ flex: 1, fontSize: 12, color: PAL.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Delete “{p.name}” forever?</span>
+                    <button style={{ ...chip, color: PAL.danger, padding: "2px 9px" }} disabled={deletedPlansBusy === p.id} onClick={() => handlePurgeDeletedPlan(p)}>Delete</button>
+                    <button style={{ ...chip, padding: "2px 9px" }} onClick={() => setPlanPurgeArm(null)}>Cancel</button>
+                  </div>
+                );
+                return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <span style={{ flex: 1, minWidth: 0, padding: "6px 8px", fontSize: 12, color: PAL.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.name}>{p.name}</span>
+                    <button title="Restore this plan" aria-label={`Restore plan ${p.name}`} disabled={deletedPlansBusy === p.id} onClick={() => handleRestoreDeletedPlan(p)}
+                      style={{ ...chip, padding: "2px 9px", flex: "none" }}>Restore</button>
+                    <button title="Delete this plan forever" aria-label={`Delete plan ${p.name} forever`} disabled={deletedPlansBusy === p.id} onClick={() => setPlanPurgeArm(p.id)}
+                      style={{ flex: "none", width: 24, height: 24, lineHeight: 1, borderRadius: RADIUS.sm, border: "1px solid transparent", background: "transparent", color: PAL.muted, cursor: "pointer", fontSize: 13 }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = "#b3361b"; e.currentTarget.style.background = "rgba(179,54,27,0.10)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = PAL.muted; e.currentTarget.style.background = "transparent"; }}><span style={{ display: "grid", placeItems: "center" }}><CloseXIcon /></span></button>
+                  </div>
+                );
+              })}
+            </>
+          )}
           <div style={{ display: "flex", gap: 6, marginTop: 9, borderTop: `1px solid ${PAL.panelLine}`, paddingTop: 9 }}>
             <button style={{ ...chip, flex: 1 }} onClick={handleNewPlan} title="New layout on the same parcel"><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><PlusIcon size={12} />New plan</span></button>
             <button style={{ ...chip, flex: 1 }} onClick={handleDuplicate} title="Clone this plan to iterate on"><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><DuplicateIcon size={12} />Duplicate</span></button>

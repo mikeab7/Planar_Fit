@@ -1353,9 +1353,24 @@ export async function ensureProjectRow(id, { name = "Untitled site", confirmLive
 // independent implementation of the same question that drifted. Filtered here with the same
 // `groupStillHasLivePlans` helper B1164193 already uses to guard the folder purge, and the same
 // fail-safe direction: an inconclusive check keeps a group OUT of the bin rather than risk telling
-// the owner a live project is trash. The individual dead sibling plan keeps aging toward its normal
-// 30-day auto-purge either way (purgeExpiredDeletedProjects, unaffected by this filter) — this only
-// changes what's OFFERED for manual restore/purge in the switcher.
+// the owner a live project is trash.
+//
+// ⛔ B1469872 (owner report, 2026-09-10) — CORRECTION: the line that used to sit here ("the
+// individual dead sibling plan keeps aging toward its normal 30-day auto-purge either way —
+// purgeExpiredDeletedProjects, unaffected by this filter") was WRONG, and it described a real,
+// live data-loss path. A plan filtered OUT of this list by the guard above is not just excluded
+// from ONE surface's read — `purgeExpiredDeletedProjects` used to run the exact same 30-day sweep
+// with NO such filter, so a plan this function correctly hid (because its project is still live
+// and in use) was silently HARD-DELETED — `site_elements` cascade included — the next time the
+// project switcher dropdown opened past 30 days, with no restore ever having been possible.
+// Measured on production: 16 rows in exactly this shape, the nearest scheduled to be destroyed
+// less than 24 hours after this was found. `purgeExpiredDeletedProjects` now applies the SAME
+// `groupStillHasLivePlans` guard before hard-deleting any one row — the two functions must always
+// agree on what "still live" means, because disagreeing between "hidden from the bin" and "safe to
+// destroy" is exactly this bug. A plan exempted this way is not orphaned: `listDeletedPlansInGroup`
+// (below) is the real, reachable surface for it — the site-planner workspace's plan menu, which can
+// only be open while a LIVE sibling in this very group is the current plan, lists it there with
+// Restore / Delete forever, so retention is no longer a window nothing can reach.
 export async function listDeletedProjects() {
   if (!activeUid()) return { ok: true, supported: false, projects: [] };
   let r;
@@ -1380,6 +1395,27 @@ export async function listDeletedProjects() {
     .map((p) => ({ ...p, name: p.name || "Untitled project", expiresAt: p.deletedAt + DELETED_RETENTION_DAYS * 86400000 }))
     .sort((a, b) => b.deletedAt - a.deletedAt);
   return { ok: true, supported: true, projects };
+}
+
+// B1469872 — the per-PROJECT plan trash. The account-wide bin above deliberately EXCLUDES any
+// group that still has a live plan (B1336576) — correctly, because a project you're actively
+// working in is not "deleted". But a plan you discarded FROM that live project (delete one plan
+// from the plan menu, keep the rest — a "duplicate and rename" cleanup is the common real case)
+// still needs a place to be seen and restored from; without this it was invisible everywhere and,
+// before the fix beside `purgeExpiredDeletedProjects` below, eventually hard-deleted with nobody
+// ever having had a chance to say no. Scoped to ONE group (never the whole-account scan a caller
+// doesn't need) because the only place this is rendered — the site-planner workspace's plan menu —
+// is only reachable while a live plan in this exact group is open.
+export async function listDeletedPlansInGroup(groupId) {
+  if (!activeUid() || !groupId) return { ok: true, supported: false, plans: [] };
+  let r;
+  try { r = await cloudDeletedRows(activeUid()); } catch (e) { r = { ok: false, supported: true, rows: [], error: (e && e.message) || "" }; }
+  if (!r.ok || !r.supported) return { ok: r.ok, supported: !!r.supported, plans: [], error: r.error };
+  const plans = (r.rows || [])
+    .filter((row) => row && row.id && (row.group_id || row.id) === groupId)
+    .map((row) => ({ id: row.id, name: row.site || row.name || "Untitled plan", deletedAt: toMs(row.deleted_at) }))
+    .sort((a, b) => b.deletedAt - a.deletedAt);
+  return { ok: true, supported: true, plans };
 }
 
 // Restore a binned project (every plan in its group). Lifts the local tombstones too — otherwise
@@ -1436,7 +1472,17 @@ export async function restoreDeletedProject(ids) {
  * ⛔ Also used by `listDeletedProjects` (declared earlier in this file, calls this via ordinary
  * function hoisting) for the SAME reason from the other direction — never SHOW a live project as
  * deleted, not just never DESTROY one — so the two callers must keep agreeing on what "still live"
- * means. */
+ * means.
+ *
+ * ⛔ B1469872 (owner report, 2026-09-10) — "Woods Road's anchor … had single-digit days left before
+ * the 30-day expiry sweep … would have done exactly that" was not a near-miss this fix closed — it
+ * was a description of `purgeExpiredDeletedProjects` (below) as it actually shipped: THIS function
+ * only ever protected the shared Drive/`project_folders` cascade, never the plain `sites` row hard
+ * delete that runs right before it. `purgeExpiredDeletedProjects` now calls this SAME helper per
+ * row, before `cloudHardDelete`, so a plan whose group is still live is never destroyed by the
+ * timer at all — it is left soft-deleted and offered back through `listDeletedPlansInGroup` (this
+ * file) via the plan menu instead. The three call sites (this one, `listDeletedProjects`, and now
+ * `purgeExpiredDeletedProjects`) must never drift apart on what "still live" means again. */
 async function groupStillHasLivePlans(groupId) {
   if (!groupId) return false;
   const status = await cloudCheckDeleted(activeUid(), groupId).catch(() => null);
@@ -1493,26 +1539,46 @@ export async function purgeDeletedProject(ids, groupId) {
 }
 
 // Lazy 30-day purge — runs when the bin is listed. Anything that has sat past the retention window
-// is hard-deleted for real. Returns { ok, purged, failed } so the caller can surface a failure.
+// is hard-deleted for real. Returns { ok, purged, failed, skipped } so the caller can surface a
+// failure.
+//
+// ⛔ B1469872 (owner report, 2026-09-10) — this used to hard-delete EVERY row past `days` with no
+// notion of whether that row's project is still live, which disagreed with `listDeletedProjects`
+// (above) — the account-wide bin already refuses to SHOW such a row as deleted, on the theory that
+// a live project isn't trash, but this function still DESTROYED it on schedule, `site_elements`
+// cascade included, with no restore ever having been offered anywhere. Measured on production: 16
+// rows in exactly this shape, the nearest scheduled for destruction under 24 hours after this was
+// found. Guarded with the SAME `groupStillHasLivePlans` this file already uses to protect the
+// shared Drive/folder cascade (`purgeProjectFoldersFor`) — a row whose group still has a live plan
+// is left soft-deleted indefinitely rather than aged out blind; `listDeletedPlansInGroup` is its
+// real, reachable surface (the plan menu's own "Recently deleted", Restore + Delete forever). Once
+// every plan in a group is eventually gone, `groupStillHasLivePlans` answers false and the row
+// purges exactly as before — this changes WHEN a row may be auto-purged, never whether a genuinely
+// dead project's rows eventually are.
 export async function purgeExpiredDeletedProjects({ days = DELETED_RETENTION_DAYS } = {}) {
-  if (!activeUid()) return { ok: true, purged: 0, failed: 0 };
+  if (!activeUid()) return { ok: true, purged: 0, failed: 0, skipped: 0 };
   let r;
-  try { r = await cloudDeletedRows(activeUid()); } catch (_) { return { ok: false, purged: 0, failed: 0 }; }
-  if (!r.ok) return { ok: false, purged: 0, failed: 0, error: r.error };
-  if (!r.supported) return { ok: true, purged: 0, failed: 0 };
+  try { r = await cloudDeletedRows(activeUid()); } catch (_) { return { ok: false, purged: 0, failed: 0, skipped: 0 }; }
+  if (!r.ok) return { ok: false, purged: 0, failed: 0, skipped: 0, error: r.error };
+  if (!r.supported) return { ok: true, purged: 0, failed: 0, skipped: 0 };
   const cutoff = Date.now() - days * 86400000;
   const expired = (r.rows || []).filter((row) => row && row.id && toMs(row.deleted_at) < cutoff);
-  let purged = 0, failed = 0;
+  let purged = 0, failed = 0, skipped = 0;
   const purgedGroups = new Set(); // one folder purge per group, even when several of its plans expire together
   for (const row of expired) {
+    const gid = row.group_id || row.id;
+    if (await groupStillHasLivePlans(gid)) {
+      skipped += 1;
+      reportClientEvent("plan-purge-skipped-live-group", "a soft-deleted plan's project still has live plans in its group — it was left in place instead of being auto-purged, since it was never offered back through the account-wide bin", { id: row.id, groupId: gid });
+      continue;
+    }
     const out = await cloudHardDelete(activeUid(), row.id).catch(() => ({ ok: false }));
     if (out && out.ok) {
       purged += 1;
-      const gid = row.group_id || row.id;
       if (!purgedGroups.has(gid)) { purgedGroups.add(gid); await purgeProjectFoldersFor(gid); }
     } else failed += 1;
   }
-  return { ok: failed === 0, purged, failed };
+  return { ok: failed === 0, purged, failed, skipped };
 }
 
 // loadSite returns the canonical Site Model (migrated/normalized); saveSite merges
