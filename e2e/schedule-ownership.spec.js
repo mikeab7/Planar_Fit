@@ -125,7 +125,20 @@ async function openSchedule(page, gid, projects) {
  * surface via AnchoredMenu, wrong for this one, which supplied none. Fixed by making the
  * empty-state wrapper a centered, width-capped panel carrying the same `menuPanelStyle` surface
  * token the breadcrumb's dropdown gets — never by changing ScheduleOwnerList itself, so the
- * dropdown case (asserted throughout the rest of this file) is provably untouched. */
+ * dropdown case (asserted throughout the rest of this file) is provably untouched.
+ *
+ * ⛔ REGRESSION, caught live on planyr.io and corrected in the same item: that first fix kept the
+ * owner-list panel as a SEPARATE `position:absolute, bottom:0` sibling stacked over
+ * LinkSchedulePanel's own full-bleed box. Two independently-positioned overlays can't see each
+ * other's height, so on a short window (measured: ~465px of content height) the owner-list panel
+ * overlapped LinkSchedulePanel's own Create/Link buttons — "Link an existing schedule" became
+ * genuinely unclickable, `elementFromPoint` at its centre resolved to the panel, not the button —
+ * and the panel itself still ran off the bottom with nothing to reach it. Fixed by merging both
+ * into ONE full-bleed `overflow:"auto"` shell (`data-testid="schedule-empty-shell"`) holding a
+ * plain flex column: LinkSchedulePanel, then the owner-list panel, true document flow so they
+ * stack instead of overlapping at any height, and the shell's own scrolling reaches whatever a
+ * short window can't fit. The "short viewport" test below reproduces the owner's exact
+ * measurement and is the one that would have caught this before it shipped. */
 test.describe("B1482096 — the empty-state schedule list reads as one contained panel, never loose corner text", () => {
   // elementFromPoint at the two corners the owner's screenshot showed populated — must resolve to
   // the plain page background (LinkSchedulePanel's own surface), never into the schedule list.
@@ -204,6 +217,56 @@ test.describe("B1482096 — the empty-state schedule list reads as one contained
     const dropdownBg = await list.evaluate((el) => getComputedStyle(el.parentElement).backgroundColor);
     expect(dropdownBg).not.toBe("rgba(0, 0, 0, 0)");
     await expect(list).toContainText("Goose Creek");
+  });
+
+  /* ⛔ REGRESSION REPRODUCTION — the owner's exact measurement: a short window (~465px of content
+   * height) with the owner-list panel long enough (8 schedules) to no longer fit beside the empty
+   * state's own actions. Before the fix, the panel sat on top of "Link an existing schedule" at
+   * this height; this test drives BOTH buttons for real and checks the point each renders at, not
+   * just that they exist in the DOM (existence alone passed on the broken build too). */
+  test("short viewport (~465px): Create and Link are never overlapped by the owner-list panel, and both stay clickable", async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 465 });
+    await openSchedule(page, ORPHAN, SCHEDULES);
+
+    const createBtn = page.getByRole("button", { name: "Create schedule" });
+    const linkBtn = page.getByRole("button", { name: "Link an existing schedule" });
+    await expect(createBtn).toBeVisible();
+    await expect(linkBtn).toBeVisible();
+
+    // The owner's own repro: elementFromPoint at each button's centre must resolve INTO the
+    // button itself, never into the schedule-owner-list panel sitting over it.
+    const hitsOwnButton = async (locator) => {
+      const box = await locator.boundingBox();
+      expect(box).not.toBeNull();
+      const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+      return page.evaluate(({ cx, cy }) => {
+        const el = document.elementFromPoint(cx, cy);
+        return !!el?.closest?.("button") && !el.closest('[data-testid="schedule-owner-list"]');
+      }, { cx, cy });
+    };
+    expect(await hitsOwnButton(createBtn)).toBe(true);
+    expect(await hitsOwnButton(linkBtn)).toBe(true);
+
+    // Document flow, not overlap: the owner-list panel starts at or below the empty state's own
+    // content — never above the bottom edge of the buttons that sit above it. Captured BEFORE the
+    // click below, because clicking "Link an existing schedule" replaces that trigger with the
+    // picker row (progressive disclosure) — its own locator stops resolving after the click.
+    const list = page.getByTestId("schedule-owner-list");
+    const listBox = await list.boundingBox();
+    const linkBox = await linkBtn.boundingBox();
+    expect(listBox.y).toBeGreaterThanOrEqual(linkBox.y + linkBox.height - 1);
+
+    // Genuinely clickable, not merely present: this is the exact action the owner reported dead.
+    await linkBtn.click();
+    await expect(page.getByLabel("Choose a schedule to link")).toBeVisible();
+
+    // The whole thing is reachable — the shell scrolls rather than running content off the
+    // bottom with no way back to it.
+    const shell = page.getByTestId("schedule-empty-shell");
+    const { scrollHeight, clientHeight } = await shell.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
+    expect(scrollHeight).toBeGreaterThan(clientHeight); // this fixture's content genuinely overflows 465px
+    await shell.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await expect(list.getByTestId("schedule-owner-row").last()).toBeInViewport();
   });
 });
 
