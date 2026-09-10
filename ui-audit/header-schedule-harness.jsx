@@ -38,13 +38,13 @@ const authBtn = (
   </button>
 );
 
-function HeaderCase({ scope, zoomable }) {
+function HeaderCase({ scope, zoomable, view, projectName = "Bain" }) {
   const toolbar = {
     ready: true,
     section: "projects",
     reviewOpen: false,
     reviewCount: 3,
-    view: zoomable ? "split" : "grid",
+    view: view || (zoomable ? "split" : "grid"),
     zoomable,
     zoomPct: 100,
     activePanel: null,
@@ -54,7 +54,7 @@ function HeaderCase({ scope, zoomable }) {
       <AppHeader
         module="scheduler"
         homeLabel="Dashboard"
-        currentProject={{ id: "p1", name: "Bain" }}
+        currentProject={{ id: "p1", name: projectName }}
         onSelectProject={() => {}}
         onNewProject={() => {}}
         saveState="synced"
@@ -68,6 +68,19 @@ function HeaderCase({ scope, zoomable }) {
   );
 }
 
+/* NEW-2 (2026-09-10) — the extra scopes this file's own header comment and the verify script's
+ * NEW-2 section drive, added alongside the original two rather than replacing them (every
+ * pre-existing assertion keeps reading the same "grid"/"split" scopes it always has):
+ *   "gantt"      — the THIRD real Schedule view (owner's own adjacent-case ask: "each of the
+ *                  three views selected"). Same `zoomable:true` shape as "split" (Gantt also
+ *                  shows the zoom cluster) — kept as its own scope rather than assumed identical,
+ *                  because the SELECTED pill inside ViewToggle renders bolder (fontWeight 700 vs
+ *                  500), which can shift the chip's own measured width by a font-metric amount
+ *                  the source can't rule out by inspection.
+ *   "split-long" — same toolbar shape as "split", but with a deliberately long project name in
+ *                  the ROW 1 breadcrumb above — proves Row 2's centering is genuinely independent
+ *                  of Row 1's content (the two rows measure their own, separate zones).
+ */
 function App() {
   return (
     <ThemeProvider>
@@ -75,6 +88,10 @@ function App() {
       <HeaderCase scope="grid" zoomable={false} />
       {/* "split" — the wider real toolbar case (Split/Gantt views add the zoom cluster) */}
       <HeaderCase scope="split" zoomable />
+      {/* "gantt" — the third real view; same toolbar shape as split, checked independently */}
+      <HeaderCase scope="gantt" zoomable view="gantt" />
+      {/* "split-long" — split's toolbar shape, a long project name in the OTHER row */}
+      <HeaderCase scope="split-long" zoomable projectName="8 South Distribution Center Phase II Land Sale Tract" />
     </ThemeProvider>
   );
 }

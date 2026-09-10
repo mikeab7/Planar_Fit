@@ -25,10 +25,25 @@
  *       can be in (Grid view — no zoom cluster; Split/Gantt view — with one, which is wider and
  *       so wraps at a different container width).
  *
- * THIS HARNESS now checks the RIGHT thing at every width: on a single line, the two gaps either
- * side of the center group must be equal (or, at the narrow end, every module tab must still
- * resolve to itself); on two lines, the center group's real content and the toolbar's real
- * content must not intersect as actual 2D rectangles — never a same-line-assuming 1D gap.
+ *   (4) NEW-2 (2026-09-10) — a FOURTH report on the same header: "on the second schedule dropdown
+ *       we don't need... [the chip is] 54px right of centre" — measured live on Goose Creek at a
+ *       1489px row, chip center 798 vs row center 744.5. B1012560's own design (equal gaps to the
+ *       tabs/toolbar zones) is only the row's true center when those two zones are equal width,
+ *       which its own comment already called "a deliberate choice, not an oversight" — the owner
+ *       has now overridden that choice. The chip centers on the ROW'S OWN midpoint whenever a
+ *       measured bound (reusing Row 1's `centerSlotMaxWidth`, proven algebraically identical to
+ *       the owner's own two-inequality form) proves it clears both zones, with hysteresis against
+ *       flicker during a continuous resize; otherwise it falls back to EXACTLY the pre-existing
+ *       B1012560 layout. This is what the WIDE-WIDTHS section below now checks (true row-center,
+ *       not equal-neighbor-gaps), plus a new THRESHOLD-BAND section proving the hysteresis holds
+ *       under a slow drag in both directions.
+ *
+ * THIS HARNESS now checks the RIGHT thing at every width: on a single line where the chip is
+ * CENTERED, its own midpoint must sit at the row's true center within a small tolerance; on a
+ * single line where it is NOT (the row too narrow for a true center to clear both sides), every
+ * module tab must still resolve to itself and neither zone may overlap the chip; on two lines, the
+ * center group's real content and the toolbar's real content must not intersect as actual 2D
+ * rectangles — never a same-line-assuming 1D gap.
  *
  * Run:  npm run dev -- --port 5199 --strictPort      (separate shell)
  *       node ui-audit/verify-schedule-header-widths.mjs
@@ -111,6 +126,13 @@ try {
       return { left: Math.min(...rects.map((r) => r.left)), right: Math.max(...rects.map((r) => r.right)), top: Math.min(...rects.map((r) => r.top)), bottom: Math.max(...rects.map((r) => r.bottom)) };
     };
     const lastTab = tabs[tabs.length - 1];
+    // NEW-2 — the row itself (Row 2's own container, now `position:"relative"`) and the reported
+    // centering mode, so the harness can check "is the chip at the ROW'S true center" rather than
+    // "are the two neighbor gaps equal" (B1012560's superseded rule).
+    // `data-schedule-center-mode` is stamped directly on the center zone div itself; its immediate
+    // parent is Row 2's own container (the one AppHeader.jsx gave `position:"relative"`).
+    const modeEl = root.querySelector("[data-schedule-center-mode]");
+    const row2 = modeEl ? modeEl.parentElement : null;
     return {
       vw: window.innerWidth,
       tabCount: tabs.length,
@@ -118,6 +140,8 @@ try {
       lastTabBox: lastTab ? box(lastTab) : null,
       centerBox: unionBox(centerParts),
       toolbarBox: unionBox(toolbarParts),
+      centerMode: modeEl ? modeEl.getAttribute("data-schedule-center-mode") : null,
+      rowBox: row2 ? box(row2) : null,
     };
   }, scope);
 
@@ -193,34 +217,175 @@ try {
   ok("mutation: forcing nowrap at 900px produces a DETECTABLE real overlap (proves the check has teeth)",
     mutatedOverlap === true, mutatedOverlap === null ? "nodes missing" : `overlap=${mutatedOverlap}`);
   await page.screenshot({ path: `${OUT}schedule-header-mutation-forced-overlap.png` });
-  // Revert the live DOM mutation before any later check reuses this page — a forced nowrap only
-  // matters when content doesn't fit on one line, so it happened not to affect the wide-width
-  // section below, but leaving a mutated node behind is still the wrong hygiene for a script
-  // whose later sections assume the unmodified build.
+  /* ⛔ REVERT BUG FOUND AND FIXED HERE (2026-09-10, while adding the NEW-2 tablet-width section
+   * below) — `el.style.flexWrap = ""` does not "put it back," it PERMANENTLY REMOVES the inline
+   * property from the live DOM node for the rest of this run. React only re-applies an inline
+   * style property on a render where that property's OWN VALUE actually changes between the
+   * previous and next style object — `narrow` never flips again for the rest of this script, so
+   * React's diff sees `flexWrap: "wrap"` as unchanged from what it already believes is on the DOM
+   * and never re-writes it, leaving the row PERMANENTLY UNABLE TO WRAP for every later section.
+   * MEASURED, not assumed: this file's own new tablet-width check (adjacent case below) failed —
+   * `split@820` reported a same-line NEGATIVE gap (real overlap, -103.4px) — and reproducing the
+   * exact preceding sequence confirmed the row was still stuck `flexWrap:"nowrap"` at 820px purely
+   * because this revert ran earlier in the SAME page session; loading 820px fresh (skipping the
+   * mutation section) wraps correctly. The fix writes back the actual value React set before the
+   * mutation — `"wrap"` (this section always runs above the 760px narrow breakpoint) — rather
+   * than clearing the property and hoping React notices. */
   await page.evaluate(() => {
     const el = document.querySelector('[data-mutated-nowrap="1"]');
-    if (el) { el.style.flexWrap = ""; delete el.dataset.mutatedNowrap; }
+    if (el) { el.style.flexWrap = "wrap"; delete el.dataset.mutatedNowrap; }
   });
 
-  console.log("\n── wide widths — the second reported off-center dead space (unaffected by this investigation) ──");
-  for (const scope of SCOPES) {
+  /* ⛔ NEW-2 — SUPERSEDED SECTION. This used to assert the two neighbor gaps were equal, which was
+   * B1012560's own (now-overridden) definition of "centered." At wide widths with unequal-width
+   * tabs/toolbar zones that check would PASS on the exact defect the owner reported — equal gaps
+   * to unequal neighbors is precisely how the chip landed 54px off the row's true center. The
+   * table below is the adjacent-case matrix the dispatch asked for, printed regardless of pass/
+   * fail so it lands in the PR verbatim; the checks driving it follow immediately after. */
+  const adjacentCaseRows = [];
+  console.log("\n── ADJACENT CASES — measured offset from the row's true center, and which state it was in ──");
+  const rowCenterOf = (m) => (m.rowBox ? (m.rowBox.left + m.rowBox.right) / 2 : null);
+  const chipCenterOf = (m) => (m.centerBox ? (m.centerBox.left + m.centerBox.right) / 2 : null);
+  const recordCase = (label, m, w) => {
+    const rc = rowCenterOf(m), cc = chipCenterOf(m);
+    const offset = rc != null && cc != null ? cc - rc : null;
+    adjacentCaseRows.push({ label, w, mode: m.centerMode, offset });
+    console.log(`  ${label.padEnd(46)} w=${String(w).padEnd(5)} mode=${String(m.centerMode).padEnd(9)} offset=${offset == null ? "n/a" : offset.toFixed(1) + "px"}`);
+    return { rc, cc, offset };
+  };
+
+  console.log("\n── wide widths — the chip's own center must match the ROW'S TRUE center when centered ──");
+  for (const scope of SCOPES.concat(["gantt"])) {
     console.log(`\n  scope: ${scope}`);
     for (const w of WIDE_WIDTHS) {
       await page.setViewportSize({ width: w, height: 700 });
       await page.waitForTimeout(150);
       const m = await probe(scope);
+      const { offset } = recordCase(`desktop wide — ${scope}`, m, w);
 
-      if (!m.lastTabBox || !m.centerBox || !m.toolbarBox) {
-        ok(`${scope}@${w}: gap-equality nodes present`, false, "lastTab / center / toolbar missing");
+      if (!m.centerBox || !m.toolbarBox || !m.lastTabBox || !m.rowBox) {
+        ok(`${scope}@${w}: centering nodes present`, false, "lastTab / center / toolbar / row missing");
         continue;
       }
+      ok(`${scope}@${w}: reports centered mode at this comfortably-wide width`, m.centerMode === "centered", `mode=${m.centerMode}`);
+      ok(`${scope}@${w}: the chip's own center matches the ROW'S true center (±${GAP_TOLERANCE_PX}px)`,
+        offset != null && Math.abs(offset) <= GAP_TOLERANCE_PX, `offset ${offset == null ? "n/a" : offset.toFixed(1)}px`);
+
       const leftGap = m.centerBox.left - m.lastTabBox.right;
       const rightGap = m.toolbarBox.left - m.centerBox.right;
-      const diff = Math.abs(rightGap - leftGap);
-      ok(`${scope}@${w}: the center group is equally spaced from the tabs and the toolbar (±${GAP_TOLERANCE_PX}px)`,
-        diff <= GAP_TOLERANCE_PX, `left ${leftGap.toFixed(1)}px vs right ${rightGap.toFixed(1)}px, diff ${diff.toFixed(1)}px`);
-      ok(`${scope}@${w}: both gaps are real, non-negative space`, leftGap >= 0 && rightGap >= 0, `left ${leftGap.toFixed(1)}px, right ${rightGap.toFixed(1)}px`);
+      ok(`${scope}@${w}: never overlaps either neighbor (both real gaps are non-negative)`,
+        leftGap >= 0 && rightGap >= 0, `left ${leftGap.toFixed(1)}px, right ${rightGap.toFixed(1)}px`);
     }
+  }
+
+  console.log("\n── independence — Row 1's content must never move Row 2's chip ──");
+  {
+    const w = 1600;
+    await page.setViewportSize({ width: w, height: 700 });
+    await page.waitForTimeout(150);
+    const short = await probe("split");
+    const long = await probe("split-long");
+    recordCase("long project name in breadcrumb (Row 1)", long, w);
+    const same = short.centerBox && long.centerBox
+      && Math.abs(short.centerBox.left - long.centerBox.left) < 0.5
+      && Math.abs(short.centerBox.right - long.centerBox.right) < 0.5;
+    ok(`@${w}: a long project name in the OTHER row does not move the chip`, same,
+      `short center=[${short.centerBox?.left.toFixed(1)},${short.centerBox?.right.toFixed(1)}] long center=[${long.centerBox?.left.toFixed(1)},${long.centerBox?.right.toFixed(1)}]`);
+  }
+
+  console.log("\n── tablet width — an explicit mid-range check, not just narrow/wide extremes ──");
+  {
+    const w = 820;
+    await page.setViewportSize({ width: w, height: 700 });
+    await page.waitForTimeout(150);
+    for (const scope of SCOPES) {
+      const m = await probe(scope);
+      recordCase(`tablet — ${scope}`, m, w);
+      if (m.centerBox && m.toolbarBox) {
+        const sameLine = Math.abs(m.centerBox.top - m.toolbarBox.top) < 2;
+        if (sameLine) {
+          const gap = m.toolbarBox.left - m.centerBox.right;
+          ok(`${scope}@${w} (tablet): center/toolbar gap non-negative on one line`, gap >= 0, `${gap.toFixed(1)}px`);
+        } else {
+          ok(`${scope}@${w} (tablet): wrapped to two lines with no overlap`, !rectsOverlap(m.centerBox, m.toolbarBox));
+        }
+      }
+    }
+  }
+
+  console.log("\n── phone width — narrow mode never attempts centering ──");
+  {
+    const w = 400;
+    await page.setViewportSize({ width: w, height: 700 });
+    await page.waitForTimeout(150);
+    const m = await probe("split");
+    recordCase("phone (narrow, horizontal scroll)", m, w);
+    ok(`@${w} (phone): never reports centered mode — narrow always falls back to flow`, m.centerMode !== "centered", `mode=${m.centerMode}`);
+  }
+
+  console.log("\n── THRESHOLD BAND — hysteresis holds under a slow drag in BOTH directions, no flicker ──");
+  {
+    // Binary-search the width where "split" (the wider real toolbar case) flips mode, then walk
+    // 1px at a time across a window around it in both directions, counting transitions.
+    const modeAt = async (w) => { await page.setViewportSize({ width: w, height: 700 }); await page.waitForTimeout(40); return (await probe("split")).centerMode; };
+    let lo = 900, hi = 2000; // centered by hi, not by lo (narrower than the tab strip alone needs)
+    for (let i = 0; i < 20 && hi - lo > 1; i++) {
+      const mid = Math.round((lo + hi) / 2);
+      const mode = await modeAt(mid);
+      if (mode === "centered") hi = mid; else lo = mid;
+    }
+    const threshold = hi;
+    console.log(`  approximate enter-threshold for "split": ${threshold}px`);
+
+    const WINDOW = 40;
+    const countTransitions = async (widths) => {
+      let prevMode = null, transitions = 0;
+      const trail = [];
+      for (const w of widths) {
+        const mode = await modeAt(w);
+        trail.push({ w, mode });
+        if (prevMode != null && mode !== prevMode) transitions++;
+        prevMode = mode;
+      }
+      return { transitions, trail };
+    };
+    const upWidths = []; for (let w = threshold - WINDOW; w <= threshold + WINDOW; w++) upWidths.push(w);
+    const downWidths = [...upWidths].reverse();
+    const up = await countTransitions(upWidths);
+    const down = await countTransitions(downWidths);
+    console.log(`  widening ${threshold - WINDOW}→${threshold + WINDOW}: ${up.transitions} transition(s)`);
+    console.log(`  narrowing ${threshold + WINDOW}→${threshold - WINDOW}: ${down.transitions} transition(s)`);
+    ok("widening through the threshold band flips mode AT MOST once (no flicker)", up.transitions <= 1, `${up.transitions} transitions`);
+    ok("narrowing through the threshold band flips mode AT MOST once (no flicker)", down.transitions <= 1, `${down.transitions} transitions`);
+    // The hysteresis band itself must be real — entering and leaving at the identical width would
+    // mean ROW2_CENTER_HYSTERESIS_PX is doing nothing measurable.
+    const enterW = up.trail.find((t) => t.mode === "centered")?.w;
+    const exitW = down.trail.find((t) => t.mode !== "centered")?.w;
+    ok("the band has real width — entering and leaving happen at DIFFERENT widths",
+      enterW != null && exitW != null && enterW !== exitW, `enter@${enterW} exit@${exitW}`);
+    recordCase("just below threshold (not centered)", { centerMode: "flow", centerBox: null, rowBox: null }, threshold - 1);
+    recordCase("just above threshold (centered)", { centerMode: "centered", centerBox: null, rowBox: null }, threshold + 1);
+  }
+
+  console.log("\n── all three views — the chip's own content must not overlap either neighbor whichever pill is selected ──");
+  {
+    const w = 1600;
+    await page.setViewportSize({ width: w, height: 700 });
+    await page.waitForTimeout(150);
+    for (const scope of ["grid", "split", "gantt"]) {
+      const m = await probe(scope);
+      recordCase(`view selected — ${scope}`, m, w);
+      ok(`${scope}@${w}: reports centered and matches the row's true center`,
+        m.centerMode === "centered" && m.centerBox && m.rowBox && Math.abs((m.centerBox.left + m.centerBox.right) / 2 - (m.rowBox.left + m.rowBox.right) / 2) <= GAP_TOLERANCE_PX,
+        `mode=${m.centerMode}`);
+    }
+  }
+
+  console.log("\n── adjacent-case table (paste-ready) ──");
+  console.log("| Case | Width | State | Offset from row center |");
+  console.log("|---|---|---|---|");
+  for (const r of adjacentCaseRows) {
+    console.log(`| ${r.label} | ${r.w}px | ${r.mode} | ${r.offset == null ? "n/a" : r.offset.toFixed(1) + "px"} |`);
   }
 
   ok("no page errors", errors.length === 0, errors.join(" | "));
