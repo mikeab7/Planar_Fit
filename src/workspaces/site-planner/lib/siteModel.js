@@ -38,7 +38,7 @@ import { bufferPolyline } from "./metesAndBounds.js";
 import { DEFAULT_ROAD_CLASS, roadClassOf } from "./roadClasses.js";
 import { ensureZ } from "./zOrder.js";
 import { normCountyKey } from "../../../shared/gis/countyKeys.js";
-import { nameAuthority } from "./projectName.js";
+import { nameAuthority, renameStamp } from "./projectName.js";
 // B927105 — the schema-version + status constants live in siteStatus.js (dependency-free) so a
 // caller that only needs a status label (doc-review/lib/reviewStore.js, siteListLight.js)
 // doesn't have to import this whole module's heavy geometry graph. Re-exported below so this
@@ -1198,7 +1198,7 @@ export function createSiteModel(p = {}, { onHeal } = {}) {
     // authoritative rename. `site` is a DERIVED MIRROR of the group's authoritative name; this stamp
     // is what lets any reader decide which mirror is current. Never set it outside a real rename:
     // lib/projectName.js treats it as the sole evidence that a group has an unambiguous answer.
-    siteRenamedAt: typeof p.siteRenamedAt === "number" && isFinite(p.siteRenamedAt) && p.siteRenamedAt > 0 ? p.siteRenamedAt : null,
+    siteRenamedAt: renameStamp(p.siteRenamedAt),
     name: p.name || "Concept A",
     updatedAt: p.updatedAt || Date.now(),
     // team sharing (additive; null = private). teamId = the team this plan is shared with;

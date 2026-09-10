@@ -40,11 +40,23 @@ create or replace function public.reconcile_site_group_name(
   p_renamed_at bigint
 )
 returns table (id text, version integer, deleted boolean)
-language sql
+language plpgsql
 volatile
 security invoker
 set search_path = public, pg_temp
 as $$
+begin
+  -- ⛔ NEW-1 — same refusal as rename_site_group(), same reason: `jsonb_set` is STRICT, so a NULL
+  -- `p_renamed_at` aborts the whole group update with an opaque `23502` on `data` (see that file's
+  -- note — the NOT NULL constraint is what makes it an abort rather than a wipe, and this function
+  -- does not own that constraint). This one is reachable only by a service-role reconciliation
+  -- script, which is precisely the caller most likely to hand it a computed stamp that came back
+  -- empty, and the one with no UI to show it an error.
+  if p_renamed_at is null or p_renamed_at <= 0 then
+    raise exception 'reconcile_site_group_name: p_renamed_at must be a positive epoch-ms timestamp (got %)', p_renamed_at
+      using errcode = '22004';
+  end if;
+  return query
   update public.sites s
      set site       = p_site,
          data       = jsonb_set(
@@ -54,6 +66,7 @@ as $$
          updated_at = now()
    where coalesce(s.data->>'groupId', s.id) = p_group_id
   returning s.id, s.version, (s.deleted_at is not null) as deleted;
+end;
 $$;
 
 comment on function public.reconcile_site_group_name(text, text, bigint) is
