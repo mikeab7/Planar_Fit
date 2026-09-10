@@ -209,6 +209,34 @@ export const EL_DIM_ATTR = "data-el-dim";
  * double-click resolved to the LOT, which opens the Parcel panel and therefore took Properties away.
  * (His first report called it "a different, larger road"; the instrument proved it a parcel.) */
 export const CHROME_ATTR = "data-chrome";
+/* ⛔ B1342704 — THE OPPOSITE OF `data-chrome`: THIS MARKS CHROME THAT MUST STAY OPAQUE, NOT
+ * TRANSPARENT. `data-handle-layer` and `data-chrome` both mean "this is not a feature, keep
+ * looking below it" — correct for a DRAG grip, which performs no action of its own, so a
+ * double-click on one is rightly about the feature it belongs to. `data-el-action` marks the
+ * OPPOSITE kind of on-shape control: an "add" / "remove" glyph (SitePlanner.jsx's `featNode` /
+ * `glyphPlus` / `glyphMinus` — the on-building dock-zone / dog-ear / employee-side controls and
+ * the on-parking-field row controls) whose `onPointerDown` ALREADY performs the control's whole
+ * action on every single press. A double-click there is two presses of that SAME button, never an
+ * attempt to reach the feature underneath — so it must resolve to NOTHING, not fall through.
+ *
+ * OWNER'S REPORT, verbatim: double-clicking the "+" to expand a parking field opened Properties.
+ *
+ * ⛔ AND THIS ATTRIBUTE IS NOT CONSUMED HERE, WHICH IS DELIBERATE AND WORTH EXPLAINING. The first
+ * fix tried was a per-node `onDoubleClick` on the glyph that calls `stopPropagation()` — reasonable,
+ * and it does not work: the glyph's OWN `onPointerDown` mutates the model (grows a row, adds a
+ * zone), which re-renders and MOVES the glyph before the gesture's second press lands. Measured:
+ * `pointerdown#2` still lands on a control (the layout shift can even spawn a different one, like a
+ * newly-eligible "−" appearing where the "+" used to be), but `pointerup#2`'s target has already
+ * moved out from under the still-stationary cursor — so the browser's own "click target is the
+ * common ancestor of down and up" rule (see this file's header) retargets `click#2`/`dblclick`
+ * OUTSIDE the glyph's `<g>` entirely, and a `stopPropagation()` that never gets a chance to run
+ * fixes nothing. This is the SAME species of defect `resolveDoubleClickTarget` was built to survive
+ * for ordinary features (B233153, NEW-2 above) — a per-node handler cannot outlive a mid-gesture
+ * re-render — so the fix lives at the SAME place theirs does: the canvas root, keyed off what PRESS
+ * 1 actually hit (captured in the pointerdown CAPTURE phase, before any handler — including this
+ * one — can mutate anything), exactly mirroring how `gestureAnchorRef` already anchors a
+ * double-click to what press 1 SELECTED. See `gestureActionRef` in SitePlanner.jsx. */
+export const ACTION_ATTR = "data-el-action";
 export function stackEntries(nodes) {
   const out = [];
   for (const n of nodes || []) {
