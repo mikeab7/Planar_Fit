@@ -104,6 +104,100 @@ async function openSchedule(page, gid, projects) {
   await expect(page.getByTestId("schedule-owner-row").first()).toBeVisible({ timeout: 10_000 });
 }
 
+/* ── B1482096 — the empty-state owner list must never sit loose in a bottom corner ─────────────
+ *
+ * Owner report, with a screenshot: on a project with no schedule (the "No schedule for …"
+ * empty state), the schedule-owner list rendered as bare, unbounded text spanning the full
+ * window width underneath it — the project name and "No schedules here yet." hard against the
+ * bottom-LEFT corner, each row's count/pencil/trash hard against the bottom-RIGHT corner. Root
+ * cause: Scheduler.jsx's own wrapper stretched `left:0; right:0` with no surface behind it,
+ * while ScheduleOwnerList's bare wrapper (padding/gap/font only) has never carried its own
+ * background/border — correct for its OTHER caller (ScheduleCrumb.jsx), which supplies the
+ * surface via AnchoredMenu, wrong for this one, which supplied none. Fixed by making the
+ * empty-state wrapper a centered, width-capped panel carrying the same `menuPanelStyle` surface
+ * token the breadcrumb's dropdown gets — never by changing ScheduleOwnerList itself, so the
+ * dropdown case (asserted throughout the rest of this file) is provably untouched. */
+test.describe("B1482096 — the empty-state schedule list reads as one contained panel, never loose corner text", () => {
+  // elementFromPoint at the two corners the owner's screenshot showed populated — must resolve to
+  // the plain page background (LinkSchedulePanel's own surface), never into the schedule list.
+  async function cornerElements(page) {
+    return page.evaluate(() => {
+      const describe = (el) => !el ? null : {
+        testid: el.closest?.("[data-testid]")?.getAttribute("data-testid") || null,
+        text: (el.textContent || "").trim().slice(0, 40),
+      };
+      const w = window.innerWidth, h = window.innerHeight;
+      return {
+        bottomLeft: describe(document.elementFromPoint(2, h - 2)),
+        bottomRight: describe(document.elementFromPoint(w - 2, h - 2)),
+      };
+    });
+  }
+
+  test("a project with NO schedules of its own: nothing sits in either bottom corner, list is one contained panel", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    const corners = await cornerElements(page);
+    expect(corners.bottomLeft?.testid).not.toBe("schedule-owner-list");
+    expect(corners.bottomLeft?.testid).not.toBe("schedule-owner-row");
+    expect(corners.bottomRight?.testid).not.toBe("schedule-owner-list");
+    expect(corners.bottomRight?.testid).not.toBe("schedule-owner-row");
+
+    // The list is a bounded, centered panel — not stretched edge to edge.
+    const list = page.getByTestId("schedule-owner-list");
+    const box = await list.boundingBox();
+    const viewport = page.viewportSize();
+    expect(box.x).toBeGreaterThan(8);
+    expect(box.x + box.width).toBeLessThan(viewport.width - 8);
+
+    // It carries a real surface (the same token the breadcrumb dropdown uses) — not bare text
+    // over the page background.
+    const bg = await list.evaluate((el) => getComputedStyle(el.parentElement).backgroundColor);
+    expect(bg).not.toBe("rgba(0, 0, 0, 0)");
+    expect(bg).not.toBe("transparent");
+
+    // The empty state's own actions stay reachable and unobstructed by the list beneath them.
+    await expect(page.getByRole("button", { name: "Create schedule" })).toBeVisible();
+  });
+
+  test("a project with SEVERAL schedules of its own already linked: the grid shows, and no owner list leaks into the corners", async ({ page }) => {
+    // Goose Creek owns 5 of the fixture's schedules (linkedSiteId matches it), so routing there
+    // with one of them active resolves the link and shows the real grid, not the empty state —
+    // the adjacent case this containment fix must not regress: the wrapper this item touches is
+    // gated on showEmptyState, and must never render (or leave anything behind) once it's false.
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await expect(page.getByTestId("schedule-owner-list")).toHaveCount(0);
+    const corners = await cornerElements(page);
+    expect(corners.bottomLeft?.testid).not.toBe("schedule-owner-list");
+    expect(corners.bottomLeft?.testid).not.toBe("schedule-owner-row");
+    expect(corners.bottomRight?.testid).not.toBe("schedule-owner-list");
+    expect(corners.bottomRight?.testid).not.toBe("schedule-owner-row");
+  });
+
+  test("narrow window: still contained, no horizontal spill", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 780 });
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    const corners = await cornerElements(page);
+    expect(corners.bottomLeft?.testid).not.toBe("schedule-owner-list");
+    expect(corners.bottomRight?.testid).not.toBe("schedule-owner-row");
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+    await expect(page.getByRole("button", { name: "Create schedule" })).toBeVisible();
+  });
+
+  test("the schedule breadcrumb's own dropdown (a project that HAS a schedule) is unchanged", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("schedule-crumb").click();
+    const list = page.getByTestId("schedule-owner-list");
+    await expect(list).toBeVisible({ timeout: 10_000 });
+    // Still grouped exactly as the existing suite (below) proves in depth — this is a smoke check
+    // that the dropdown's own surface (AnchoredMenu's panel) is what's visible, not a doubled-up
+    // border from ScheduleOwnerList itself growing a surface of its own.
+    const dropdownBg = await list.evaluate((el) => getComputedStyle(el.parentElement).backgroundColor);
+    expect(dropdownBg).not.toBe("rgba(0, 0, 0, 0)");
+    await expect(list).toContainText("Goose Creek");
+  });
+});
+
 /* B1435888 — "+ New schedule in <project>" lives in the SCHEDULE crumb's own dropdown (the
  * breadcrumb's second, independent level), not on the page surface and not in the PROJECT
  * crumb's "+ New project" row any more — that row now creates a genuine new SITE project, since
