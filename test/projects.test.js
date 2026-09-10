@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, shortenDisplayName, findProjectAtOrigin, distanceFeetBetween, SAME_GROUND_FT, hasSavedProjectRecord } from "../src/shared/projects/projectModel.js";
+import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, shortenDisplayName, findProjectAtOrigin, distanceFeetBetween, SAME_GROUND_FT, hasSavedProjectRecord, applyFrozenOrder } from "../src/shared/projects/projectModel.js";
 import { listProjects } from "../src/shared/projects/projects.js";
 import { setActiveUser } from "../src/workspaces/site-planner/lib/activeUser.js";
 
@@ -604,5 +604,67 @@ describe("findProjectAtOrigin — the ADOPT decision", () => {
   it("ignores records with no origin at all", () => {
     const records = [{ id: "g1", groupId: "g1", origin: null, updatedAt: 100 }];
     expect(findProjectAtOrigin(records, ORIGIN)).toBeNull();
+  });
+});
+
+// NEW-2 — a rename bumps `updatedAt`, and `groupProjects`' sort is most-recent-first, so a rename
+// jumps the renamed row to the top the instant it commits — while a keyboard user's focus (and a
+// mouse user's pointer) inside the still-open switcher dropdown is resolved against the layout
+// from BEFORE that jump. `applyFrozenOrder` is what ProjectBreadcrumb.jsx applies for as long as
+// the dropdown stays open, so the reported failure ("renamed Aldine Bender 1, pressed Enter, the
+// app opened Ta Chen — the row that was sitting at the top") is a MODEL-LEVEL property, not just
+// a UI screenshot: the row order a caller sees must not move mid-edit no matter what the
+// underlying recency sort says happened to `updatedAt`.
+describe("applyFrozenOrder", () => {
+  const ROWS = [
+    { id: "tachen", name: "Ta Chen", updatedAt: 3000 },
+    { id: "third", name: "Third Project", updatedAt: 2000 },
+    { id: "aldine", name: "Aldine Bender 1", updatedAt: 1000 },
+  ];
+
+  it("with no snapshot, is a pass-through (the ordinary, un-frozen case)", () => {
+    expect(applyFrozenOrder(ROWS, null)).toBe(ROWS); // same reference — never a needless copy
+    expect(applyFrozenOrder(ROWS, [])).toBe(ROWS);
+  });
+
+  it("⛔ THE REPORTED CASE: a rename that bumps the renamed row to #1 does not move it in the FROZEN view", () => {
+    const snapshot = ROWS.map((r) => r.id); // taken the moment the rename started
+    // The rename lands: Aldine's updatedAt jumps past everyone, which is exactly what
+    // `groupProjects`' real recency sort would now do — re-sort as `groupProjects` does.
+    const resorted = [...ROWS].map((r) => (r.id === "aldine" ? { ...r, updatedAt: 9999 } : r))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    // The naive reorder: Aldine jumps to #1 and Ta Chen — the row that WAS #1 — slides to #2.
+    expect(resorted.map((r) => r.id)).toEqual(["aldine", "tachen", "third"]);
+    // Frozen: Ta Chen stays exactly where it was — first — never displaced into the slot Aldine
+    // vacated, which is the slot a stray keystroke would otherwise fall through onto.
+    const frozen = applyFrozenOrder(resorted, snapshot);
+    expect(frozen.map((r) => r.id)).toEqual(["tachen", "third", "aldine"]);
+    expect(frozen[0].id).toBe("tachen"); // still #1, exactly as before the rename
+    expect(frozen[0].updatedAt).toBe(3000);
+  });
+
+  it("still reflects updated CONTENT (name/updatedAt) for the frozen id — only its POSITION is held", () => {
+    const snapshot = ROWS.map((r) => r.id);
+    const renamed = ROWS.map((r) => (r.id === "aldine" ? { ...r, name: "Aldine Bender 1 RENAMED", updatedAt: 9999 } : r));
+    const frozen = applyFrozenOrder(renamed, snapshot);
+    expect(frozen.map((r) => r.id)).toEqual(["tachen", "third", "aldine"]); // position unchanged
+    expect(frozen[2].name).toBe("Aldine Bender 1 RENAMED"); // content is live
+  });
+
+  it("a project that did not exist at snapshot time is appended, never dropped", () => {
+    const snapshot = ["tachen", "third"]; // "aldine" not yet known when the snapshot was taken
+    const frozen = applyFrozenOrder(ROWS, snapshot);
+    expect(frozen.map((r) => r.id)).toEqual(["tachen", "third", "aldine"]);
+  });
+
+  it("a project the snapshot names but the live list no longer has is simply absent, not a crash", () => {
+    const snapshot = ["tachen", "ghost", "third", "aldine"];
+    const frozen = applyFrozenOrder(ROWS, snapshot);
+    expect(frozen.map((r) => r.id)).toEqual(["tachen", "third", "aldine"]);
+  });
+
+  it("ignores falsy entries in the list rather than throwing", () => {
+    const withHole = [ROWS[0], null, ROWS[1]];
+    expect(() => applyFrozenOrder(withHole, ["tachen", "third"])).not.toThrow();
   });
 });
