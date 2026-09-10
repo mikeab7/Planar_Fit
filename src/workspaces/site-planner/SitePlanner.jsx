@@ -152,6 +152,7 @@ import { safeAreaInsets } from "../../shared/ui/safeAreaInsets.js";
 import { registerChromeDock } from "../../shared/ui/chromeDock.js";
 import { publishBottomSheetHeight } from "../../shared/ui/bottomSheetTracker.js";
 import { isPhoneSheetMode, heightForSnap, resolveDragSnap, keyboardInsetPx, clampSheetHeightForKeyboard, selectionCoverDeltaPx } from "./lib/propertiesSheet.js";
+import { isPhoneShape } from "./lib/deviceShape.js";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
 /* NEW-2 — the ONE floor a header crumb may be squeezed to, shared with the project crumb so the
    plan chip beside it cannot be given a different one. No new module reaches any chunk: AppHeader
@@ -1901,7 +1902,9 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   // the canvas to a sliver, so they OVERLAY it instead of consuming row width, and the
   // right tool palette collapses behind a toggle. matchMedia keeps it in sync with
   // rotate/resize. The desktop layout is untouched (every mobile style is `narrow ?`-gated).
-  const [narrow, setNarrow] = useState(() => { try { return window.matchMedia(`(max-width: ${FLOAT_MIN_WIDTH}px)`).matches; } catch (_) { return false; } });
+  // B1447443 — raw WIDTH signal only; see `narrow` below (derived via `isPhoneShape`) for why
+  // width alone can no longer be the whole story.
+  const [narrowWidth, setNarrowWidth] = useState(() => { try { return window.matchMedia(`(max-width: ${FLOAT_MIN_WIDTH}px)`).matches; } catch (_) { return false; } });
   const [mobileTools, setMobileTools] = useState(false); // right tool rail open as an overlay (narrow only)
   const [mobileSections, setMobileSections] = useState(false); // NEW-1 (B917072) — left section rail (Land/Analysis/Yield/…) summoned as an overlay (narrow only)
   const [narrowProps, setNarrowProps] = useState(false); // B656: phone-only — the ✎ Properties pill opened the companion overlay
@@ -1955,7 +1958,17 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   const dismissHybridHint = () => { try { localStorage.setItem("planarfit:pondHybridHintSeen", "1"); } catch (_) {} setHybridHintSeen(true); };
   useEffect(() => {
     let mq; try { mq = window.matchMedia(`(max-width: ${FLOAT_MIN_WIDTH}px)`); } catch (_) { return undefined; }
-    const on = () => setNarrow(mq.matches);
+    const on = () => setNarrowWidth(mq.matches);
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
+  }, []);
+  // B1447443 — raw HEIGHT signal, the other half `narrow` (below) needs: a phone held in
+  // LANDSCAPE is wider than `FLOAT_MIN_WIDTH` (so `narrowWidth` alone misses it) but shorter than
+  // it too. Reuses the same token rather than inventing a second breakpoint.
+  const [shortHeight, setShortHeight] = useState(() => { try { return window.matchMedia(`(max-height: ${FLOAT_MIN_WIDTH}px)`).matches; } catch (_) { return false; } });
+  useEffect(() => {
+    let mq; try { mq = window.matchMedia(`(max-height: ${FLOAT_MIN_WIDTH}px)`); } catch (_) { return undefined; }
+    const on = () => setShortHeight(mq.matches);
     mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
     return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
   }, []);
@@ -1971,6 +1984,13 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
     return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
   }, []);
+  // B1447443 — a width-only breakpoint can't tell a real phone held SIDEWAYS (wide, but short and
+  // touch-operated) from an actual desktop window that merely happens to be that wide: on the
+  // Site surface that left the desktop-styled module rail (Land/Analysis/Yield/…) taller than the
+  // available height, with no scrollbar, so its last entries were unreachable. `coarsePointer` is
+  // never true for a mouse-driven session, so this can only ever ADD phone-shaped devices to what
+  // `narrowWidth` already caught — a real desktop, at any height, is untouched.
+  const narrow = isPhoneShape({ narrowWidth, shortHeight, coarsePointer });
   const lsGet = (k, d) => { try { return localStorage.getItem("planarfit:" + k) || d; } catch (_) { return d; } };
   // (Its `lsSet` twin went with NEW-1: smooth zoom was its last caller, and that setting is now
   // written by `shared/prefs/smoothZoom.js`, which owns the same `planarfit:` prefix.)
@@ -24568,8 +24588,15 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               permanently eating 54px+ of the screen (B113's right-rail pattern, extended here).
               Stays on-screen (transform:none) while a panel/companion is open — at that point the
               open panel is already costing far more width, and `left-menu-panel` below is
-              positioned assuming this rail's 54px, so hiding it there would leave a blank gap. */}
+              positioned assuming this rail's 54px, so hiding it there would leave a blank gap.
+              B1447443 — `overflowY:"auto"`/`minHeight:0` unconditionally, matching the right tool
+              rail's own pattern just below: on a short viewport (a landscape phone, or simply a
+              plan with every section tab present) a fixed-width vertical rail can need more height
+              than the canvas row has to give it, and a rail with no scroll affordance clips its
+              last entries with no way to reach them. Harmless on a normal desktop window, where
+              the rail already fits and no scrollbar appears. */}
           <div style={{ width: 54, flex: "none", background: PAL.chrome, borderRight: `1px solid ${PAL.chromeLine}`, display: "flex", flexDirection: "column", paddingTop: 4,
+            overflowY: "auto", minHeight: 0,
             ...(narrow ? { position: "absolute", left: 0, top: 0, bottom: 0, zIndex: 1105,
               // B1215682 — the phone Properties BOTTOM SHEET stays solo: the icon rail is a
               // left-side drawer affordance that has nothing to do with a sheet rising from the
