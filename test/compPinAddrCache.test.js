@@ -5,12 +5,17 @@
  * and the `readPinAddrStorage`/`persistPinAddr` pair that makes a resolved address survive a
  * reload instead of being geocoded once per page load, forever.
  *
+ * B1497890 split this pure half out of CompsPanel.jsx into the dependency-free
+ * shared/comps/lib/pinAddrCache.js (CompsPanel.jsx re-exports it unchanged) so Dashboard's
+ * CompsCard.jsx could share the cache without dynamic-importing the whole comps-panel component
+ * chunk; see that module's own header.
+ *
  * localStorage is stubbed the same way test/colorRecents.test.js does — this repo's vitest
  * config runs in a plain Node environment (no jsdom), so there's no browser storage global
  * unless the test provides one.
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import { pinCacheKey, readPinAddrStorage, persistPinAddr, PIN_ADDR_STORAGE_KEY, PIN_ADDR_STORAGE_MAX } from "../src/shared/comps/components/CompsPanel.jsx";
+import { pinCacheKey, readPinAddrStorage, persistPinAddr, PIN_ADDR_STORAGE_KEY, PIN_ADDR_STORAGE_MAX } from "../src/shared/comps/lib/pinAddrCache.js";
 
 const store = new Map();
 globalThis.localStorage = {

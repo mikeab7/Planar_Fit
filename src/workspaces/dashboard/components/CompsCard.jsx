@@ -5,10 +5,22 @@
  * every other Dashboard card follows the same "derivation happens before this renders" rule
  * (DashboardCards.jsx's own header). The one exception is the featured comp's resolved street
  * address, which is inherently asynchronous (a reverse-geocode network call) and belongs to
- * PRESENTATION, not data derivation — that lives in `useCompAddress` below, mirroring
- * shared/comps/components/CompsPanel.jsx's own `useCompLocationText` hook exactly (a deliberately
- * separate, self-contained resolver — this card is not kept alive between Dashboard visits, so
- * there's no reason to share a persistent cache with the comps panel).
+ * PRESENTATION, not data derivation — that lives in `useCompAddress` below.
+ *
+ * ⛔ B1497890 (found + deliberately scoped out while shipping B1497889/PR 1636 — "the same
+ * eager-reverse-geocode habit, a third implementation") — this used to fire the network lookup
+ * the instant the card mounted, every single Dashboard visit, forever: no persistence (a coordinate
+ * already resolved minutes ago was re-geocoded on the next reload) and no gate (Dashboard's cards
+ * all mount together the moment `dataReady` flips true — see Dashboard.jsx's own header — so this
+ * fired whether or not the card had ever scrolled onto screen, or whether anyone was even looking
+ * at the Dashboard tab). Two fixes, mirroring B1497889's shape exactly rather than inventing a
+ * second mechanism: **(1)** `useCompAddress` now shares CompsPanel.jsx's own disk-persisted cache
+ * (`pinCacheKey`/`readPinAddrStorage`/`persistPinAddr`, now split into the dependency-free
+ * `shared/comps/lib/pinAddrCache.js` — read THAT module's header before "simplifying" this back to
+ * importing CompsPanel.jsx directly: doing so once measurably leaked unrelated chunks onto the
+ * Site Planner route's own bundle) — a coordinate this device has ever resolved, from the map's
+ * Comps tab OR an earlier Dashboard visit, is never re-geocoded. **(2)** `useOnScreen` defers the
+ * call until the card has actually painted into the viewport — see its own header.
  *
  * ⛔ The reverse-geocode call reaches external hosts (geocode.arcgis.com / nominatim.openstreetmap.org)
  * this sandbox's egress blocks — see `site-planner/lib/geocode.js`'s own header. That path is
@@ -16,7 +28,7 @@
  * repo; the synchronous fallback (county name, or coordinates) is what's verified here and is
  * never wrong, just less specific.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RADIUS } from "../../../shared/ui/radius.js";
 import { NUM_FONT, TABULAR_NUMS } from "../../../shared/theme/typography.js";
 import { FONT_SIZE } from "../../../shared/ui/designTokens.js";
@@ -74,26 +86,64 @@ function PeriodToggle({ period, onChangePeriod }) {
   );
 }
 
+/** B1497890 — fires the reverse-geocode network call only once the card has genuinely painted
+ * onto the screen, not the instant it mounts. Dashboard cards all mount together the moment
+ * `dataReady` flips true (Dashboard.jsx's own header), regardless of where the user has dragged
+ * this one in their arranged grid, so mounting was never a proxy for "on screen." A plain
+ * `IntersectionObserver` on the card's own root element is enough — once it has ever intersected
+ * it stays "seen" (there's no reason to re-gate a card that has already been looked at once this
+ * visit). Fails OPEN (fires immediately) rather than never firing at all when
+ * `IntersectionObserver` isn't available. */
+function useOnScreen(ref) {
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    if (seen) return undefined;
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") { setSeen(true); return undefined; }
+    const io = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting) setSeen(true); });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [seen, ref]);
+  return seen;
+}
+
 /** The featured comp's address — the synchronous fallback (county name, or a site-plan's own
  * title) immediately, upgraded to a real reverse-geocoded street address once that resolves (pin
  * and parcel anchors both resolve the same way — B1149586's own fix, mirrored here rather than
- * showing a bare APN). `geocode.js` is dynamically imported so the Dashboard's own bundle — loaded
- * on every visit — never statically pulls in the Site Planner workspace's code for this one call. */
-function useCompAddress(comp) {
+ * showing a bare APN). `enabled` (B1497890, default true) gates the NETWORK half only — see
+ * `useOnScreen` above; the synchronous fallback still renders immediately either way, so nothing
+ * goes blank while deferred (the same contract CompsPanel.jsx's own `useCompLocationText` keeps
+ * for its `enabled` prop). `geocode.js` and `pinAddrCache.js` are both dynamically imported so the
+ * Dashboard's own bundle — loaded on every visit — never statically pulls in the Site Planner
+ * workspace's code for this one call. `pinAddrCache.js` is dependency-free (no React, no other
+ * imports) DELIBERATELY — importing CompsPanel.jsx directly instead once measurably leaked
+ * unrelated chunks onto the Site Planner route's own bundle (see that module's own header); do not
+ * "simplify" this back to importing the component file. */
+function useCompAddress(comp, enabled = true) {
   const anchor = comp?.anchor || null;
   const [resolved, setResolved] = useState(null);
   useEffect(() => {
     setResolved(null);
+    if (!enabled) return undefined;
     if (!anchor || (anchor.kind !== "pin" && anchor.kind !== "parcel")) return undefined;
     let live = true;
-    import("../../site-planner/lib/geocode.js")
-      .then(({ reverseGeocodeLatLon }) => reverseGeocodeLatLon(anchor.lat, anchor.lon))
-      .then((ans) => { if (live) setResolved(ans?.label || null); })
-      .catch(() => { if (live) setResolved(null); });
+    Promise.all([
+      import("../../site-planner/lib/geocode.js"),
+      import("../../../shared/comps/lib/pinAddrCache.js"),
+    ]).then(([{ reverseGeocodeLatLon }, { pinCacheKey, readPinAddrStorage, persistPinAddr }]) => {
+      const key = pinCacheKey(anchor);
+      const cached = key ? readPinAddrStorage()[key] : null;
+      if (cached) { if (live) setResolved(cached); return undefined; }
+      return reverseGeocodeLatLon(anchor.lat, anchor.lon).then((ans) => {
+        const label = ans?.label || null;
+        if (key && label) persistPinAddr(key, label);
+        if (live) setResolved(label);
+      });
+    }).catch(() => { if (live) setResolved(null); });
     return () => { live = false; };
     // `anchor` (not its individual fields) — it's a stable reference off `comp`, which itself only
     // changes identity when the fetched comps list actually changes (Dashboard.jsx's own useMemo).
-  }, [anchor]);
+  }, [anchor, enabled]);
 
   if (!anchor) return null;
   if (anchor.kind === "site_plan") return siteplanLocationText(anchor, null) || pinFallbackText(anchor, countyEntry);
@@ -129,7 +179,11 @@ function CompScale({ featuredRate, peerRates }) {
 
 export default function CompsCard({ data, onOpenComp, onAddComp, onChangePeriod }) {
   const featured = data?.featured || null;
-  const address = useCompAddress(featured); // called unconditionally — safe on null (returns null)
+  const rootRef = useRef(null);
+  // B1497890 — see useOnScreen's own header: defers the network geocode until this card has
+  // actually scrolled onto screen, not the instant the Dashboard mounts it.
+  const onScreen = useOnScreen(rootRef);
+  const address = useCompAddress(featured, onScreen); // called unconditionally — safe on null (returns null)
 
   if (!featured) {
     return (
@@ -179,6 +233,7 @@ export default function CompsCard({ data, onOpenComp, onAddComp, onChangePeriod 
 
   return (
     <div
+      ref={rootRef}
       role="button"
       tabIndex={0}
       onClick={() => onOpenComp?.(featured)}
