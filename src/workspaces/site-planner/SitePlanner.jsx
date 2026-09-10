@@ -4,6 +4,7 @@ import ContextMenu from "../../shared/ui/ContextMenu.jsx";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { loadSite, saveSite, deleteSite, loadSitesList, isCloudActive, activeUid, pushSiteToCloud, pushModelToCloud, keepaliveFlushSite, listVersions, getVersion, backupNow, reconcileSiteFromCloud, listDeletedPlansInGroup, restoreDeletedProject, purgeDeletedProject } from "./lib/storage.js";
+import { relTime } from "../../shared/projects/projectModel.js";
 import { collectAssetRefs, releasePlanForOverlay } from "./lib/sharedAssetRefs.js";
 import { idbGet, idbPut, idbDelete, idbAvailable } from "./lib/localDb.js";
 import { registerFlush } from "../../app/flushRegistry.js";
@@ -19770,7 +19771,14 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
                 );
                 return (
                   <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    {/* B1482000 (follow-on to B1469872) — the name alone can't always tell two rows
+                        apart (two plans in one project can share a name, e.g. "Concept A PRINT"
+                        duplicated then both discarded), so every row also carries when it was
+                        deleted — same layout + relative-time phrasing ProjectBreadcrumb's own
+                        account-wide bin already uses ("4w ago") — and the list is already sorted
+                        newest-deleted-first. */}
                     <span style={{ flex: 1, minWidth: 0, padding: "6px 8px", fontSize: 12, color: PAL.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.name}>{p.name}</span>
+                    <span style={{ flex: "none", color: PAL.disabled, fontSize: 11 }}>{relTime(p.deletedAt)}</span>
                     <button title="Restore this plan" aria-label={`Restore plan ${p.name}`} disabled={deletedPlansBusy === p.id} onClick={() => handleRestoreDeletedPlan(p)}
                       style={{ ...chip, padding: "2px 9px", flex: "none" }}>Restore</button>
                     <button title="Delete this plan forever" aria-label={`Delete plan ${p.name} forever`} disabled={deletedPlansBusy === p.id} onClick={() => setPlanPurgeArm(p.id)}

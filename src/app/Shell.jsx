@@ -528,7 +528,7 @@ export default function Shell() {
    * blocked notice in the moment the check comes back positive. `gateReqRef` drops a stale
    * response from a projectId the user has already navigated away from.
    */
-  const [projectGate, setProjectGate] = useState({ id: null, status: "unknown", name: null, deletedAt: null });
+  const [projectGate, setProjectGate] = useState({ id: null, status: "unknown", name: null, deletedAt: null, scope: "project" });
   const [gateRecheck, setGateRecheck] = useState(0);
   const gateReqRef = useRef(null);
   /* B1202176 — ids the Site Planner minted LOCALLY this session via "New project" / "New site
@@ -692,6 +692,7 @@ export default function Shell() {
                     status={projectGate.status}
                     name={projectGate.name}
                     deletedAt={projectGate.deletedAt}
+                    scope={projectGate.scope}
                     onRestore={restoreBlockedProject}
                     onDashboard={goDashboard}
                   />
