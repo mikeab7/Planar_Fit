@@ -26,7 +26,7 @@
  * fields, that is a sign it needs the real `loadSitesList()`, not an extension of this one.
  */
 import { activeUid, cloudSitesKey } from "./activeUser.js";
-import { reconcileGroupNames } from "./projectName.js";
+import { reconcileGroupNames, renameStamp } from "./projectName.js";
 import { reportClientEvent } from "../../../shared/telemetry/clientErrors.js";
 import { DEFAULT_STATUS, LEGACY_STATUS, normStatus, isLegacyRecord, normRole } from "./siteStatus.js";
 
@@ -47,7 +47,7 @@ function projectSummaryOf(p) {
     groupId: p.groupId || p.id || null,
     site: p.site || p.name || "Untitled site",
     name: p.name || "Concept A",
-    siteRenamedAt: typeof p.siteRenamedAt === "number" && isFinite(p.siteRenamedAt) && p.siteRenamedAt > 0 ? p.siteRenamedAt : null,
+    siteRenamedAt: renameStamp(p.siteRenamedAt),
     updatedAt: p.updatedAt || 0,
     status: normStatus(p.status, isLegacyRecord(p) ? LEGACY_STATUS : DEFAULT_STATUS),
     // B843792 (NEW-1) — role passthrough (pursuit vs tracked); see siteStatus.js.

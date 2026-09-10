@@ -115,7 +115,11 @@ export function findProjectAtOrigin(records = [], origin, { excludeGroupId = nul
 export function projectGateStatus({ res, freshlyCreated = false } = {}) {
   if (!res || res.ok === false) return { status: "live", name: null, deletedAt: null }; // fail OPEN — an inconclusive answer never blocks
   if (!res.exists) return { status: freshlyCreated ? "live" : "missing", name: null, deletedAt: null };
-  if (res.deleted) return { status: "deleted", name: res.name, deletedAt: res.deletedAt };
+  // `scope` (B1482000, follow-on to B1469872): "project" (default) when the whole project is gone,
+  // "plan" when `id` named one still-soft-deleted PLAN inside an otherwise-live project —
+  // `checkProjectDeletionStatus` (storage.js) is the one place that tells the two apart. The
+  // notice screen uses it to name the right thing and offer the right words.
+  if (res.deleted) return { status: "deleted", name: res.name, deletedAt: res.deletedAt, scope: res.scope || "project" };
   return { status: "live", name: null, deletedAt: null };
 }
 

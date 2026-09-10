@@ -30,10 +30,19 @@ const btnBase = { height: 28, padding: "0 14px", borderRadius: RADIUS.md, fontFa
 const secondaryBtn = { ...btnBase, border: "1px solid var(--border-default)", background: "var(--surface-raised)", color: "var(--text-primary)" };
 const primaryBtn = { ...btnBase, border: "1px solid var(--accent)", background: "var(--accent)", color: "var(--on-accent)" };
 
-export default function DeletedProjectNotice({ status, name, deletedAt, onRestore, onDashboard }) {
+export default function DeletedProjectNotice({ status, name, deletedAt, scope = "project", onRestore, onDashboard }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const deleted = status === "deleted";
+  // B1482000 (follow-on to B1469872, owner report 2026-09-10) — this same blocked-route screen is
+  // reached two ways: the routed id is a whole project's own id (every plan in its group is gone —
+  // `scope: "project"`, the default), or it's ONE plan's id inside a project that's still live
+  // elsewhere (`scope: "plan"`, set by storage.js's `checkProjectDeletionStatus`). The owner's
+  // report: navigating straight to a binned plan's URL announced "This project was deleted" and
+  // named the whole PROJECT ("Bain") when only one of its plans was actually gone. `name` already
+  // carries the right thing by the time it reaches here (the caller picks project vs. plan name);
+  // this only has to pick the right WORD around it.
+  const isPlan = scope === "plan";
   const restore = async () => {
     setBusy(true); setError(null);
     try {
@@ -49,6 +58,7 @@ export default function DeletedProjectNotice({ status, name, deletedAt, onRestor
     <div
       data-testid="deleted-project-notice"
       data-status={status}
+      data-scope={scope}
       style={{
         position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
         background: "var(--surface-page)", padding: 24,
@@ -60,12 +70,12 @@ export default function DeletedProjectNotice({ status, name, deletedAt, onRestor
         boxShadow: "0 8px 28px rgba(0,0,0,0.16)", textAlign: "left", // design-exempt: no shadow-color token yet repo-wide
       }}>
         <div style={{ fontSize: FONT_DISPLAY, fontWeight: 700, color: "var(--text-primary)", marginBottom: 8 }}>
-          {deleted ? "This project was deleted" : "This project doesn't exist"}
+          {deleted ? (isPlan ? "This plan was deleted" : "This project was deleted") : "This project doesn't exist"}
         </div>
         <div style={{ fontSize: FONT_EMPHASIS, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 16 }}>
           {deleted ? (
             <>
-              <strong style={{ color: "var(--text-primary)" }}>{name || "Untitled project"}</strong>
+              <strong style={{ color: "var(--text-primary)" }}>{name || (isPlan ? "Untitled plan" : "Untitled project")}</strong>
               {/* ONE expression builds the whole sentence fragment, so the spacing is decided here
                   rather than by JSX's whitespace-condensing rules. The owner reported this line
                   reading "was moved to Recently deleted ." — a stray space before the period. That
@@ -90,7 +100,7 @@ export default function DeletedProjectNotice({ status, name, deletedAt, onRestor
           <button type="button" style={secondaryBtn} onClick={onDashboard}>Go to Dashboard</button>
           {deleted && (
             <button type="button" style={{ ...primaryBtn, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={restore}>
-              {busy ? "Restoring…" : "Restore project"}
+              {busy ? "Restoring…" : (isPlan ? "Restore plan" : "Restore project")}
             </button>
           )}
         </div>

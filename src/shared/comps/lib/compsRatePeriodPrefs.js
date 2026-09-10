@@ -17,6 +17,7 @@
  * here") can never be clobbered.
  */
 import { supabase } from "../../../workspaces/site-planner/lib/supabase.js";
+import { getProfileRow, invalidateProfileRow } from "../../profile/profileRowCache.js";
 
 const MIRROR_KEY = "planyr:compsRatePeriod:v1";
 export const DEFAULT_COMPS_RATE_PERIOD = "annual";
@@ -44,9 +45,11 @@ export async function loadCompsRatePeriod(uid) {
   const mirrorPeriod = normalizePeriod(readMirror());
   if (!supabase || !uid) return { period: mirrorPeriod, source: "local" };
   try {
-    const { data, error } = await supabase.from("profiles").select("prefs").eq("id", uid).maybeSingle();
-    if (error) return { period: mirrorPeriod, source: "local", error: error.message };
-    const period = normalizePeriod(data?.prefs?.compsRatePeriod);
+    // NEW-1 — routed through the shared, session-cached `profileRowCache` (MapFinder.jsx and
+    // CompsPanel.jsx both call this on mount, and MapFinder mounts CompsPanel itself, so this
+    // used to fire the SAME `profiles?select=prefs` read twice on one project open).
+    const row = await getProfileRow(uid);
+    const period = normalizePeriod(row?.prefs?.compsRatePeriod);
     writeMirror(period);
     return { period, source: "cloud" };
   } catch (e) {
@@ -69,6 +72,7 @@ export async function saveCompsRatePeriod(uid, period) {
       .from("profiles")
       .upsert({ id: uid, prefs: { ...prevPrefs, compsRatePeriod: next }, updated_at: new Date().toISOString() }, { onConflict: "id" });
     if (error) return { ok: false, period: next, error: error.message };
+    invalidateProfileRow(uid); // NEW-1 — the next load must see this write, not a cached pre-write row
     return { ok: true, period: next };
   } catch (e) {
     return { ok: false, period: next, error: e?.message || "comps rate period save failed" };

@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
 import ModuleLoader from "../../shared/ui/ModuleLoader.jsx";
+import { menuPanelStyle } from "../../shared/ui/controls.jsx";
 import {
   parseNavState, deriveCurrentProject, findBySiteId, needsScheduleCarryIn,
   dashboardNavActions, shouldShowLinkPanel, shouldAdoptLinkedSiteIntoRoute, isPickShowing,
@@ -704,38 +705,64 @@ export default function Scheduler({
             <ModuleLoader module="scheduler" />
           </div>
         )}
+        {/* The empty state (LinkSchedulePanel) AND which schedules this project owns
+            (ScheduleOwnerList — a project with none of its own can still reach the Organization's,
+            see that component's own header) are ONE scrollable region now, not two independently
+            absolutely-positioned overlays.
+            B1482096 (regression correction) — the original corner-text fix gave the owner list its
+            own surface but kept it as a SEPARATE `position:absolute, bottom:0` sibling stacked over
+            LinkSchedulePanel's own full-bleed box. Neither overlay could see the other's height, so
+            on a short window the owner-list panel simply overlaid LinkSchedulePanel's Create/Link
+            buttons — measured live, "Link an existing schedule" became unclickable
+            (`elementFromPoint` resolved to the panel, not the button) — and the panel itself still
+            ran off the bottom with no way to reach it. Fixed by making this ONE full-bleed
+            `overflow:"auto"` shell (this div) whose only job is to scroll, containing a plain flex
+            COLUMN that centers vertically when everything fits and simply grows (and scrolls) when
+            it doesn't — LinkSchedulePanel first, the owner-list panel second, true document flow so
+            they stack instead of overlapping at any viewport height. The owner-list panel keeps the
+            same `menuPanelStyle` surface token the breadcrumb's own dropdown uses (ScheduleCrumb.jsx
+            via AnchoredMenu) so the two read as one consistent list style — that part of the
+            original fix is unchanged; only the layout that combines it with the empty state moved.
+            Once a schedule IS loaded (showEmptyState false), none of this renders — the identical
+            list is reachable instead from the Row-1 breadcrumb's schedule crumb. */}
         {showEmptyState && (
-          <LinkSchedulePanel
-            siteName={routedSiteName}
-            schedules={projects}
-            suggestedMatch={suggestedMatch}
-            // Creating from the empty state goes through the SAME dialog as "+ New schedule" — a
-            // project with no schedule is the one case where auto-naming was defensible (there is
-            // nothing to collide with), but routing it separately is how two creation paths drift
-            // apart, and only one of them would then require an owner.
-            onCreate={() => setNewSchedulePrompt({ type: "prompt", siteId: projectId, siteName: routedSiteName })}
-            onLink={(scheduleId) => post({ type: "planar:nav-link", id: scheduleId, siteId: projectId, siteName: routedSiteName })}
-          />
-        )}
-        {/* Which schedules this project owns, and which one is open. Rendered beside the empty
-            state (a project with none of its own can still reach the Organization's) — see
-            ScheduleOwnerList's header. Once a schedule IS loaded (showEmptyState false), the
-            identical list is reachable from the Row-1 breadcrumb's schedule crumb (ScheduleCrumb,
-            planSlot above) instead of inline here — NEW-1 removed the header toolbar's own
-            "Schedules" button (ScheduleCenter → ScheduleSwitcher) now that the breadcrumb covers
-            the job. Kept here, unchanged, for the empty-state case — regressing this was
-            explicitly out of scope. */}
-        {showEmptyState && (
-          <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "40%", overflow: "auto", zIndex: 7 }}>
-            <ScheduleOwnerList
-              schedules={projects}
-              activeId={activeId}
-              siteId={projectId}
-              siteName={routedSiteName}
-              onSelect={selectSchedule}
-              onRename={renameSchedule}
-              onDelete={deleteSchedule}
-            />
+          <div
+            data-testid="schedule-empty-shell"
+            style={{
+              position: "absolute", inset: 0, zIndex: 6, overflow: "auto",
+              background: "var(--surface-page)", color: "var(--text-primary)",
+            }}
+          >
+            <div
+              style={{
+                boxSizing: "border-box", minHeight: "100%",
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                gap: 24, padding: "24px",
+              }}
+            >
+              <LinkSchedulePanel
+                siteName={routedSiteName}
+                schedules={projects}
+                suggestedMatch={suggestedMatch}
+                // Creating from the empty state goes through the SAME dialog as "+ New schedule" —
+                // a project with no schedule is the one case where auto-naming was defensible
+                // (there is nothing to collide with), but routing it separately is how two creation
+                // paths drift apart, and only one of them would then require an owner.
+                onCreate={() => setNewSchedulePrompt({ type: "prompt", siteId: projectId, siteName: routedSiteName })}
+                onLink={(scheduleId) => post({ type: "planar:nav-link", id: scheduleId, siteId: projectId, siteName: routedSiteName })}
+              />
+              <div style={{ ...menuPanelStyle, width: "min(360px, 100%)" }}>
+                <ScheduleOwnerList
+                  schedules={projects}
+                  activeId={activeId}
+                  siteId={projectId}
+                  siteName={routedSiteName}
+                  onSelect={selectSchedule}
+                  onRename={renameSchedule}
+                  onDelete={deleteSchedule}
+                />
+              </div>
+            </div>
           </div>
         )}
         {newSchedulePrompt && (

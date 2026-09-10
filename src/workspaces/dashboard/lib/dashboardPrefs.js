@@ -17,6 +17,7 @@
  * report) — proven pattern, just narrower.
  */
 import { supabase } from "../../site-planner/lib/supabase.js";
+import { getProfileRow, invalidateProfileRow } from "../../../shared/profile/profileRowCache.js";
 import { normalizeLayout, normalizeDismissed, appendNewCatalogCards } from "./dashboardLayout.js";
 
 const MIRROR_KEY = "planyr:dashboardLayout:v1";
@@ -57,12 +58,12 @@ export async function loadDashboardLayout(uid) {
     return { layout: appendNewCatalogCards(mirrorLayout, mirrorDismissed), dismissed: mirrorDismissed, source: "local" };
   }
   try {
-    const { data, error } = await supabase.from("profiles").select("prefs").eq("id", uid).maybeSingle();
-    if (error) {
-      return { layout: appendNewCatalogCards(mirrorLayout, mirrorDismissed), dismissed: mirrorDismissed, source: "local", error: error.message };
-    }
-    const rawLayout = normalizeLayout(data?.prefs?.dashboardLayout);
-    const dismissed = normalizeDismissed(data?.prefs?.dashboardDismissedCards, rawLayout);
+    // NEW-1 — shared, session-cached read (see profileRowCache.js): this and every other
+    // reader of this row (userPrefs.js, compsRatePeriodPrefs.js, sinceLastHerePrefs) share one
+    // fetch instead of each firing their own `profiles` read on mount.
+    const row = await getProfileRow(uid);
+    const rawLayout = normalizeLayout(row?.prefs?.dashboardLayout);
+    const dismissed = normalizeDismissed(row?.prefs?.dashboardDismissedCards, rawLayout);
     const layout = appendNewCatalogCards(rawLayout, dismissed);
     writeMirror(layout, dismissed);
     return { layout, dismissed, source: "cloud" };
@@ -90,6 +91,7 @@ export async function saveDashboardLayout(uid, layout, dismissed) {
       .from("profiles")
       .upsert({ id: uid, prefs: { ...prevPrefs, dashboardLayout: next, dashboardDismissedCards: nextDismissed }, updated_at: new Date().toISOString() }, { onConflict: "id" });
     if (error) return { ok: false, layout: next, dismissed: nextDismissed, error: error.message };
+    invalidateProfileRow(uid); // NEW-1 — the next load must see this write, not a cached pre-write row
     return { ok: true, layout: next, dismissed: nextDismissed };
   } catch (e) {
     return { ok: false, layout: next, dismissed: nextDismissed, error: e?.message || "layout save failed" };

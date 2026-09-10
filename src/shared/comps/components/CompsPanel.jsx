@@ -59,13 +59,49 @@ function countyEntry(key) {
   if (!rec) return null;
   return { name: rec.label ? rec.label.split(" ·")[0].trim() : null, state: rec.state || null };
 }
-const _pinAddrCache = new Map(); // "lat,lon" -> resolved address string | null, shared across every mounted row/detail view this session
+// NEW-2 (a project-open perf report — six reverse-geocode calls, ~3.3s aggregate, all fired in
+// the same tick during an ordinary project open) — this panel stays MOUNTED for as long as the
+// map is (see this file's own header: "Mounted whenever the map route is visible … so a comp
+// anchored while browsing Sites still loads and renders as a map pin"), and that mount runs
+// `comps.map(...)` unconditionally, so every pin/parcel-anchored comp in the account got
+// reverse-geocoded the instant this panel mounted — regardless of whether the Comps tab (or even
+// the Map view) was the thing actually on screen. A map PIN only needs the lat/lon it already
+// has; only a RAIL ROW or the detail view needs the resolved street address. So the address
+// lookup is persisted to disk (below — a coordinate is geocoded once per device, not once per
+// page load) AND gated on `enabled`, which every call site below wires to "the Comps tab is the
+// one actually showing" — deferring the whole burst off a plain project open's critical path
+// until someone actually looks at Comps.
+export const PIN_ADDR_STORAGE_KEY = "planyr:compPinAddr:v1";
+export const PIN_ADDR_STORAGE_MAX = 500; // a bound so a very active account's cache can't grow forever
+export function readPinAddrStorage() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PIN_ADDR_STORAGE_KEY) || "null");
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  } catch (_) { return {}; }
+}
+// Only a SUCCESSFUL resolution is persisted — a failed/unreachable lookup stays in-memory-only
+// (below) so it retries on the next page load rather than being remembered as permanently absent.
+export function persistPinAddr(key, label) {
+  try {
+    const store = readPinAddrStorage();
+    store[key] = label;
+    const entries = Object.entries(store);
+    const trimmed = entries.length > PIN_ADDR_STORAGE_MAX ? entries.slice(entries.length - PIN_ADDR_STORAGE_MAX) : entries;
+    localStorage.setItem(PIN_ADDR_STORAGE_KEY, JSON.stringify(Object.fromEntries(trimmed)));
+  } catch (_) { /* quota / private mode */ }
+}
+// "lat,lon" -> resolved address string | null, shared across every mounted row/detail view this
+// session, seeded from the persisted disk copy so a returning visit starts warm.
+const _pinAddrCache = new Map(Object.entries(readPinAddrStorage()));
 const _pinAddrInflight = new Map();
-function pinCacheKey(anchor) {
+export function pinCacheKey(anchor) {
   return anchor && typeof anchor.lat === "number" && typeof anchor.lon === "number"
     ? `${anchor.lat.toFixed(6)},${anchor.lon.toFixed(6)}`
     : null;
 }
+// Test-only: clear the in-memory cache/in-flight map so one test's resolved pins can't leak
+// into the next (mirrors colorRecents.js's own `_resetRecentsCache` convention).
+export function _resetPinAddrCache() { _pinAddrCache.clear(); _pinAddrInflight.clear(); }
 /** A saved comp's Location text — a real place, resolved the SAME way regardless of anchor kind
  * (a pin's or a parcel's reverse-geocoded street address once resolved, else the synchronous
  * county/coordinate fallback; a site plan's own title). ⛔ NEW-1 (owner-adversarial review,
@@ -74,19 +110,27 @@ function pinCacheKey(anchor) {
  * account number (e.g. "3641471") instead of a place — even though the parcel anchor carries the
  * exact same lat/lon a pin does and the reverse-geocode path already works for it. A parcel now
  * resolves through the identical branch a pin uses; its APN gets its own row instead
- * (`compFieldRows`'s "Parcel ID (APN)"), never substituting for Location. */
-function useCompLocationText(anchor, overlaysById) {
+ * (`compFieldRows`'s "Parcel ID (APN)"), never substituting for Location.
+ * `enabled` (NEW-2, default true) — pass `false` while the row isn't genuinely on screen (a list
+ * row behind an inactive tab) to defer the network lookup until it is; the synchronous fallback
+ * still renders immediately either way, so nothing goes blank while deferred. */
+function useCompLocationText(anchor, overlaysById, enabled = true) {
   const [, bump] = useState(0);
   useEffect(() => {
+    if (!enabled) return;
     if (!anchor || (anchor.kind !== "pin" && anchor.kind !== "parcel")) return;
     const key = pinCacheKey(anchor);
     if (!key || _pinAddrCache.has(key) || _pinAddrInflight.has(key)) return;
     const p = reverseGeocodeLatLon(anchor.lat, anchor.lon)
-      .then((ans) => { _pinAddrCache.set(key, ans?.label || null); })
+      .then((ans) => {
+        const label = ans?.label || null;
+        _pinAddrCache.set(key, label);
+        if (label) persistPinAddr(key, label);
+      })
       .catch(() => { _pinAddrCache.set(key, null); })
       .finally(() => { _pinAddrInflight.delete(key); bump((n) => n + 1); });
     _pinAddrInflight.set(key, p);
-  }, [anchor]);
+  }, [anchor, enabled]);
   if (!anchor) return null;
   if (anchor.kind === "site_plan") return siteplanLocationText(anchor, overlaysById) || pinFallbackText(anchor, countyEntry);
   // "pin" and "parcel" both resolve to a real place the same way now.
@@ -196,10 +240,10 @@ function SummaryStrip({ comps }) {
   );
 }
 
-export function CompRow({ comp, onOpen, overlaysById, compsRatePeriod }) {
+export function CompRow({ comp, onOpen, overlaysById, compsRatePeriod, enabled = true }) {
   // HARDENING-14 — a comp's own title wins; absent that, its LOCATION (a real identity — an
   // address, an APN, a plan name) is a better row title than its rate, which is what used to show.
-  const locationText = useCompLocationText(comp.anchor, overlaysById);
+  const locationText = useCompLocationText(comp.anchor, overlaysById, enabled);
   const primary = comp.title || locationText;
   return (
     <button onClick={() => onOpen(comp)} style={{
@@ -227,8 +271,8 @@ export function CompRow({ comp, onOpen, overlaysById, compsRatePeriod }) {
 // B1066368 — one row in the "Recently deleted" trash list, mirroring SitePlansSection.jsx's own
 // trash row shape (identity + Restore + Delete forever). Reuses the same identity resolution as
 // CompRow (title, else a real Location, else the rate headline) rather than a bare id or type.
-function TrashRow({ comp, overlaysById, onRestore, onPurge, compsRatePeriod }) {
-  const locationText = useCompLocationText(comp.anchor, overlaysById);
+function TrashRow({ comp, overlaysById, onRestore, onPurge, compsRatePeriod, enabled = true }) {
+  const locationText = useCompLocationText(comp.anchor, overlaysById, enabled);
   const primary = comp.title || locationText || compHeadline(comp, compsRatePeriod);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 0", borderTop: "1px solid var(--border-default)" }}>
@@ -1172,7 +1216,7 @@ export default function CompsPanel({
             {kmlImportError && <div style={{ padding: "6px 14px 0", fontSize: 10.5, color: "var(--danger-text)" }}>{kmlImportError}</div>}
             <SummaryStrip comps={comps} />
             {comps.length === 0 && <div style={{ padding: 14, fontSize: 12, color: "var(--text-secondary)" }}>No comps yet. Paste a few from a broker email with “＋ Paste comps” above, or point at the map and choose “Log a comp”.</div>}
-            {comps.map((c) => <CompRow key={c.id} comp={c} onOpen={openDetail} overlaysById={overlaysById} compsRatePeriod={compsRatePeriod} />)}
+            {comps.map((c) => <CompRow key={c.id} comp={c} onOpen={openDetail} overlaysById={overlaysById} compsRatePeriod={compsRatePeriod} enabled={active} />)}
 
             {/* B1066368 — "Recently deleted", mirroring SitePlansSection.jsx's own trash disclosure
                 exactly (collapsed by default, fetched lazily on first open). */}
@@ -1192,7 +1236,7 @@ export default function CompsPanel({
                   <div style={{ fontSize: 10.5, color: "var(--text-secondary)", padding: "4px 0" }}>Nothing here.</div>
                 ) : (
                   trash.map((c) => (
-                    <TrashRow key={c.id} comp={c} overlaysById={overlaysById} onRestore={restoreOne} onPurge={purgeForever} compsRatePeriod={compsRatePeriod} />
+                    <TrashRow key={c.id} comp={c} overlaysById={overlaysById} onRestore={restoreOne} onPurge={purgeForever} compsRatePeriod={compsRatePeriod} enabled={active} />
                   ))
                 )
               )}

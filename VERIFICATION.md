@@ -166,6 +166,45 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V1084032 — B1496320: a rename made in one browser survives an ordinary save from another, with the marker still a real timestamp `Blocker: auth` `Blocker: real-data`
+
+**Why this needs a real pass.** The defect only exists between a signed-in browser and the cloud row it writes: a device whose cached copy predates a rename pushes its whole document and blanks the rename's own timestamp. This sandbox's proxy CORS-blocks the Supabase auth handshake, so no signed-in write can be driven from here at all. **What is NOT pending** — the mechanism itself is already proven, in both halves, against the real database rather than a fixture (see below); what a live pass adds is that the DEPLOYED bundle carries the client half, on the owner's own account, through the UI he actually uses.
+
+**Verified HERE (this session, no browser reached for the signed-in half).**
+- `npx vitest run test/renameStampIntegrity.test.js` — 14 pass. **Mutation-proven in the order the house rule prefers:** the same file was run against the UNTOUCHED pre-fix source first and 10 of 14 failed (`slimForCloud` emitting the empty key, `siteRowFor`'s `data` carrying it, 2 offenders in the one-parse sweep), while 4 known-good arms stayed green.
+- `db/test/sites_rename_stamp_guard.test.sql` — run against **`planyr_production` itself**, self-rolling-back. Before the trigger existed: **cases 1, 2 and 3 FAILED, every other case passed.** After applying it: **all 8 pass.** Re-queried afterwards: 0 fixture rows survived, 116 rows total, the 34 numbered / 64 emptied / 18 absent split unchanged — the guard rewrote nothing.
+- Full unit suite green (823 files / 16,571 tests); `npm run lint` 0 errors; `npm run build` green.
+
+**Steps, each with its named expected result.** Run on a THROWAWAY duplicate project, never one of Michael's real plans (owner constraint 7). Read the served chunk hash in the same observation as each assertion — `document.querySelectorAll('script[src]')` — so a stale cached bundle cannot vouch for the new one.
+  1. Signed in on planyr.io, duplicate any multi-plan project. Rename the copy from the project-switcher kebab menu to `ZZ-STAMP-A`. **Expect:** the new name shows immediately, with no cloud-write banner.
+  2. Read the group back: `select id, data->>'site', jsonb_typeof(data->'siteRenamedAt'), data->>'siteRenamedAt' from public.sites where coalesce(data->>'groupId', id) = '<group>'`. **Expect:** EVERY live row reads `number` with the SAME timestamp. Before this fix a row could read `null` here.
+  3. Open a plan in that project, draw one building, wait for the badge to read Synced. Re-run the query from step 2. **Expect:** the marker is STILL `number` and STILL the same value — an ordinary content save must not touch it. This is the step that fails on the old build.
+  4. In a SECOND browser (or a private window) signed in as the same user, open the same project so it caches. Then in browser 1 rename it to `ZZ-STAMP-B`. In browser 2 — **without reloading** — edit a plan so it autosaves. Re-run the query. **Expect:** every row reads `ZZ-STAMP-B` with a `number` marker. **Before this fix browser 2's save wrote the OLD name and an EMPTY marker.**
+  5. Reload browser 2. **Expect:** it shows `ZZ-STAMP-B` — the rename held across the stale writer.
+  6. Rename once more from INSIDE a plan (the header breadcrumb rather than the map list). **Expect:** same result as step 2 — both entry points stamp identically.
+  7. Delete the throwaway project and say in the report exactly what was touched.
+- **Stopping rule:** closes when steps 1–7 are observed on planyr.io, or when any step fails and is filed against B1496320. Nothing here depends on knowing which project Michael happened to try — any throwaway multi-plan project meets the precondition.
+
+### V1077408 — B1482000: the "Recently deleted" plan list — and the deep-link dialog — name the PLAN, not the PROJECT `Blocker: auth`
+
+**Why this needs a real pass.** The exact reported picture — Woods Road's plan menu showing three rows all reading "Woods Road" instead of three different plan names — only exists against the owner's real signed-in account and his real soft-deleted rows. This sandbox's proxy CORS-blocks the Supabase auth handshake, so there is no signed-in way to open the real plan menu or the real deep-link dialog here.
+
+**What was verified here (this session, no browser reached for the signed-in half — full source-level + unit-test proof, plus a direct exercise against the real production schema).**
+1. `test/deletedPlansInGroup.test.js` — proves `listDeletedPlansInGroup` names each row with its own PLAN name (`row.name`), never the PROJECT name (`row.site`); keeps two same-project deleted plans distinguishable; still falls back to "Untitled plan" (never a blank row) even when the row carries a project `site` but no plan `name`.
+2. `test/deletedProjectGate.test.js` — proves `cloudCheckDeleted` carries `planName` distinctly from the coalesced `name`; proves `checkProjectDeletionStatus`'s new supplementary check reports `scope: "plan"` + the plan's own name for the exact Bain shape (a live anchor, one soft-deleted non-anchor plan) and leaves a genuine whole-project deletion (`scope` unset) untouched, including the case where the plan's TRUE group also has nothing live; proves `projectGateStatus` threads `scope` through; proves `DeletedProjectNotice`'s source carries both headline words ("This plan was deleted" / "This project was deleted"), both button labels, the `scope="project"` default, and `data-scope` on the root.
+3. `test/planMenuChrome.test.js` — proves the plan-menu row renders `relTime(p.deletedAt)` and imports it from the shared project model.
+4. **`src/workspaces/site-planner/db/test/deleted_plan_naming.test.sql`** — a new self-rolling-back fixture, run **live against the real production database** (`lyeqzkuiwngunutlkkmi`) via the Supabase MCP this session: builds a throwaway Bain-shaped project and a throwaway Woods-Road-shaped project (synthetic `auth.users` row + `rlstest-dpn-*` `sites` rows), soft-deletes the non-anchor plans, and runs the exact query shapes `cloudDeletedRows`/`cloudCheckDeleted` run to prove `site`/`name` are genuinely distinct columns on the real schema, that the two-query shape genuinely can't see a non-anchor plan's siblings, that the supplementary group check genuinely finds the live sibling, that two same-named deleted plans are only told apart by `deleted_at`, and that Restore round-trips. **Result: 6/6 passed**, and the whole transaction rolled back (`select count(*) from sites where id like 'rlstest-dpn-%'` → 0 confirmed afterward). This is the closest this sandbox can get to "build a throwaway project, delete a plan, restore it" without a browser, and it exercises the REAL database, not a mock.
+5. Full suite: 821 files / 16,561 tests, all green. `npm run lint` — 0 errors. `npm run build` clean.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner, against THROWAWAY projects only (never Bain, Woods Road, or any other real project — owner constraint #7 and this item's own explicit instruction):**
+1. Duplicate a real multi-plan project twice (or create one fresh with 3 plans via "New plan" on the same parcel), so it has at least 3 plans, two of them named identically (rename two plans to the same name, e.g. "Concept A PRINT").
+2. Delete two of the three plans from the plan menu (keep one live). **Expect:** each delete's confirm chip names the specific plan being deleted.
+3. Re-open the plan menu → "Recently deleted". **Expect:** two rows, each showing its OWN plan name (not the project's name) — and if the two deleted plans share a name, each row also shows a date/time (`relTime`) that lets them be told apart, newest first.
+4. Navigate directly to one of the deleted plans' own URL (`#/project/<that plan's id>`, copied from step 3 or from a Supabase row lookup). **Expect:** the notice reads **"This plan was deleted"**, names the PLAN (not the project), and offers a **"Restore plan"** button — not "This project was deleted" / "Bain"-style project naming.
+5. Click Restore from either surface. **Expect:** the plan reappears in "Plans in this site" and opens normally.
+6. Delete the throwaway project(s) used for this check when done, per owner constraint #7 — nothing on any real project should have been read or written.
+
+**Result:** ⏳ pending — needs the owner's (or a Cowork session's) real signed-in `planyr.io`, over throwaway projects only.
 ### V1069392 — B1473984: a comp's rate period is never borrowed from another clause `Blocker: auth` `Blocker: real-data`
 
 **Why this needs a real pass.** Every step below drives the comps entry sheet or the comp form on a signed-in account; this sandbox's proxy CORS-blocks the Supabase auth handshake, so none of it is reachable here. The pure parsing logic IS fully covered by unit tests (below) — what cannot be checked here is that the sheet and the form actually render the blocked state and the unset option.
@@ -9107,6 +9146,30 @@ Proven in `vite preview` AND on the **real Cloudflare branch-preview deploy** (`
 5. Confirm desktop and phone width both look unchanged elsewhere in the toolbar (Export, zoom cluster in Split/Gantt, History/Contacts/Automation/Format/Settings) — this removal should be invisible everywhere except the one icon that's gone.
 
 **Result:** ⏳ pending — needs a real signed-in browser session on real production data; not reachable from this sandbox. `Cadence: once`.
+
+### V1085600 — B1497888: opening a real project actually issues each of `profiles?select=prefs`, `auth/v1/user`, `sites` and `site_elements` far fewer times, on the owner's own Goose Creek/Bain projects `Blocker: auth`
+
+**Why this needs its own real pass.** The mechanism is proven directly — `currentIdentity()` (`teams.js`) now reads `supabase.auth.getSession()` (a local, no-network read) instead of `supabase.auth.getUser()` (a network round trip), and every `profiles.prefs` reader (`userPrefs.js`, `compsRatePeriodPrefs.js`, `dashboardPrefs.js`, `dashboardSinceLastHerePrefs.js`) now goes through the new shared, coalescing `profileRowCache.js` instead of firing its own independent read — both proven with mocked-Supabase unit tests (`test/profileRowCache.test.js`, 10 cases) and a clean full build. What cannot be proven here: the actual before/after request COUNT on a real cold load, because this sandbox's proxy CORS-blocks the Supabase auth handshake, so there is no way to sign in and open a real project from here.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, DevTools Network tab open, filtered to Fetch/XHR:**
+1. Hard-reload Goose Creek "Plan II - 220K, 440K, 700K" (`#/project/sms69x8rb2qk/site`). **Expect:** `profiles?select=prefs` appears **once**, not 5-8 times; `auth/v1/user` appears **zero or close to it** (the network tab should show none at all, or at most one — the getSession switch removes the network hit entirely, so any remaining count is from a different code path, not this one); `sites` and `site_elements` counts may stay similar to before (see the item's own note: the multi-shape `sites` pair and the paginated `site_elements` calls were checked and are NOT duplication).
+2. Repeat on Bain (`#/project/smr9olizi5ue/site`) as the second data point the original report already gathered. **Expect:** the same reduction.
+3. Confirm nothing else regressed: Standards panel prefs still load/save correctly (Site Planner → Standards, change a default, reload, confirm it stuck); the Comps rate-period toggle (per year/per month) on the map's Comps rail still loads/saves correctly; the Dashboard's card layout and "since you were last here" card still work.
+4. Report the actual new counts for `profiles`/`auth/v1/user` alongside the totals quoted in the original report (5-8 and 6-7), so the reduction is a real number, not an assumption.
+
+**Result:** ⏳ pending — needs a real signed-in browser session on real production data; not reachable from this sandbox. `Cadence: once`.
+
+### V1085601 — B1497889: a project open with the Comps tab closed fires zero reverse-geocode calls, and opening Comps resolves addresses (fresh, then warm from a reload) `Blocker: auth` `Blocker: live-GIS`
+
+**Why this needs its own real pass.** The gate itself is proven by source (`useCompLocationText`'s effect now short-circuits on `enabled=false`, threaded from `CompsPanel`'s own `active` prop) and the persistence half is proven directly (`test/compPinAddrCache.test.js`, 8 cases, a real `localStorage`-backed round trip). What cannot be proven here: a real reverse-geocode call succeeding at all, because this sandbox's egress to every external GIS host tried so far comes back connection-reset, on top of the same signed-in-account requirement V1085600 names.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, DevTools Network tab open, filtered to "geocode":**
+1. Open any project's site route with the map's Comps tab NOT selected (default: "Sites" tab). **Expect:** zero `arcgis…reverseGeocode` requests fire, even though pin/parcel-anchored comps exist on the account.
+2. Click into the Comps tab. **Expect:** the resolved-address requests now fire (one per not-yet-cached pin/parcel comp), and each row's Location text updates from the coordinate/county fallback to a real street address as each resolves.
+3. Reload the page and go straight into the Comps tab again. **Expect:** the SAME comps' addresses appear immediately, with no new `reverseGeocode` requests for the ones already resolved in step 2 — proving the `localStorage` persistence survived the reload.
+4. Confirm a comp's detail view (opened directly, e.g. from the Dashboard) still resolves its own address immediately regardless of which tab the map rail is on — `CompDetail` is deliberately never gated.
+
+**Result:** ⏳ pending — needs a real signed-in browser session with live GIS reachability; not reachable from this sandbox. `Cadence: once`.
 
 ## ✅ Verified / ❌ Failed — history
 

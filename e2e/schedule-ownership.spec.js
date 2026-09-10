@@ -86,6 +86,15 @@ const SCHEDULES = [
 const postSeq = (page, msg) =>
   page.evaluate((m) => window.postMessage({ source: "planar-seq", ...m }, window.location.origin), msg);
 
+/* NEW-1 — Rename/Duplicate/Delete moved behind a per-row kebab (`schedule-owner-kebab`); the menu
+ * itself portals to document.body (AnchoredMenu), so its items are located from `page`, never from
+ * the row locator. Opens the kebab for the row matching `text` and returns nothing — callers then
+ * locate `schedule-owner-rename`/`-duplicate`/`-delete` from `page` as before. */
+async function openRowMenu(page, text) {
+  const row = page.getByTestId("schedule-owner-row").filter({ hasText: text });
+  await row.getByTestId("schedule-owner-kebab").click();
+}
+
 /* Open a project's Schedule tab carrying `projects` as the bridged schedule list.
  *
  * ⛔ THE RE-POST AFTER SETTLE IS LOad-BEARING, and getting it wrong is how this harness first
@@ -103,6 +112,163 @@ async function openSchedule(page, gid, projects) {
   await postSeq(page, { type: "planar:nav-state", section: "projects", activeId: null, projects });
   await expect(page.getByTestId("schedule-owner-row").first()).toBeVisible({ timeout: 10_000 });
 }
+
+/* ── B1482096 — the empty-state owner list must never sit loose in a bottom corner ─────────────
+ *
+ * Owner report, with a screenshot: on a project with no schedule (the "No schedule for …"
+ * empty state), the schedule-owner list rendered as bare, unbounded text spanning the full
+ * window width underneath it — the project name and "No schedules here yet." hard against the
+ * bottom-LEFT corner, each row's count/pencil/trash hard against the bottom-RIGHT corner. Root
+ * cause: Scheduler.jsx's own wrapper stretched `left:0; right:0` with no surface behind it,
+ * while ScheduleOwnerList's bare wrapper (padding/gap/font only) has never carried its own
+ * background/border — correct for its OTHER caller (ScheduleCrumb.jsx), which supplies the
+ * surface via AnchoredMenu, wrong for this one, which supplied none. Fixed by making the
+ * empty-state wrapper a centered, width-capped panel carrying the same `menuPanelStyle` surface
+ * token the breadcrumb's dropdown gets — never by changing ScheduleOwnerList itself, so the
+ * dropdown case (asserted throughout the rest of this file) is provably untouched.
+ *
+ * ⛔ REGRESSION, caught live on planyr.io and corrected in the same item: that first fix kept the
+ * owner-list panel as a SEPARATE `position:absolute, bottom:0` sibling stacked over
+ * LinkSchedulePanel's own full-bleed box. Two independently-positioned overlays can't see each
+ * other's height, so on a short window (measured: ~465px of content height) the owner-list panel
+ * overlapped LinkSchedulePanel's own Create/Link buttons — "Link an existing schedule" became
+ * genuinely unclickable, `elementFromPoint` at its centre resolved to the panel, not the button —
+ * and the panel itself still ran off the bottom with nothing to reach it. Fixed by merging both
+ * into ONE full-bleed `overflow:"auto"` shell (`data-testid="schedule-empty-shell"`) holding a
+ * plain flex column: LinkSchedulePanel, then the owner-list panel, true document flow so they
+ * stack instead of overlapping at any height, and the shell's own scrolling reaches whatever a
+ * short window can't fit. The "short viewport" test below reproduces the owner's exact
+ * measurement and is the one that would have caught this before it shipped. */
+test.describe("B1482096 — the empty-state schedule list reads as one contained panel, never loose corner text", () => {
+  // elementFromPoint at the two corners the owner's screenshot showed populated — must resolve to
+  // the plain page background (LinkSchedulePanel's own surface), never into the schedule list.
+  async function cornerElements(page) {
+    return page.evaluate(() => {
+      const describe = (el) => !el ? null : {
+        testid: el.closest?.("[data-testid]")?.getAttribute("data-testid") || null,
+        text: (el.textContent || "").trim().slice(0, 40),
+      };
+      const w = window.innerWidth, h = window.innerHeight;
+      return {
+        bottomLeft: describe(document.elementFromPoint(2, h - 2)),
+        bottomRight: describe(document.elementFromPoint(w - 2, h - 2)),
+      };
+    });
+  }
+
+  test("a project with NO schedules of its own: nothing sits in either bottom corner, list is one contained panel", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    const corners = await cornerElements(page);
+    expect(corners.bottomLeft?.testid).not.toBe("schedule-owner-list");
+    expect(corners.bottomLeft?.testid).not.toBe("schedule-owner-row");
+    expect(corners.bottomRight?.testid).not.toBe("schedule-owner-list");
+    expect(corners.bottomRight?.testid).not.toBe("schedule-owner-row");
+
+    // The list is a bounded, centered panel — not stretched edge to edge.
+    const list = page.getByTestId("schedule-owner-list");
+    const box = await list.boundingBox();
+    const viewport = page.viewportSize();
+    expect(box.x).toBeGreaterThan(8);
+    expect(box.x + box.width).toBeLessThan(viewport.width - 8);
+
+    // It carries a real surface (the same token the breadcrumb dropdown uses) — not bare text
+    // over the page background.
+    const bg = await list.evaluate((el) => getComputedStyle(el.parentElement).backgroundColor);
+    expect(bg).not.toBe("rgba(0, 0, 0, 0)");
+    expect(bg).not.toBe("transparent");
+
+    // The empty state's own actions stay reachable and unobstructed by the list beneath them.
+    await expect(page.getByRole("button", { name: "Create schedule" })).toBeVisible();
+  });
+
+  test("a project with SEVERAL schedules of its own already linked: the grid shows, and no owner list leaks into the corners", async ({ page }) => {
+    // Goose Creek owns 5 of the fixture's schedules (linkedSiteId matches it), so routing there
+    // with one of them active resolves the link and shows the real grid, not the empty state —
+    // the adjacent case this containment fix must not regress: the wrapper this item touches is
+    // gated on showEmptyState, and must never render (or leave anything behind) once it's false.
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await expect(page.getByTestId("schedule-owner-list")).toHaveCount(0);
+    const corners = await cornerElements(page);
+    expect(corners.bottomLeft?.testid).not.toBe("schedule-owner-list");
+    expect(corners.bottomLeft?.testid).not.toBe("schedule-owner-row");
+    expect(corners.bottomRight?.testid).not.toBe("schedule-owner-list");
+    expect(corners.bottomRight?.testid).not.toBe("schedule-owner-row");
+  });
+
+  test("narrow window: still contained, no horizontal spill", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 780 });
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    const corners = await cornerElements(page);
+    expect(corners.bottomLeft?.testid).not.toBe("schedule-owner-list");
+    expect(corners.bottomRight?.testid).not.toBe("schedule-owner-row");
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+    await expect(page.getByRole("button", { name: "Create schedule" })).toBeVisible();
+  });
+
+  test("the schedule breadcrumb's own dropdown (a project that HAS a schedule) is unchanged", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("schedule-crumb").click();
+    const list = page.getByTestId("schedule-owner-list");
+    await expect(list).toBeVisible({ timeout: 10_000 });
+    // Still grouped exactly as the existing suite (below) proves in depth — this is a smoke check
+    // that the dropdown's own surface (AnchoredMenu's panel) is what's visible, not a doubled-up
+    // border from ScheduleOwnerList itself growing a surface of its own.
+    const dropdownBg = await list.evaluate((el) => getComputedStyle(el.parentElement).backgroundColor);
+    expect(dropdownBg).not.toBe("rgba(0, 0, 0, 0)");
+    await expect(list).toContainText("Goose Creek");
+  });
+
+  /* ⛔ REGRESSION REPRODUCTION — the owner's exact measurement: a short window (~465px of content
+   * height) with the owner-list panel long enough (8 schedules) to no longer fit beside the empty
+   * state's own actions. Before the fix, the panel sat on top of "Link an existing schedule" at
+   * this height; this test drives BOTH buttons for real and checks the point each renders at, not
+   * just that they exist in the DOM (existence alone passed on the broken build too). */
+  test("short viewport (~465px): Create and Link are never overlapped by the owner-list panel, and both stay clickable", async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 465 });
+    await openSchedule(page, ORPHAN, SCHEDULES);
+
+    const createBtn = page.getByRole("button", { name: "Create schedule" });
+    const linkBtn = page.getByRole("button", { name: "Link an existing schedule" });
+    await expect(createBtn).toBeVisible();
+    await expect(linkBtn).toBeVisible();
+
+    // The owner's own repro: elementFromPoint at each button's centre must resolve INTO the
+    // button itself, never into the schedule-owner-list panel sitting over it.
+    const hitsOwnButton = async (locator) => {
+      const box = await locator.boundingBox();
+      expect(box).not.toBeNull();
+      const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+      return page.evaluate(({ cx, cy }) => {
+        const el = document.elementFromPoint(cx, cy);
+        return !!el?.closest?.("button") && !el.closest('[data-testid="schedule-owner-list"]');
+      }, { cx, cy });
+    };
+    expect(await hitsOwnButton(createBtn)).toBe(true);
+    expect(await hitsOwnButton(linkBtn)).toBe(true);
+
+    // Document flow, not overlap: the owner-list panel starts at or below the empty state's own
+    // content — never above the bottom edge of the buttons that sit above it. Captured BEFORE the
+    // click below, because clicking "Link an existing schedule" replaces that trigger with the
+    // picker row (progressive disclosure) — its own locator stops resolving after the click.
+    const list = page.getByTestId("schedule-owner-list");
+    const listBox = await list.boundingBox();
+    const linkBox = await linkBtn.boundingBox();
+    expect(listBox.y).toBeGreaterThanOrEqual(linkBox.y + linkBox.height - 1);
+
+    // Genuinely clickable, not merely present: this is the exact action the owner reported dead.
+    await linkBtn.click();
+    await expect(page.getByLabel("Choose a schedule to link")).toBeVisible();
+
+    // The whole thing is reachable — the shell scrolls rather than running content off the
+    // bottom with no way back to it.
+    const shell = page.getByTestId("schedule-empty-shell");
+    const { scrollHeight, clientHeight } = await shell.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
+    expect(scrollHeight).toBeGreaterThan(clientHeight); // this fixture's content genuinely overflows 465px
+    await shell.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await expect(list.getByTestId("schedule-owner-row").last()).toBeInViewport();
+  });
+});
 
 /* B1435888 — "+ New schedule in <project>" lives in the SCHEDULE crumb's own dropdown (the
  * breadcrumb's second, independent level), not on the page surface and not in the PROJECT
@@ -436,12 +602,16 @@ test.describe("B1341184 — switching PROJECTS re-drives the SCHEDULE crumb, nev
  * RED-PROOF: every `schedule-owner-rename`/`schedule-owner-delete` testid this file locates is
  * new in this PR — `git stash` on this branch and any test below fails at its very first locator
  * (element not found), which is the owner's own repro ("ZERO matches") reproduced mechanically.
+ *
+ * ⛔ NEW-1 (2026-09-10) — Rename/Duplicate/Delete moved BEHIND a per-row kebab
+ * (`schedule-owner-kebab`); every click below now opens that kebab first (`openRowMenu`, above)
+ * instead of clicking a formerly-always-visible icon directly on the row.
  */
 test.describe("B1404352 — a schedule can be renamed from its own row", () => {
   test("the pencil opens an inline editor pre-filled with the current name — no dialog box", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    const row = page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" });
-    await row.getByTestId("schedule-owner-rename").click();
+    await openRowMenu(page, "TAS Land Sale");
+    await page.getByTestId("schedule-owner-rename").click();
     const input = page.getByTestId("schedule-owner-rename-input");
     await expect(input).toBeVisible();
     await expect(input).toHaveValue("TAS Land Sale");
@@ -449,7 +619,8 @@ test.describe("B1404352 — a schedule can be renamed from its own row", () => {
 
   test("Enter commits and posts planar:nav-rename with the SCHEDULE's own id, not the project's", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    await page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).getByTestId("schedule-owner-rename").click();
+    await openRowMenu(page, "TAS Land Sale");
+    await page.getByTestId("schedule-owner-rename").click();
     const input = page.getByTestId("schedule-owner-rename-input");
     await input.fill("Land Sale — Phase 2");
     await input.press("Enter");
@@ -460,7 +631,8 @@ test.describe("B1404352 — a schedule can be renamed from its own row", () => {
 
   test("Escape cancels — nothing is posted and the row reverts to its prior name", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    await page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).getByTestId("schedule-owner-rename").click();
+    await openRowMenu(page, "TAS Land Sale");
+    await page.getByTestId("schedule-owner-rename").click();
     const input = page.getByTestId("schedule-owner-rename-input");
     await input.fill("Something Else Entirely");
     await input.press("Escape");
@@ -472,7 +644,8 @@ test.describe("B1404352 — a schedule can be renamed from its own row", () => {
   test("renaming to a name already used by a sibling under the SAME owner WARNS but still commits", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
     // Goose Creek (2) → "TAS Land Sale", which Goose Creek already has (id 22).
-    await page.getByTestId("schedule-owner-row").filter({ hasText: "Goose Creek (2)" }).getByTestId("schedule-owner-rename").click();
+    await openRowMenu(page, "Goose Creek (2)");
+    await page.getByTestId("schedule-owner-rename").click();
     const input = page.getByTestId("schedule-owner-rename-input");
     await input.fill("TAS Land Sale");
     await expect(page.getByText(/already a schedule called/i)).toBeVisible();
@@ -483,7 +656,8 @@ test.describe("B1404352 — a schedule can be renamed from its own row", () => {
 
   test("an Organization-owned schedule renames the same way as a project's own", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    await page.getByTestId("schedule-owner-row").filter({ hasText: "Pursuits" }).getByTestId("schedule-owner-rename").click();
+    await openRowMenu(page, "Pursuits");
+    await page.getByTestId("schedule-owner-rename").click();
     await page.getByTestId("schedule-owner-rename-input").fill("2027 Pursuits");
     await page.getByTestId("schedule-owner-rename-input").press("Enter");
     const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-rename"));
@@ -494,7 +668,8 @@ test.describe("B1404352 — a schedule can be renamed from its own row", () => {
 test.describe("B1404352 — a schedule can be deleted from its own row", () => {
   test("the trash opens an inline confirmation that NAMES the schedule and its task count — no dialog box", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    await page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).getByTestId("schedule-owner-delete").click();
+    await openRowMenu(page, "TAS Land Sale");
+    await page.getByTestId("schedule-owner-delete").click();
     const confirm = page.getByTestId("schedule-owner-row-confirm");
     await expect(confirm).toBeVisible();
     await expect(confirm).toContainText("TAS Land Sale");
@@ -505,13 +680,15 @@ test.describe("B1404352 — a schedule can be deleted from its own row", () => {
 
   test("an EMPTY schedule's confirmation says so, distinctly from a task count of zero", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    await page.getByTestId("schedule-owner-row").filter({ hasText: "Goose Creek (2)" }).getByTestId("schedule-owner-delete").click();
+    await openRowMenu(page, "Goose Creek (2)");
+    await page.getByTestId("schedule-owner-delete").click();
     await expect(page.getByTestId("schedule-owner-row-confirm")).toContainText(/no tasks/i);
   });
 
   test("'Keep it' cancels — nothing is posted and the row is back to normal", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    await page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).getByTestId("schedule-owner-delete").click();
+    await openRowMenu(page, "TAS Land Sale");
+    await page.getByTestId("schedule-owner-delete").click();
     await page.getByTestId("schedule-owner-delete-cancel").click();
     await expect(page.getByTestId("schedule-owner-row-confirm")).toHaveCount(0);
     await expect(page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" })).toBeVisible();
@@ -521,7 +698,8 @@ test.describe("B1404352 — a schedule can be deleted from its own row", () => {
 
   test("Delete posts planar:nav-delete with the schedule's own id", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    await page.getByTestId("schedule-owner-row").filter({ hasText: "Goose Creek (2)" }).getByTestId("schedule-owner-delete").click();
+    await openRowMenu(page, "Goose Creek (2)");
+    await page.getByTestId("schedule-owner-delete").click();
     await page.getByTestId("schedule-owner-delete-confirm").click();
     const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-delete"));
     expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-delete", id: 19 }]);
@@ -529,7 +707,8 @@ test.describe("B1404352 — a schedule can be deleted from its own row", () => {
 
   test("deleting an Organization-owned schedule posts the same message shape", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    await page.getByTestId("schedule-owner-row").filter({ hasText: "Operations" }).getByTestId("schedule-owner-delete").click();
+    await openRowMenu(page, "Operations");
+    await page.getByTestId("schedule-owner-delete").click();
     await page.getByTestId("schedule-owner-delete-confirm").click();
     const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-delete"));
     expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-delete", id: 7 }]);
@@ -537,10 +716,76 @@ test.describe("B1404352 — a schedule can be deleted from its own row", () => {
 
   test("deleting another project's schedule (not the routed one) works the same from 'Other projects'", async ({ page }) => {
     await openSchedule(page, ORPHAN, SCHEDULES);
-    await page.getByTestId("schedule-owner-row").filter({ hasText: "Grand Port" }).getByTestId("schedule-owner-delete").click();
+    await openRowMenu(page, "Grand Port");
+    await page.getByTestId("schedule-owner-delete").click();
     await page.getByTestId("schedule-owner-delete-confirm").click();
     const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-delete"));
     expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-delete", id: 2 }]);
+  });
+});
+
+/* ── NEW-1 — the kebab consolidation itself, and the adjacent cases the dispatch asked to check ── */
+test.describe("NEW-1 — schedule row actions collapse into one kebab", () => {
+  test("at rest, a row shows exactly one kebab and no separately-exposed Rename/Duplicate/Delete", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    const row = page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" });
+    await expect(row.getByTestId("schedule-owner-kebab")).toHaveCount(1);
+    await expect(row.getByTestId("schedule-owner-rename")).toHaveCount(0);
+    await expect(row.getByTestId("schedule-owner-duplicate")).toHaveCount(0);
+    await expect(row.getByTestId("schedule-owner-delete")).toHaveCount(0);
+  });
+
+  test("many rows: every row gets its own kebab, none bleeds into another's menu", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await expect(page.getByTestId("schedule-owner-kebab")).toHaveCount(SCHEDULES.length);
+    await openRowMenu(page, "Pursuits");
+    await expect(page.getByTestId("schedule-owner-delete")).toHaveCount(1);
+    // Closing this row's menu and opening a different row's must not leave two menus open at once.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("schedule-owner-delete")).toHaveCount(0);
+    await openRowMenu(page, "Operations");
+    await expect(page.getByTestId("schedule-owner-delete")).toHaveCount(1);
+  });
+
+  test("opening the kebab does not switch the schedule (no planar:nav-select side effect)", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await openRowMenu(page, "Grand Port");
+    await expect(page.getByTestId("schedule-owner-delete")).toBeVisible();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-select"));
+    expect(posted).toEqual([]);
+  });
+
+  test("clicking the row (not the kebab) still selects the schedule", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "Grand Port" }).click();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-select"));
+    expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-select", id: 2 }]);
+  });
+
+  test("the kebab is reachable and operable by keyboard alone", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    const kebab = page.getByTestId("schedule-owner-row").filter({ hasText: "Pursuits" }).getByTestId("schedule-owner-kebab");
+    await kebab.focus();
+    await expect(kebab).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("schedule-owner-delete")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("schedule-owner-delete")).toHaveCount(0);
+  });
+
+  test("the menu flips rather than clipping when the kebab sits near the bottom of the viewport", async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 420 });
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    // "Grand Port" is one of the last rows this fixture renders — near the bottom of a short window.
+    await openRowMenu(page, "Grand Port");
+    const menu = page.getByTestId("schedule-owner-delete");
+    await expect(menu).toBeVisible();
+    const kebabBox = await page.getByTestId("schedule-owner-row").filter({ hasText: "Grand Port" }).getByTestId("schedule-owner-kebab").boundingBox();
+    const menuBox = await menu.boundingBox();
+    // A flipped (above-the-anchor) menu sits fully within the viewport; a clipped one would not.
+    expect(menuBox.y).toBeGreaterThanOrEqual(0);
+    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(420);
+    expect(kebabBox).not.toBeNull();
   });
 });
 

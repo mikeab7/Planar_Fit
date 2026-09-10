@@ -10,6 +10,7 @@ import { makeWriteSerializer } from "../../../shared/cloud/serializeWrites.js";
 import { reportClientEvent } from "../../../shared/telemetry/clientErrors.js";
 import { stableStringify } from "./elementSync.js";
 import { normCountyKey } from "../../../shared/gis/countyKeys.js";
+import { normalizeRenameStampForWrite } from "./projectName.js";
 import { fetchParcelSummaries, fetchElementRecency } from "./elementApi.js";
 
 // Per-tab memory of the `version` we last synced for each site, so a save can be a
@@ -89,7 +90,25 @@ export function slimForCloud(model) {
   // read-time overlay on the way back. Letting it ride the jsonb would put a second, staler copy of
   // an access decision in the payload — the exact shape of the B714 bug.
   const { teamId: _team, ownerId: _owner, shareLocked: _locked, ...noShare } = m;
-  return noShare;
+  /* ⛔ NEW-1 — THE RENAME MARKER IS NEVER SENT EMPTY, AND THIS IS THE LAST GATE BEFORE THE COLUMN.
+   *
+   * `siteRowFor` sends this document as `data`, and a cloud write REPLACES the row's whole jsonb.
+   * `createSiteModel` normalises an unknown `siteRenamedAt` to an explicit `null` — correct for a
+   * model held in memory, catastrophic on the wire: it turns "this device does not know when the
+   * project was renamed" into the row-level CLAIM "this project has never been renamed", written
+   * straight over the real stamp `rename_site_group()` put there. Measured on production
+   * 2026-09-10: 64 of 116 rows carried a present-but-empty marker, and the Silvestri group's plan
+   * `sms9c5oc7jnt` had the group's own 2026-07-31 stamp erased by a document write five days
+   * later while its four siblings kept it — so `nameAuthority` lost the only fact that lets a
+   * rename win a conflict and dropped back to the legacy majority rule.
+   *
+   * A known stamp still rides (the pre-migration rename fallback in `cloudRename.js` writes one
+   * through this same document shape); an unknown one is OMITTED. Omitting is the honest move:
+   * the server-side guard (`db/sites_rename_stamp_guard.sql`) can then tell "I have nothing to
+   * say about this" apart from "I am telling you it is empty", and keeps what the row already
+   * holds. `normalizeRenameStampForWrite` is identity-preserving when there is nothing to change,
+   * so `headerSig` (which hashes this same document) does not churn. */
+  return normalizeRenameStampForWrite(noShare);
 }
 
 // B714 — the column payload an ordinary content push sends (pure; exported for tests). The
@@ -445,12 +464,19 @@ export async function cloudCheckDeleted(uid, id) {
     if (live) {
       return { ok: true, exists: true, deleted: false, deletedAt: null, name: live.site || live.name || null, groupId: live.group_id || live.id };
     }
-    // Every plan row in the group is soft-deleted — the project genuinely is gone. Surface the
-    // most recently deleted row (the one whose facts a "restore this project" offer would want).
+    // Every plan row THIS QUERY found is soft-deleted — surface the most recently deleted one (the
+    // one whose facts a "restore" offer would want). `name` stays the PROJECT name (`site`) here —
+    // this branch is reached when `id` IS the group's anchor (or the row's own id, for a
+    // single-plan project), so `byGroup` above already gathered every sibling and "every plan row
+    // found" really does mean the whole project. `planName` is carried separately (the row's own
+    // `name` column) for a caller that needs to tell the two apart — see `checkProjectDeletionStatus`
+    // in storage.js, which asks a SECOND question when `id` instead named one non-anchor plan
+    // inside an otherwise-live project (B1482000, follow-on to B1469872).
     const newest = all.reduce((a, b) => ((Date.parse(b.deleted_at) || 0) > (Date.parse(a.deleted_at) || 0) ? b : a));
     return {
       ok: true, exists: true, deleted: true,
-      deletedAt: newest.deleted_at || null, name: newest.site || newest.name || null, groupId: newest.group_id || newest.id,
+      deletedAt: newest.deleted_at || null, name: newest.site || newest.name || null,
+      planName: newest.name || null, groupId: newest.group_id || newest.id,
     };
   } catch (e) {
     return { ok: false, exists: false, deleted: false, error: (e && e.message) || "deletion check threw" };
