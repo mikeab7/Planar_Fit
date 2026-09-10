@@ -48,12 +48,19 @@ const noticeStyle = {
   color: "#8a5a00", lineHeight: 1.4,
 };
 
+// A value that IS a link (B1455632 — Nevada's per-parcel "County record" deep link, the one
+// field of its kind among every wired source) renders as a link rather than plain text.
+const isLinkValue = (v) => typeof v === "string" && /^https?:\/\//i.test(v.trim());
+
 // One label/value row. `cap` height-caps + scrolls the value (the Legal description).
 function InfoRow({ label, value, cap = false }) {
+  const link = isLinkValue(value);
   return (
     <div data-parcel-row={label} style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline", padding: "4px 0", borderBottom: ROW_RULE }}>
       <span style={{ fontSize: 11, color: PAL.muted, flex: "none" }}>{label}</span>
-      <span style={{ fontSize: 11.5, color: PAL.ink, fontWeight: 600, textAlign: "right", wordBreak: "break-word", ...(cap ? { maxHeight: LEGAL_MAX_HEIGHT, overflowY: "auto", minWidth: 0 } : null) }}>{value}</span>
+      <span style={{ fontSize: 11.5, color: link ? PAL.accent : PAL.ink, fontWeight: 600, textAlign: "right", wordBreak: "break-word", ...(cap ? { maxHeight: LEGAL_MAX_HEIGHT, overflowY: "auto", minWidth: 0 } : null) }}>
+        {link ? <a href={value.trim()} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>View record ↗</a> : value}
+      </span>
     </div>
   );
 }

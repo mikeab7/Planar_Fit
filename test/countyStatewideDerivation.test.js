@@ -142,13 +142,16 @@ describe("the derivation changes nothing about enumeration or the statewide pseu
     // ISLAND, raising 27 to 29: both had been recorded as `no-free-source` / `Candidate: none
     // found`, and both were found by the ArcGIS-Online-organization pass this repo had only ever
     // run for New York (see counties.js's `ca_statewide` comment, and NEW-2 which makes that pass
-    // systematic). The invariant this test guards is "still small and literal", not "still exactly
-    // two" (or twenty-one, or twenty-seven).
+    // systematic). B1344720 (2026-09-10) added DC/ME/NV, raising 29 to 32 — all three were
+    // likewise corrected FALSE prior findings (shape-mismatch/shape-mismatch/no-free-source), each
+    // recorded as a genuine single-layer statewide source in counties.js's own comments. The
+    // invariant this test guards is "still small and literal", not "still exactly two" (or
+    // twenty-one, or twenty-nine).
     expect(STATEWIDE_KEYS).toEqual([
       "txgio_statewide", "co_statewide",
-      "ak_statewide", "ar_statewide", "ca_statewide", "ct_statewide", "de_statewide", "fl_statewide",
-      "hi_statewide", "in_statewide", "ma_statewide", "md_statewide", "mn_statewide", "mt_statewide", "nc_statewide",
-      "nd_statewide", "ne_statewide", "nh_statewide", "nj_statewide", "ny_statewide", "oh_statewide",
+      "ak_statewide", "ar_statewide", "ca_statewide", "ct_statewide", "dc_statewide", "de_statewide", "fl_statewide",
+      "hi_statewide", "in_statewide", "ma_statewide", "me_statewide", "md_statewide", "mn_statewide", "mt_statewide", "nc_statewide",
+      "nd_statewide", "ne_statewide", "nh_statewide", "nj_statewide", "nv_statewide", "ny_statewide", "oh_statewide",
       "ri_statewide", "tn_statewide",
       "ut_statewide", "va_statewide", "vt_statewide", "wi_statewide", "wv_statewide", "wy_statewide",
     ]);
@@ -157,7 +160,9 @@ describe("the derivation changes nothing about enumeration or the statewide pseu
   it("Object.keys(COUNTIES_MAP) still enumerates only the literal, dialed-in rows", () => {
     const keys = Object.keys(COUNTIES_MAP);
     expect(keys).not.toContain("dallas");
-    expect(keys.length).toBeLessThan(60); // ~18 dialed-in TX+CO rows + 21 statewide pseudo-keys, not 254 or 3,143
+    // ~18 dialed-in TX+CO rows + 32 statewide pseudo-keys + 13 Idaho counties (B1344721) + 19
+    // other-state counties (B1344722), not 254 or 3,143.
+    expect(keys.length).toBeLessThan(90);
   });
 
   it("candidateCountiesForPoint still answers via the existing txgio_statewide fallback for a derived county — unchanged, not doubled", () => {
