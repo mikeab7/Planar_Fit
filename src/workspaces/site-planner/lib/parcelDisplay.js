@@ -17,6 +17,7 @@ import * as EL from "esri-leaflet";
 import L from "leaflet";
 import { STATEWIDE_PARCEL_LAYER } from "./counties.js";
 import { getSnapshot, featuresForView, onSnapshotChange } from "./parcelSnapshot.js";
+import { guardRasterOpacity } from "./parcelOpacityGuard.js";
 
 // Low enough to outline big rural/industrial tracts from further out, high enough to
 // avoid drawing a whole dense-urban county at once.
@@ -55,13 +56,13 @@ export function makeParcelImageLayer(url) {
   const m = /^(.*\/MapServer)\/(\d+)\/?$/i.exec(trimUrl(url));
   if (!m) return makeParcelLayer(url);
   const [, service, id] = m;
-  return EL.dynamicMapLayer({
+  return guardRasterOpacity(EL.dynamicMapLayer({
     url: service,
     layers: [Number(id)],
     minZoom: PARCEL_MINZOOM,
     opacity: 1,
     f: "image",
-  });
+  }));
 }
 
 /* The one entry point both parcel-display surfaces (the map's Select-parcels tool and
