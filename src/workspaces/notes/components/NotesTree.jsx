@@ -820,6 +820,18 @@ function SidebarFooter({ unfiledCount, view, narrow = false, onOpenUnfiled, onOp
   return (
     <div
       data-testid="notes-footer-rail"
+      /* B1447441 — the global help/report control (`HelpReportControl.jsx`) reads this attribute
+         to clear whatever else occupies the bottom-right corner (`cornerClearanceFromBottom`,
+         B966700) — the SAME contract `NoteOutline.jsx`'s own floating "☰" button already uses for
+         this exact corner (that fix predates this one; this rail was simply never wired to it).
+         Marking the whole RAIL, not just the Bin button, means the clearance holds whether or not
+         the Unfiled row above it is present — Unfiled sits higher in this column when it exists,
+         so a marker on Bin alone would under-clear on an account with unfiled pages. Below the
+         phone breakpoint this rail runs the full width of the (only) visible pane and its bottom
+         edge sits in the same corner the FAB defaults to; on desktop it lives inside the
+         narrower left rail and never reaches that column, so this is inert there — geometry
+         self-gates it, per cornerClearance.js's own "only a genuine overlap counts" rule. */
+      data-canvas-corner="notes-footer-rail"
       style={{
         flex: "0 0 auto", padding: "6px", display: "flex", flexDirection: "column", gap: 4,
         borderTop: "1px solid var(--border-default)",
