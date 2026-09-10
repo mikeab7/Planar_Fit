@@ -166,6 +166,23 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V975552 — B1447441: on a real phone, the help/report button no longer sits on top of Notes' Bin control `Blocker: real-data`
+
+**Why this needs a real pass.** The fix is proven, before-and-after, on the exact reported overlap, on the real WebKit rendering/pointer engine (not Chromium's phone emulation), at every phone size/orientation the bug was originally reported on — see `ui-audit/verify-phone-orientations.mjs`'s red-then-green run in **B1447441**. What can't run here: this sandbox has no real iOS hardware (a real notch/Dynamic Island safe-area inset, Mobile Safari's collapsing bottom toolbar, a real finger) and no signed-in account — the sandbox run seeds a LOCAL (signed-out) copy of the owner's own Bain plan via this repo's existing fixture-seeding mechanism, not his real signed-in account.
+
+**What was verified here (this session, real WebKit via Playwright, real clicks, logged out, local build).**
+1. `ui-audit/verify-phone-orientations.mjs`, scoped to the Notes surface (`PLANYR_SURFACES=notes`) across all 6 device/orientation combinations, run against a local dev build: on the pre-fix tree, `[overlapping-controls] "notes-view-bin" overlaps "help-report-fab" (82% of the smaller one's area)` on iPhone SE portrait/landscape, iPhone 15 portrait/landscape, and iPhone 15 Pro Max portrait — matching the original finding exactly. Re-run on the identical build plus the one-attribute fix: that line is gone on every one of those 5 combinations, with no new overlap or off-viewport finding anywhere on the page.
+2. Adjacent-case sweep: the same harness across every other surface it covers (map landing, Site, Review, Library, the Site Properties bottom sheet) at all 6 combinations — 30 runs, zero mentioning this control in any overlap.
+3. Full suite: 814 files / 16,471 tests, green. `npm run lint` clean (0 errors). `npm run build` clean.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in as the owner, on a real iPhone (any current size), in a project that has a Notes page:**
+1. **Read the served chunk hash in the SAME observation as every check below** (Safari's page-info / share sheet, or `document.querySelectorAll('script[src]')` from a connected inspector) and confirm it names a build after this PR merged.
+2. Open the Notes tab on the project. **Expect:** the "?" help/report button and the Bin control at the bottom of the page list are both fully visible and don't overlap, in both portrait and landscape.
+3. Tap the Bin control. **Expect:** it responds normally — the "?" button never blocks the tap.
+4. Tap the "?" button. **Expect:** its menu opens normally, unaffected by sitting closer to (or further from) the Bin row than before.
+5. If the project has any unfiled pages (the "Unfiled" row above Bin), repeat steps 2–4 — the "?" button should clear BOTH rows, not just Bin.
+6. Nothing here writes to any saved project or plan — no cleanup needed.
+
 ### V981328 — B1344608: a slow parcel display's outline image no longer sticks at zero opacity `Blocker: live-GIS`
 
 **Why this needs a real pass.** The exact race (Waller County's Drive parcel-snapshot cache swapping in while the shared statewide-URL raster layer's `/export` is still in flight, tearing that layer down and orphaning its own in-flight image) is reproduced deterministically and proven RED on the pre-fix tree with a MOCKED 3-second delay — `ui-audit/verify-parcel-outline-opacity.mjs`. What can't run here: this sandbox reaches `feature.geographic.texas.gov` fine right now, so there's no way to force a REAL, organically slow county/statewide host from this environment — only a scripted one. The fix is structural (a shared layer can no longer be torn down while an alias still needs it, and any teardown mid-flight now cleans up its own orphan rather than leaving it invisible), so it should hold regardless of how slow the real host is — confirming that against real timing, not a script, is what this check is for.
