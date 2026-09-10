@@ -7,6 +7,31 @@
 
 _Last updated: 2026-09-10._
 
+## ✅ One old project record needs a small repair — say yes or no (B1496320)
+
+> **Short version: when you renamed a project, the app was quietly recording the *when* of that rename
+> and then wiping it out again on the very next ordinary save. That's now fixed and cannot happen
+> again. One old record still has that little "when" mark missing, and I'd like your OK before I put
+> it back.**
+>
+> The mark matters because it's how the app settles an argument. Your project name is stored on every
+> plan inside that project, so five plans means five copies of one name. When two devices disagree
+> about the name, the app looks at which copy was written by an actual rename and when — that's the
+> mark. With it missing, it falls back to a straight vote, which is how a rename can appear to "come
+> back" as the old name later.
+>
+> On **Silvestri**, four of the five plans still carry the mark from the day you renamed it. One plan
+> lost it a few days afterwards. Nothing looks wrong today — the four outvote the one — but the
+> project is one plan away from that safety net being gone.
+>
+> **What I'd do:** copy the mark the other four plans already agree on onto the fifth. I would not be
+> inventing anything — the value comes from that project's own records. Nothing you can see changes.
+> **What I would NOT do:** touch the other 63 records that are also missing this mark. Those belong to
+> projects that were never renamed, so there is no date to restore, and making one up would be worse
+> than leaving it blank.
+> - [ ] **Just tell me yes or no.** It's one record, it's reversible, and it takes seconds. If you'd
+>       rather leave it, nothing breaks — the fix that stops this recurring is already live either way.
+
 ## 🧹 Three leftover test branches on GitHub need deleting (B1327088)
 
 > **Short version: while proving a CI fix worked, I opened and closed three disposable test pull
