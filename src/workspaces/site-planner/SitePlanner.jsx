@@ -15447,7 +15447,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
         return;
       }
       const res = await identifyParcelEager(candidates, lng, lat, {
-        onSettled: (sources) => sources.forEach((s) => recordSourceResult(s.county, s.ok)),
+        onSettled: (sources) => sources.forEach((s) => recordSourceResult(s.county, s.ok, Date.now(), { ms: s.ms })),
       });
       if (tok !== identifyTok.current) return; // superseded by a newer click
       if (!res.hits.length) {

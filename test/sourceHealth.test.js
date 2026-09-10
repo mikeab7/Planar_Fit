@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   recordSourceResult, isSourceOpen, sourceCooldownMs, filterHealthyCandidates,
-  resetSourceHealth, isStatewideBackup, SOURCE_FAIL_THRESHOLD, SOURCE_COOLDOWN_MS,
+  resetSourceHealth, isStatewideBackup, SOURCE_FAIL_THRESHOLD, SOURCE_COOLDOWN_MS, SOURCE_SLOW_MS,
 } from "../src/workspaces/site-planner/lib/sourceHealth.js";
 import { STATEWIDE_KEYS } from "../src/workspaces/site-planner/lib/counties.js";
 
@@ -137,6 +137,43 @@ describe("sourceHealth — parcel-server circuit breaker (B244)", () => {
     const cands = [{ county: "harris", url: "u1" }, { county: "fortbend", url: "u2" }];
     const out = filterHealthyCandidates(cands, [], t); // no always-keep, both open
     expect(out.length).toBeGreaterThan(0);
+  });
+
+  // B1461731 — the breaker keys on SLOWNESS as well as outright errors, per the Nevada window
+  // where one query took 18s to return an error before the host stopped answering entirely: a
+  // source trending toward its own timeout is backed off before it starts hard-failing.
+  describe("slowness (B1461731)", () => {
+    it("a single slow-but-successful response does not trip the breaker", () => {
+      const t = 1000;
+      recordSourceResult("nv_statewide", true, t, { ms: SOURCE_SLOW_MS + 500 });
+      expect(isSourceOpen("nv_statewide", t)).toBe(false);
+    });
+
+    it("N consecutive slow-but-ok=true responses open the breaker exactly like N failures would", () => {
+      const t = 1000;
+      for (let i = 0; i < SOURCE_FAIL_THRESHOLD; i++) recordSourceResult("nv_statewide", true, t, { ms: SOURCE_SLOW_MS + 1 });
+      expect(isSourceOpen("nv_statewide", t)).toBe(true);
+    });
+
+    it("a response under the slow threshold, even if just barely, resets the streak like any healthy success", () => {
+      const t = 1000;
+      recordSourceResult("nv_statewide", true, t, { ms: SOURCE_SLOW_MS + 1 });
+      recordSourceResult("nv_statewide", true, t, { ms: SOURCE_SLOW_MS - 1 });
+      expect(isSourceOpen("nv_statewide", t)).toBe(false);
+    });
+
+    it("omitting ms is the old ok/fail-only behavior — a fast/untimed success still resets immediately", () => {
+      const t = 1000;
+      recordSourceResult("nv_statewide", false, t);
+      recordSourceResult("nv_statewide", true, t); // no ms passed — same as before this change
+      expect(isSourceOpen("nv_statewide", t)).toBe(false);
+    });
+
+    it("a genuine failure still counts even when ms is also slow (doesn't double-count or under-count)", () => {
+      const t = 1000;
+      for (let i = 0; i < SOURCE_FAIL_THRESHOLD; i++) recordSourceResult("nv_statewide", false, t, { ms: 18000 }); // the measured 18s Nevada error
+      expect(isSourceOpen("nv_statewide", t)).toBe(true);
+    });
   });
 });
 
