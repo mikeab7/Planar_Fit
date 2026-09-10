@@ -663,8 +663,13 @@ describe("compParse corpus: RATE + BASIS", () => {
     expect(period("/year")).toBe("annual");
     expect(period("annual")).toBe("annual");
     expect(period("annually")).toBe("annual");
-    expect(period("pa")).toBe("annual");
     expect(period("per annum")).toBe("annual");
+    expect(period("p.a.")).toBe("annual");
+    // NEW-1 (owner call, 2026-09-10) — a BARE "pa" no longer reads as "per annum". "PA" is
+    // Pennsylvania, and this app resolves parcels nationwide, so an address line was fabricating
+    // an annual rate period. The spelled-out and dotted forms above still work; the bare one now
+    // leaves the period unset, which makes the blocking "pick a period" flag fire instead.
+    expect(period("pa")).toBe("");
   });
 });
 
@@ -1014,6 +1019,59 @@ describe("compParse: adversarial-review SEVERITY-1 findings (2026-09-02) — nev
   });
 });
 
+describe("compParse: NEW-1 — a rate period is never borrowed from another clause (owner call, 2026-09-10)", () => {
+  const parse = (t) => { const r = parseProseLine(t); return { d: r.draft, f: r.cellFlags }; };
+
+  // DEFECT 1 — the reported one. An escalation clause's period word was read as the RATE's
+  // period, and silenced the blocking flag that exists precisely for this case.
+  it("an escalation's 'annual' never becomes the rate's period — the app asks instead", () => {
+    for (const line of [
+      "Warehouse lease 500,000 SF $0.64/SF NNN, 3% annual escalations",
+      "Warehouse lease 500,000 SF $0.64/SF NNN, escalating 3% annually",
+      "Warehouse lease 500,000 SF $0.64/SF NNN with annual escalation",
+      "Big box lease, 600,000 SF, $0.65/SF NNN, 3% annual increases",
+    ]) {
+      const { d, f } = parse(line);
+      expect(d.leaseRate).toBe(line.includes("0.65") ? "0.65" : "0.64"); // the rate itself survives
+      expect(d.leaseRatePeriod).toBe("");                                // never guessed
+      expect(f.leaseRatePeriod?.level).toBe("blocking");                 // and the app asks
+    }
+  });
+
+  // DEFECT 2 — found while reproducing defect 1, and worse: a CORRECTLY written comp lost its
+  // rate entirely. DOLLAR_ESCAL_RE's gap reached across ", 3% " and claimed the rate token as a
+  // dollar-step escalation, so the comp saved with no rate and the text landed in Notes.
+  it("an explicitly periodised rate is not swallowed by a following escalation clause", () => {
+    const { d, f } = parse("Warehouse lease 500,000 SF $0.64/SF/mo NNN, 3% annual escalations");
+    expect(d.leaseRate).toBe("0.64");
+    expect(d.leaseRatePeriod).toBe("monthly");   // the rate's OWN suffix still wins
+    expect(d.leaseEscalationPct).toBe("3");      // and the escalation is still read
+    expect(f.leaseRatePeriod).toBeUndefined();
+  });
+
+  it("the genuine dollar-step escalation this guard exists for still reads", () => {
+    const d = parseProseLine("Lease 500,000 SF, 10 yr term, $0.02/yr bumps").draft;
+    expect(d.notes).toMatch(/dollar step/i);
+  });
+
+  // DEFECT 3 — "PA" is Pennsylvania. The app resolves parcels nationwide.
+  it("a state abbreviation in an address never fabricates an annual period", () => {
+    const { d, f } = parse("Bristol PA, lease 500,000 SF, $0.64/SF NNN");
+    expect(d.leaseRatePeriod).toBe("");
+    expect(f.leaseRatePeriod?.level).toBe("blocking");
+  });
+
+  // The control arm: an explicit period must still be read, or the fix above would be a
+  // regression dressed as a guard (DRIVER-SCROLL-IS-NOT-APP-SCROLL §6 — a probe with no
+  // known-good arm is vacuous).
+  it("KNOWN-GOOD: an explicit period on the rate is still read, both ways", () => {
+    expect(parse("Lease 500,000 SF $0.64/SF/mo NNN").d.leaseRatePeriod).toBe("monthly");
+    expect(parse("Lease 500,000 SF $7.68/SF/yr NNN").d.leaseRatePeriod).toBe("annual");
+    expect(parse("Lease 500,000 SF $7.68/SF NNN per annum").d.leaseRatePeriod).toBe("annual");
+    expect(parse("Lease 500,000 SF $0.64/SF NNN per month").d.leaseRatePeriod).toBe("monthly");
+  });
+});
+
 describe("compParse: B1149584/B1149585 — Michael's Tesla repro, one comp not four (2026-09-04)", () => {
   // The exact 9-line paste from the bug report (a blank line before the last line), reproduced
   // verbatim rather than paraphrased so this test fails the moment the real repro regresses.
@@ -1049,7 +1107,18 @@ describe("compParse: B1149584/B1149585 — Michael's Tesla repro, one comp not f
     expect(draft.leaseEscalationPct).toBe("3");
     expect(draft.leaseOpex).toBe("0.23"); // NEW-2: previously left blank with a false "no $ figure
     // given" note while the very same figure was silently miscoded as the rent
-    expect(rowHasBlockingFlags(cellFlags)).toBe(false); // ready to save with no correction needed
+    // ⛔ NEW-1 (owner call, 2026-09-10) — THIS EXPECTATION WAS INVERTED, and it was inverted
+    // because it encoded the very defect it now guards. The line is "$0.58 NNN increasing 3%
+    // annually": the rate carries NO period of its own, and the only period word on it —
+    // "annually" — belongs to the ESCALATION. The parser used to read that word as the RATE's
+    // period and record $0.58/SF/YEAR for an 800,405 SF big box (about a twelfth of the real
+    // rent), and because a period had then been "found", the blocking flag never fired and the
+    // row read as "ready to save with no correction needed". That is the same defect that later
+    // recorded the Generation Park comp as annual. The row is NOT ready to save: the period is
+    // genuinely unknown, so the app must ask rather than guess.
+    expect(draft.leaseRatePeriod).toBe("");
+    expect(rowHasBlockingFlags(cellFlags)).toBe(true);
+    expect(cellFlags.leaseRatePeriod.level).toBe("blocking");
   });
 
   it("nothing recognized is lost — Tesla, Logistics Center II, As-is and the editorial aside all survive in Notes", () => {
