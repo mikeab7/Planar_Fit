@@ -5,7 +5,7 @@
 > step; tick/remove it once he's done it. This is the **owner's** plate only. Browser click-throughs and
 > signed-in spot-checks are the Claude cohort's job (`VERIFICATION.md`), **never** Michael's — do NOT list those here.
 
-_Last updated: 2026-09-08._
+_Last updated: 2026-09-10._
 
 ## 🧹 Three leftover test branches on GitHub need deleting (B1327088)
 

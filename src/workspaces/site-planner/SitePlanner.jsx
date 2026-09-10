@@ -3,7 +3,7 @@ import { flushSync, createPortal } from "react-dom";
 import ContextMenu from "../../shared/ui/ContextMenu.jsx";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { loadSite, saveSite, deleteSite, loadSitesList, isCloudActive, activeUid, pushSiteToCloud, pushModelToCloud, keepaliveFlushSite, listVersions, getVersion, backupNow, reconcileSiteFromCloud } from "./lib/storage.js";
+import { loadSite, saveSite, deleteSite, loadSitesList, isCloudActive, activeUid, pushSiteToCloud, pushModelToCloud, keepaliveFlushSite, listVersions, getVersion, backupNow, reconcileSiteFromCloud, listDeletedPlansInGroup, restoreDeletedProject, purgeDeletedProject } from "./lib/storage.js";
 import { collectAssetRefs, releasePlanForOverlay } from "./lib/sharedAssetRefs.js";
 import { idbGet, idbPut, idbDelete, idbAvailable } from "./lib/localDb.js";
 import { registerFlush } from "../../app/flushRegistry.js";
@@ -109,7 +109,7 @@ import { wseSensitivity } from "./lib/wseSensitivity.js";
  * comment for why both hosts have to move together. */
 const LayerPanel = lazy(() => import("./components/LayerPanel.jsx"));
 // NEW-3 — the ONE map-overlay stacking model (an open panel outranks map chrome).
-import { MAP_CHROME_Z } from "./lib/mapChromeStack.js";
+import { MAP_CHROME_Z, zoomStackBottomPx } from "./lib/mapChromeStack.js";
 import { districtDrainageNote } from "./lib/floodGroup.js";
 import { useGroundElevation } from "./components/useGroundElevation.js";
 import CursorChip from "./components/CursorChip.jsx";
@@ -152,6 +152,7 @@ import { safeAreaInsets } from "../../shared/ui/safeAreaInsets.js";
 import { registerChromeDock } from "../../shared/ui/chromeDock.js";
 import { publishBottomSheetHeight } from "../../shared/ui/bottomSheetTracker.js";
 import { isPhoneSheetMode, heightForSnap, resolveDragSnap, keyboardInsetPx, clampSheetHeightForKeyboard, selectionCoverDeltaPx } from "./lib/propertiesSheet.js";
+import { isPhoneShape } from "./lib/deviceShape.js";
 import AppHeader from "../../shared/ui/AppHeader.jsx";
 /* NEW-2 — the ONE floor a header crumb may be squeezed to, shared with the project crumb so the
    plan chip beside it cannot be given a different one. No new module reaches any chunk: AppHeader
@@ -1867,6 +1868,13 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   const preCanvasDisplayRef = useRef(null); // showDims/showAreas/showAerial as they were before entering print mode — restored when the whole print flow ends, so toggling them FOR A PRINT never leaves a lasting change on the editing view (Cancel's non-destructive contract, extended to a completed Download too)
   const [planMenu, setPlanMenu] = useState(false);       // header Plan ▾ dropdown open
   const [planDelArm, setPlanDelArm] = useState(null);    // B264: plan id whose inline "Delete?" confirm is showing
+  /* B1469872 — this project's own "Recently deleted" plans: siblings soft-deleted from THIS group
+   * while it still has a live plan (this menu is only reachable while that's true), which the
+   * account-wide bin deliberately never lists (see storage.js's listDeletedProjects /
+   * listDeletedPlansInGroup headers). Fetched fresh whenever the plan menu opens. */
+  const [deletedPlansHere, setDeletedPlansHere] = useState([]);
+  const [deletedPlansBusy, setDeletedPlansBusy] = useState(null);   // id currently being restored/purged
+  const [planPurgeArm, setPlanPurgeArm] = useState(null);           // id whose "Delete forever" confirm is showing
   // anchor refs for the portal-rendered dropdowns (B127) — each points at the menu's
   // trigger so AnchoredMenu can position the flyout against it (see AnchoredMenu.jsx).
   const boundaryAnchor = useRef(null), buildingAnchor = useRef(null), parkingAnchor = useRef(null),
@@ -1901,7 +1909,9 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   // the canvas to a sliver, so they OVERLAY it instead of consuming row width, and the
   // right tool palette collapses behind a toggle. matchMedia keeps it in sync with
   // rotate/resize. The desktop layout is untouched (every mobile style is `narrow ?`-gated).
-  const [narrow, setNarrow] = useState(() => { try { return window.matchMedia(`(max-width: ${FLOAT_MIN_WIDTH}px)`).matches; } catch (_) { return false; } });
+  // B1447443 — raw WIDTH signal only; see `narrow` below (derived via `isPhoneShape`) for why
+  // width alone can no longer be the whole story.
+  const [narrowWidth, setNarrowWidth] = useState(() => { try { return window.matchMedia(`(max-width: ${FLOAT_MIN_WIDTH}px)`).matches; } catch (_) { return false; } });
   const [mobileTools, setMobileTools] = useState(false); // right tool rail open as an overlay (narrow only)
   const [mobileSections, setMobileSections] = useState(false); // NEW-1 (B917072) — left section rail (Land/Analysis/Yield/…) summoned as an overlay (narrow only)
   const [narrowProps, setNarrowProps] = useState(false); // B656: phone-only — the ✎ Properties pill opened the companion overlay
@@ -1955,7 +1965,17 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   const dismissHybridHint = () => { try { localStorage.setItem("planarfit:pondHybridHintSeen", "1"); } catch (_) {} setHybridHintSeen(true); };
   useEffect(() => {
     let mq; try { mq = window.matchMedia(`(max-width: ${FLOAT_MIN_WIDTH}px)`); } catch (_) { return undefined; }
-    const on = () => setNarrow(mq.matches);
+    const on = () => setNarrowWidth(mq.matches);
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
+  }, []);
+  // B1447443 — raw HEIGHT signal, the other half `narrow` (below) needs: a phone held in
+  // LANDSCAPE is wider than `FLOAT_MIN_WIDTH` (so `narrowWidth` alone misses it) but shorter than
+  // it too. Reuses the same token rather than inventing a second breakpoint.
+  const [shortHeight, setShortHeight] = useState(() => { try { return window.matchMedia(`(max-height: ${FLOAT_MIN_WIDTH}px)`).matches; } catch (_) { return false; } });
+  useEffect(() => {
+    let mq; try { mq = window.matchMedia(`(max-height: ${FLOAT_MIN_WIDTH}px)`); } catch (_) { return undefined; }
+    const on = () => setShortHeight(mq.matches);
     mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
     return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
   }, []);
@@ -1971,6 +1991,13 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
     return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
   }, []);
+  // B1447443 — a width-only breakpoint can't tell a real phone held SIDEWAYS (wide, but short and
+  // touch-operated) from an actual desktop window that merely happens to be that wide: on the
+  // Site surface that left the desktop-styled module rail (Land/Analysis/Yield/…) taller than the
+  // available height, with no scrollbar, so its last entries were unreachable. `coarsePointer` is
+  // never true for a mouse-driven session, so this can only ever ADD phone-shaped devices to what
+  // `narrowWidth` already caught — a real desktop, at any height, is untouched.
+  const narrow = isPhoneShape({ narrowWidth, shortHeight, coarsePointer });
   const lsGet = (k, d) => { try { return localStorage.getItem("planarfit:" + k) || d; } catch (_) { return d; } };
   // (Its `lsSet` twin went with NEW-1: smooth zoom was its last caller, and that setting is now
   // written by `shared/prefs/smoothZoom.js`, which owns the same `planarfit:` prefix.)
@@ -2170,8 +2197,12 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   }, []);
   // `w`/`h` are clamped to a sane minimum for the coordinate math; `rawW` is the TRUE
   // (unclamped) map-pane width, used only to keep the bottom furniture from overlapping
-  // when a docked left panel narrows the pane below the clamp (NEW-1 / B881).
-  const [size, setSize] = useState({ w: 800, h: 560, rawW: 800 });
+  // when a docked left panel narrows the pane below the clamp (NEW-1 / B881). `rawH` is the
+  // same idea for height (B1338272) — a landscape phone's pane can be shorter than the 360
+  // floor, and the zoom stack's own top-right-collision clamp needs the REAL height to react
+  // to, not the floored one (the floored `h` made that clamp a silent no-op on exactly the
+  // device it was written for — measured, not theorized).
+  const [size, setSize] = useState({ w: 800, h: 560, rawW: 800, rawH: 560 });
   /* ⛔ B1234400 — IS `size` A REAL MEASUREMENT, OR STILL THE FALLBACK DEFAULT ABOVE?
    * Only ever set true from a measurement taken while `document.visibilityState === "visible"` —
    * see the ResizeObserver and the visibilitychange effect below, and lib/viewFramingGate.js's
@@ -5590,7 +5621,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
       if (typeof document === "undefined" || document.visibilityState === "visible") sizeMeasuredRef.current = true;
       // Bail when unchanged — the B962 layout effect often syncs the same width one frame earlier
       // (on a panel toggle), so an identical RO callback would otherwise force a redundant re-render.
-      setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width }));
+      setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width, rawH: r.height }));
     });
     ro.observe(wrapRef.current);
     return () => ro.disconnect();
@@ -5611,7 +5642,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
       const r = el.getBoundingClientRect();
       sizeMeasuredRef.current = true;
       const w = Math.max(320, r.width), h = Math.max(360, r.height);
-      setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width }));
+      setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width, rawH: r.height }));
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -6212,7 +6243,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     // ResizeObserver; the functional bail keeps steady-state re-runs a no-op (VIEWPORT-STABLE (a):
     // measure the real edge, fold the delta in the same frame — the panel-open twin of the B837 pan).
     const w = Math.max(320, r.width), h = Math.max(360, r.height);
-    setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width }));
+    setSize((s) => (s.w === w && s.h === h ? s : { w, h, rawW: r.width, rawH: r.height }));
     // NEW-1/B754752 — the bottom-center canvas toast (flashWarn) centers on the DRAWING, not the
     // window. `r.left + r.width/2` is the canvas's real horizontal center in viewport px — a docked
     // left-rail panel narrows `r` and this follows it, so the toast can never land on a docked
@@ -15423,7 +15454,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
         return;
       }
       const res = await identifyParcelEager(candidates, lng, lat, {
-        onSettled: (sources) => sources.forEach((s) => recordSourceResult(s.county, s.ok)),
+        onSettled: (sources) => sources.forEach((s) => recordSourceResult(s.county, s.ok, Date.now(), { ms: s.ms })),
       });
       if (tok !== identifyTok.current) return; // superseded by a newer click
       if (!res.hits.length) {
@@ -15821,6 +15852,29 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     if (id === siteId) deletedSelfRef.current = true;
     closeHdrMenus();
     onDeletePlan?.(id);
+  };
+  /* B1469872 — this project's own "Recently deleted" plans (see storage.js's
+   * listDeletedPlansInGroup header): siblings soft-deleted from THIS still-live group, which the
+   * account-wide bin deliberately never lists. Fetched fresh whenever the plan menu opens. */
+  const refreshDeletedPlansHere = () => {
+    Promise.resolve(listDeletedPlansInGroup(groupId)).then((r) => setDeletedPlansHere((r && r.ok && r.plans) || []));
+  };
+  const handleRestoreDeletedPlan = (p) => {
+    setDeletedPlansBusy(p.id);
+    Promise.resolve(restoreDeletedProject(p.id)).then((res) => {
+      if (!res || res.ok === false) flashWarn((res && res.error) || `“${p.name}” couldn't be restored — check your connection and try again.`);
+      refreshDeletedPlansHere();
+      onSiteSaved?.(); // the sites list is device-cached elsewhere; this is the same "something changed server-side" refresh the plan-lock toggle above already uses
+    }).catch(() => flashWarn(`“${p.name}” couldn't be restored — check your connection and try again.`))
+      .finally(() => setDeletedPlansBusy(null));
+  };
+  const handlePurgeDeletedPlan = (p) => {
+    setDeletedPlansBusy(p.id); setPlanPurgeArm(null);
+    Promise.resolve(purgeDeletedProject([p.id], groupId)).then((res) => {
+      if (!res || res.ok === false) flashWarn((res && res.error) || `“${p.name}” couldn't be permanently deleted — check your connection and try again.`);
+      refreshDeletedPlansHere();
+    }).catch(() => flashWarn(`“${p.name}” couldn't be permanently deleted — check your connection and try again.`))
+      .finally(() => setDeletedPlansBusy(null));
   };
   /* ------------ export (PNG / PDF / KMZ / project file) — LOADED ON DEMAND (B1042) ---
      The whole export path — sheet composition, the aerial tile Stitcher, GIS-layer
@@ -19632,13 +19686,13 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
           fontSize: FONT_SIZE.control, fontWeight: 500, color: "var(--chrome-text)",
           maxWidth: 200, minWidth: CRUMB_MIN_W, whiteSpace: "nowrap",
         }}
-        onClick={() => setPlanMenu((o) => !o)}
+        onClick={() => setPlanMenu((o) => { const next = !o; if (next) refreshDeletedPlansHere(); return next; })}
         title="Switch or rename plan"
         data-testid="plan-crumb"
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{planLabel}</span><span data-testid="plan-caret" style={{ color: "var(--chrome-muted)", fontSize: FONT_SIZE.label, flex: "none" }}>▾</span>
       </button>
-        <AnchoredMenu open={planMenu} onClose={() => { setPlanMenu(false); setPlanDelArm(null); }} anchorRef={planAnchor} placement="below-left" gap={8} width={284} panelStyle={{ ...menuPanel, padding: 10 }}>
+        <AnchoredMenu open={planMenu} onClose={() => { setPlanMenu(false); setPlanDelArm(null); setPlanPurgeArm(null); }} anchorRef={planAnchor} placement="below-left" gap={8} width={284} panelStyle={{ ...menuPanel, padding: 10 }}>
           <div style={{ fontSize: 10.5, color: PAL.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 5 }}>Plan name</div>
           <input value={planLabel} onChange={(e) => setPlanLabel(e.target.value)} onBlur={(e) => commitPlanLabel(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} style={{ ...numInput, width: "100%", fontFamily: "inherit" }} data-testid="plan-name-input" />
@@ -19666,7 +19720,12 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
             const cur = s.id === siteId;
             if (planDelArm === s.id) return (
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", margin: "1px 0", borderRadius: 7, background: "rgba(179,54,27,0.08)" }}>
-                <span style={{ flex: 1, fontSize: 12, color: PAL.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Delete “{s.name || "Untitled plan"}”?</span>
+                {/* B1469872 — this used to say nothing about recoverability at all. It moves to this
+                    project's own "Recently deleted" below (never the whole-site 30-day bin, which
+                    only ever lists a project once EVERY plan in it is gone) and is never auto-purged
+                    while a sibling plan here stays live — restore it any time, or delete it forever
+                    from that same list. */}
+                <span style={{ flex: 1, fontSize: 12, color: PAL.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`Delete “${s.name || "Untitled plan"}”? It moves to this project's Recently deleted below — restore it any time.`}>→ Recently deleted “{s.name || "Untitled plan"}”?</span>
                 <button style={{ ...chip, color: PAL.danger, padding: "2px 9px" }} onClick={() => { setPlanDelArm(null); handleDeletePlan(s.id); }}>Delete</button>
                 <button style={{ ...chip, padding: "2px 9px" }} onClick={() => setPlanDelArm(null)}>Cancel</button>
               </div>
@@ -19691,6 +19750,38 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               </div>
             );
           })}
+          {/* B1469872 — this PROJECT's own plan trash: siblings soft-deleted from this still-live
+              group, which the whole-site "Recently deleted" bin (ProjectBreadcrumb) never lists —
+              that one only shows a project once EVERY plan in it is gone. Before this section
+              existed a plan deleted from here was invisible everywhere and, past 30 days, silently
+              hard-deleted with no restore ever having been offered (see storage.js's
+              purgeExpiredDeletedProjects header) — it is now exempt from that auto-purge for as
+              long as this group stays live, and restorable/purgeable only from right here. */}
+          {deletedPlansHere.length > 0 && (
+            <>
+              <div style={{ fontSize: 10.5, color: PAL.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, margin: "11px 0 5px" }}>Recently deleted</div>
+              {deletedPlansHere.map((p) => {
+                if (planPurgeArm === p.id) return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", margin: "1px 0", borderRadius: 7, background: "rgba(179,54,27,0.08)" }}>
+                    <span style={{ flex: 1, fontSize: 12, color: PAL.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Delete “{p.name}” forever?</span>
+                    <button style={{ ...chip, color: PAL.danger, padding: "2px 9px" }} disabled={deletedPlansBusy === p.id} onClick={() => handlePurgeDeletedPlan(p)}>Delete</button>
+                    <button style={{ ...chip, padding: "2px 9px" }} onClick={() => setPlanPurgeArm(null)}>Cancel</button>
+                  </div>
+                );
+                return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <span style={{ flex: 1, minWidth: 0, padding: "6px 8px", fontSize: 12, color: PAL.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.name}>{p.name}</span>
+                    <button title="Restore this plan" aria-label={`Restore plan ${p.name}`} disabled={deletedPlansBusy === p.id} onClick={() => handleRestoreDeletedPlan(p)}
+                      style={{ ...chip, padding: "2px 9px", flex: "none" }}>Restore</button>
+                    <button title="Delete this plan forever" aria-label={`Delete plan ${p.name} forever`} disabled={deletedPlansBusy === p.id} onClick={() => setPlanPurgeArm(p.id)}
+                      style={{ flex: "none", width: 24, height: 24, lineHeight: 1, borderRadius: RADIUS.sm, border: "1px solid transparent", background: "transparent", color: PAL.muted, cursor: "pointer", fontSize: 13 }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = "#b3361b"; e.currentTarget.style.background = "rgba(179,54,27,0.10)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = PAL.muted; e.currentTarget.style.background = "transparent"; }}><span style={{ display: "grid", placeItems: "center" }}><CloseXIcon /></span></button>
+                  </div>
+                );
+              })}
+            </>
+          )}
           <div style={{ display: "flex", gap: 6, marginTop: 9, borderTop: `1px solid ${PAL.panelLine}`, paddingTop: 9 }}>
             <button style={{ ...chip, flex: 1 }} onClick={handleNewPlan} title="New layout on the same parcel"><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><PlusIcon size={12} />New plan</span></button>
             <button style={{ ...chip, flex: 1 }} onClick={handleDuplicate} title="Clone this plan to iterate on"><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><DuplicateIcon size={12} />Duplicate</span></button>
@@ -23975,7 +24066,30 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
             // anchored via `bottom: zoomBottom`, not by its content height), so "Zoom to fit" now
             // occupies the slot nearest the scale bar and this reserve is exactly as necessary as
             // it was with four buttons.
-            const zoomBottom = narrow ? 100 + FAB_RESERVE_PX : 100;
+            const desiredZoomBottom = narrow ? 100 + FAB_RESERVE_PX : 100;
+            // ⛔ B1338272 — THE COLLISION THAT ONLY SHOWS UP ON A SHORT CANVAS. `desiredZoomBottom`
+            // above is a fixed clearance from the map's BOTTOM edge, tuned to clear the scale bar —
+            // it assumes the canvas is tall enough that the stack's own TOP edge is nowhere near the
+            // top-right View + Layers row. On a landscape phone the canvas can be under 300px tall,
+            // so that fixed clearance pushes the stack's top edge up past the row it needs to clear:
+            // measured live on the smallest current iPhone in landscape (263px of canvas height),
+            // the unconstrained stack's top edge lands at y11 — squarely inside the row's own y11–43
+            // band, a 100% overlap of "Zoom in" under "Layers". Clamping against the canvas's own
+            // REAL, measured height is what makes this hold continuously as the canvas shrinks,
+            // rather than a constant tuned to one device that breaks at the next size down.
+            // ⛔ `size.h` is the WRONG height to clamp against — it's floored at 360 for the
+            // coordinate math (see `size`'s own header comment), so on this exact 263px canvas it
+            // silently read 360 and the clamp below was a no-op (measured: identical pixels before
+            // and after adding it). `size.rawH` is the TRUE unclamped pane height — the height
+            // twin of the `rawW` this file already carries for the same reason (B881's bottom-
+            // furniture reflow). The floor keeps the stack from being pushed low enough to march
+            // into the scale bar's own reserve instead of the row above it.
+            const zoomBottom = zoomStackBottomPx({
+              desired: desiredZoomBottom,
+              paneH: size.rawH ?? size.h,
+              stackH: zb.height * 3, // three stacked buttons, no internal gap
+              floor: FURNITURE_ROW,
+            });
             return (
               <>
               {/* data-canvas-corner: read by the shared help/report control (shared/ui/
@@ -24568,8 +24682,15 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
               permanently eating 54px+ of the screen (B113's right-rail pattern, extended here).
               Stays on-screen (transform:none) while a panel/companion is open — at that point the
               open panel is already costing far more width, and `left-menu-panel` below is
-              positioned assuming this rail's 54px, so hiding it there would leave a blank gap. */}
+              positioned assuming this rail's 54px, so hiding it there would leave a blank gap.
+              B1447443 — `overflowY:"auto"`/`minHeight:0` unconditionally, matching the right tool
+              rail's own pattern just below: on a short viewport (a landscape phone, or simply a
+              plan with every section tab present) a fixed-width vertical rail can need more height
+              than the canvas row has to give it, and a rail with no scroll affordance clips its
+              last entries with no way to reach them. Harmless on a normal desktop window, where
+              the rail already fits and no scrollbar appears. */}
           <div style={{ width: 54, flex: "none", background: PAL.chrome, borderRight: `1px solid ${PAL.chromeLine}`, display: "flex", flexDirection: "column", paddingTop: 4,
+            overflowY: "auto", minHeight: 0,
             ...(narrow ? { position: "absolute", left: 0, top: 0, bottom: 0, zIndex: 1105,
               // B1215682 — the phone Properties BOTTOM SHEET stays solo: the icon rail is a
               // left-side drawer affordance that has nothing to do with a sheet rising from the

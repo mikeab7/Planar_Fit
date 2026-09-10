@@ -86,6 +86,25 @@ written out in the header of `lib/notesStore.js`; read it there rather than re-d
   a table crashing on `setContent` against a torn-down instance) — read it before changing the save
   path. There must never be a "sync content on pageId change" effect; the search effect there is
   decorations-only and guards `isDestroyed`, which is the bar any new effect has to clear.
+- `components/NoteToolbar.jsx` — the formatting bar. **Standing rule (NOTES-TOOLBAR-STATE):
+  every control reports the SELECTION, or reports nothing** — uniform shows the real value,
+  a caret shows what the next character gets, a genuinely mixed range shows blank (value
+  controls) or `aria-pressed="mixed"` (toggles). *"Default" is a guess.* Every readout comes
+  from `lib/notesMixedSelection.js`; a control that grows its own mixed-check is a defect. And
+  what it reports is the **resolved value**, never the presence of a mark
+  (`lib/notesResolvedValue.js`) — a category label like "Default", "Size" or "Spacing" standing
+  in for a real name is the bug, not the fallback.
+  Order on the row is **Word's** — Font name, Font size, then Block style (which carries a
+  standing "Style" caption so two adjacent dropdowns cannot be mistaken for each other; it
+  used to hold the leading slot and was read as the font picker).
+- `lib/notesFontFamily.js` — "is this the same typeface?" Compare by `familyKey`, never by the
+  raw stack string.
+- `lib/notesPasteInherit.js` — pushes an INHERITED font/size down onto the run that holds the
+  text, and strips the CSS non-values (`inherit` and friends), on paste only. Why a `parseHTML`
+  ancestor walk is not enough is in its header.
+- `lib/notesResolvedValue.js` — **a control reports the RESOLVED VALUE, never whether a mark is
+  stored.** `inherit` is not a colour; an absent font mark is still a font. One black spelled
+  three ways must read as one colour, and "Default" is not the name of a typeface.
 - `components/IntegrityBanner.jsx` — the bar for the two findings nothing could previously mention (a note in two projects; a note that had lost its place). **Its own lazy chunk** — it renders only when something is actually wrong, so its bytes have no business on the rail's first paint.
 - **`components/ConflictNotice.jsx` — THE COMPACT NOTICE (NEW-3 of the follow-up brief, amending
   B842624).** The owner: *"it shouldn't just pop up with this massive banner, i should be able to
@@ -651,6 +670,29 @@ written out in the header of `lib/notesStore.js`; read it there rather than re-d
     once, one gesture across the whole page, phone width, the title band, the body drag, the
     discard notice, the mat sweep with a KNOWN-GOOD ARM, and the title's own ratio) and
     **verify-notes-print-free-placement** (the real Print button plus a rendered PDF).
+  - **⛔ THE NINTH ROUND (B1273296 ×3 + B1385024–B1385026, owner report 2026-09-08, second block of
+    the day) — AND THE MODEL FOR PLACEMENT CHANGED, WHICH DELETED MACHINERY RATHER THAN ADDING ANY.**
+    **(a) A PRESS ARMS A CARET AND CREATES NOTHING; THE FIRST CHARACTER MAKES THE NOTE** and grows
+    the page. His words: *"just because I click outside of the page, it shouldn't automatically open
+    the page up to it. Only once I actually type something."* This RETIRES the reason four earlier
+    rounds exist — an empty block that draws nothing and still takes the press (B357008), the prune
+    at the storage seam, the outline that stopped it being invisible, and the discard toast
+    (B1370546) — because none of them is needed once the node is not committed too early. The toast
+    is REMOVED (B1385025); the one path that can still empty a box (deleting its words) is unchanged
+    and silent, which is stated on the item rather than papered over.
+    **(b) THE PAGE'S LEFT EDGE IS PINNED** where centring would put an ungrown page, and growth only
+    extends rightward. Three rules have stood here and the first two each fixed one defect by
+    causing another — read the bug-family entry `-1` in `docs/NOTES-CARRY-FORWARD.md` before
+    touching it.
+    **(c) NO PRESS MOVES THE VIEW** (B1385026): every press-driven `focus()` declines
+    `scrollIntoView`, and the growth compensation treats a gutter change as a re-base rather than a
+    shift to hide (it was scrolling the page sideways on every load).
+    ⛔ **AND THE ROUND-2 FIX WAS DEPLOYED AND WRONG, PROVEN BY CHUNK CONTENT rather than by a hash**
+    — the owner refused a guess between "wrong" and "not deployed", and that is the right bar: a
+    stale cached `index.html` named an entry chunk whose own chunks 404ed. Guards:
+    **verify-notes-pending-caret** (the whole model, red-proofed at 24 assertions) and
+    **verify-notes-left-margin-reachable** (every case starts from an ALREADY-GROWN page — the
+    variable the round-2 harness never wrote down).
 - **HOW BIG THE WRITING IS (B342994, `lib/notesZoom.js`).** Ctrl+wheel and Ctrl+=/−/0 scale the
   **document**, never the app; the browser's own zoom is suppressed for those gestures so the two
   cannot fight; the level is per-scope, persisted, and does not sync (a comfortable size belongs to

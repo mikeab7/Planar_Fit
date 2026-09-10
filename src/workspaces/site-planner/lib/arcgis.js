@@ -330,8 +330,11 @@ export const BACKUP_GRACE_MS = 1200;
  * responded, errors, sources:[{county,ok,hit,error}], complete }. */
 export function identifyParcelEager(candidates, lng, lat, { onSettled, graceMs = BACKUP_GRACE_MS } = {}) {
   const list = candidates || [];
-  const st = list.map((c) => ({ county: c.county, statewide: !!c.statewide, ok: false, hit: false, error: null, feature: null, settled: false }));
-  const view = () => st.map((s) => ({ county: s.county, ok: s.ok, hit: s.hit, error: s.error }));
+  const st = list.map((c) => ({ county: c.county, statewide: !!c.statewide, ok: false, hit: false, error: null, feature: null, settled: false, ms: null }));
+  // `ms` (B1461731) rides alongside `ok` so a caller can feed the circuit breaker
+  // (sourceHealth.recordSourceResult) BOTH a genuine failure AND a slow-but-answered response —
+  // a source trending toward its timeout is backed off before it starts hard-failing outright.
+  const view = () => st.map((s) => ({ county: s.county, ok: s.ok, hit: s.hit, error: s.error, ms: s.ms }));
   const result = (complete) => ({
     hits: st.filter((s) => s.hit).map((s) => ({ county: s.county, feature: s.feature })),
     responded: st.filter((s) => s.ok).length,
@@ -368,10 +371,11 @@ export function identifyParcelEager(candidates, lng, lat, { onSettled, graceMs =
   };
   if (!list.length) { finish(true); if (onSettled) onSettled([]); return out; }
   list.forEach(({ url }, i) => {
+    const startedAt = Date.now();
     queryAtPoint(url, lng, lat).then(
       (feature) => { st[i].ok = true; st[i].hit = !!feature; st[i].feature = feature || null; },
       (err) => { st[i].error = err; }
-    ).finally(() => settle(i));
+    ).finally(() => { st[i].ms = Date.now() - startedAt; settle(i); });
   });
   return out;
 }

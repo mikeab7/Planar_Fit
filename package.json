@@ -12,6 +12,7 @@
     "ci-parity": "node scripts/ci-parity.mjs",
     "next-id": "node scripts/next-id.mjs",
     "probe:parcels": "node ui-audit/probe-statewide-parcels.mjs",
+    "sweep:parcel-health": "node ui-audit/parcel-source-health-sweep.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",

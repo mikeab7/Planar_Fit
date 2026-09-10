@@ -21,6 +21,13 @@
  * every one predates the reserved-block fix, and NONE has occurred since. The blocks work. What
  * nothing ever did was clean up what they inherited, or stop the next one at the door.
  *
+ * UPDATED 2026-09-09: the V side grew from 7 to 9 rows (V39, V100 joined; V45's own row 2 → 3).
+ * Both are the SAME inheritance, just DISCOVERED LATER — V39 (2026-06-18) and V100 (2026-06-22)
+ * both pre-date the block fix, but each had one twin sitting in the LIVE pending queue rather than
+ * the archive, so the two never shared a file until a verification-queue staleness triage
+ * (NEW-1/B1385248) closed and archived them. V39 falls just below the "V45–V275" band stated
+ * above — that band described the 2026-08-06 snapshot, not a hard floor; treat it as historical.
+ *
  * WHY THE 31 ARE DISAMBIGUATED IN PLACE RATHER THAN RENUMBERED. Both twins keep the number and each
  * gains a `⚠ SHARED ID` marker naming the other. The reason is cross-references: prose across the
  * repo says "see B239", and for a colliding id NOBODY CAN KNOW which twin a given reference meant.
@@ -81,11 +88,28 @@ Renumber the newer item (git fetch origin main && npm run next-id -- --against-m
     }
   });
 
-  it("the inheritance is exactly 24 B ids and 7 V ids, all below B6864 — the blocks did work", () => {
+  it("the inheritance is exactly 24 B ids and 10 V ids, all below B6864 — the blocks did work", () => {
     // Pinned as a FACT, not as a target. If this number moves, either something was cleaned (good,
     // shrink the baseline) or a new one landed below the radar of the two checks above.
+    //
+    // UPDATED 2026-09-09 (triage NEW-1/B1385248): V39 and V100 joined the V baseline (7 → 9) when a
+    // verification-queue staleness triage closed those two long-pending V39/V100 items (dated
+    // 2026-06-18 / 2026-06-22 — both pre-date the B6864/2026-08-06 reserved-block fix, same as
+    // every other row here) and moved them into docs/archive/VERIFICATION-DONE.md, which already
+    // held a DIFFERENT, older item under each of those same numbers. This is the identical species
+    // as the original 31 — two pre-block-scheme items sharing a number — it simply hadn't collided
+    // in one FILE yet because one twin was still sitting in the live pending queue. No id was
+    // renumbered; both V39 headings and both V100 headings now carry a `⚠ SHARED ID` marker
+    // (`node scripts/mark-shared-ids.mjs`) naming the other. V45's own row grew 2 → 3 for the same
+    // reason (a third V45 landed in the archive from the same triage pass).
+    //
+    // UPDATED 2026-09-10 (B1450816, the same species again): V40 joined (9 → 10) when the
+    // verification-queue ceiling guard's own triage closed the long-pending "Scheduling grid
+    // keyboard nav" V40 (dated 2026-06-18, also pre-block-scheme) and archived it alongside an
+    // unrelated, already-archived "Delete removes the selected element" V40 (B154). Both V40
+    // headings now carry the marker; nothing renumbered.
     expect(Object.keys(SAME_FILE_LEGACY_DUPES.B)).toHaveLength(24);
-    expect(Object.keys(SAME_FILE_LEGACY_DUPES.V)).toHaveLength(7);
+    expect(Object.keys(SAME_FILE_LEGACY_DUPES.V)).toHaveLength(10);
     const ids = Object.keys(SAME_FILE_LEGACY_DUPES.B).map((k) => Number(k.split("::B")[1]));
     expect(Math.max(...ids)).toBeLessThan(6864);
   });
@@ -221,7 +245,9 @@ describe("the 31 shared ids are marked in place, and no reference resolution mov
         checked += 1;
       });
     }
-    expect(checked, "no markers were examined — the proof would be vacuous").toBe(63);
+    // Was 63; +5 from V39/V100/V45's 2026-09-09 growth, +2 from V40's 2026-09-10 growth (see the
+    // "24 B ids and 10 V ids" test above).
+    expect(checked, "no markers were examined — the proof would be vacuous").toBe(70);
   });
 
   it("the marker is additive-only by construction — it never rewrites a heading", () => {

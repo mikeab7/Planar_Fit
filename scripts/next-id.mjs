@@ -168,9 +168,10 @@ export const SAME_FILE_LEGACY_DUPES = {
     "docs/archive/BACKLOG-DONE.md::B597": 2, "docs/archive/BACKLOG-DONE.md::B717": 2, "docs/archive/BACKLOG-DONE.md::B755": 2,
   },
   V: {
-    "docs/archive/VERIFICATION-DONE.md::V45": 2, "docs/archive/VERIFICATION-DONE.md::V92": 2, "docs/archive/VERIFICATION-DONE.md::V119": 2,
-    "docs/archive/VERIFICATION-DONE.md::V120": 2, "docs/archive/VERIFICATION-DONE.md::V123": 2, "docs/archive/VERIFICATION-DONE.md::V130": 2,
-    "docs/archive/VERIFICATION-DONE.md::V275": 2,
+    "docs/archive/VERIFICATION-DONE.md::V39": 2, "docs/archive/VERIFICATION-DONE.md::V40": 2, "docs/archive/VERIFICATION-DONE.md::V45": 3,
+    "docs/archive/VERIFICATION-DONE.md::V92": 2,
+    "docs/archive/VERIFICATION-DONE.md::V100": 2, "docs/archive/VERIFICATION-DONE.md::V119": 2, "docs/archive/VERIFICATION-DONE.md::V120": 2,
+    "docs/archive/VERIFICATION-DONE.md::V123": 2, "docs/archive/VERIFICATION-DONE.md::V130": 2, "docs/archive/VERIFICATION-DONE.md::V275": 2,
   },
 };
 

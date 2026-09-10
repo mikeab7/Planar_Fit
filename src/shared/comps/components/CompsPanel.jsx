@@ -35,6 +35,7 @@ import {
 } from "../lib/compsStore.js";
 import { formatNumberDisplay, sanitizeNumericInput } from "../lib/compSheetColumns.js";
 import { loadSiteSummaries } from "../../../workspaces/site-planner/lib/siteListLight.js";
+import { loadCompsRatePeriod } from "../lib/compsRatePeriodPrefs.js";
 import { listMyTeams, currentIdentity } from "../../../workspaces/site-planner/lib/teams.js";
 import CompEntryGrid, { draftFromParsedRow } from "./CompEntryGrid.jsx";
 import CompDraftsPanel from "./CompDraftsPanel.jsx";
@@ -195,7 +196,7 @@ function SummaryStrip({ comps }) {
   );
 }
 
-export function CompRow({ comp, onOpen, overlaysById }) {
+export function CompRow({ comp, onOpen, overlaysById, compsRatePeriod }) {
   // HARDENING-14 — a comp's own title wins; absent that, its LOCATION (a real identity — an
   // address, an APN, a plan name) is a better row title than its rate, which is what used to show.
   const locationText = useCompLocationText(comp.anchor, overlaysById);
@@ -206,7 +207,7 @@ export function CompRow({ comp, onOpen, overlaysById }) {
       borderBottom: "1px solid var(--border-default)", background: "transparent", cursor: "pointer", fontFamily: "inherit",
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 650, color: "var(--text-primary)" }}>{primary || compHeadline(comp)}</span>
+        <span style={{ fontSize: 13, fontWeight: 650, color: "var(--text-primary)" }}>{primary || compHeadline(comp, compsRatePeriod)}</span>
         {/* NEW-5 — a comp saved with no Executed date reads "Date unknown" rather than a blank
             gap; the tooltip states what it's sorted by instead (its own "Date entered" field is
             the full explanation, one click away in the detail view). */}
@@ -217,7 +218,7 @@ export function CompRow({ comp, onOpen, overlaysById }) {
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 3 }}>
         <TypeChip type={comp.compType} />
-        {primary && <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{compHeadline(comp)}</span>}
+        {primary && <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{compHeadline(comp, compsRatePeriod)}</span>}
       </div>
     </button>
   );
@@ -226,9 +227,9 @@ export function CompRow({ comp, onOpen, overlaysById }) {
 // B1066368 — one row in the "Recently deleted" trash list, mirroring SitePlansSection.jsx's own
 // trash row shape (identity + Restore + Delete forever). Reuses the same identity resolution as
 // CompRow (title, else a real Location, else the rate headline) rather than a bare id or type.
-function TrashRow({ comp, overlaysById, onRestore, onPurge }) {
+function TrashRow({ comp, overlaysById, onRestore, onPurge, compsRatePeriod }) {
   const locationText = useCompLocationText(comp.anchor, overlaysById);
-  const primary = comp.title || locationText || compHeadline(comp);
+  const primary = comp.title || locationText || compHeadline(comp, compsRatePeriod);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 0", borderTop: "1px solid var(--border-default)" }}>
       <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={primary || undefined}>
@@ -275,8 +276,8 @@ function SourceBrochureLink({ comp, overlaysById, onOpenBrochure }) {
   );
 }
 
-export function CompDetail({ comp, canEdit, onEdit, onDelete, onBack, overlaysById, onOpenBrochure, assignNotice, onDismissAssignNotice, projects, trackedSites }) {
-  const rows = compFieldRows(comp);
+export function CompDetail({ comp, canEdit, onEdit, onDelete, onBack, overlaysById, onOpenBrochure, assignNotice, onDismissAssignNotice, projects, trackedSites, compsRatePeriod }) {
+  const rows = compFieldRows(comp, compsRatePeriod);
   // HARDENING-14 — the detail view showed every structured field EXCEPT where the comp actually
   // is, despite that being real, already-resolved information (an address, an APN, a plan name).
   const locationText = useCompLocationText(comp.anchor, overlaysById);
@@ -654,22 +655,34 @@ export default function CompsPanel({
   // own words) — this is the "and SAY SO." Cleared whenever a different comp's detail is opened.
   const [assignNotice, setAssignNotice] = useState(null);
   const [currentUserId, setCurrentUserId] = useState(null);
+  // NEW-COMPS-CARD — Michael's own "per year / per month" choice (the Dashboard Comps card's
+  // toggle), read here so the map's Comps rail never disagrees with it — same account-scoped
+  // preference, loaded read-only (this rail carries no second toggle of its own).
+  const [compsRatePeriod, setCompsRatePeriod] = useState("annual");
   const [teams, setTeams] = useState([]);
   // B849232/NEW-1 — the paste-grid create surface. `gridRows` is a client-side staging array,
   // never persisted until Save; `armedRowId` tracks which row is waiting for the NEXT map-picked
   // anchor (set by that row's "＋ Location" button) so a plain "Drop a pin"/"Comp from parcel"
   // click routes its result to that row instead of opening a fresh one.
   const [gridRows, setGridRows] = useState([]);
+  // ⛔ NEW-2 (owner report, 2026-09-08) — which grid row the user is actually working on, reported
+  // up by `CompEntryGrid`. A map pick prefers THIS row over the topmost-unlocated rule below; see
+  // the pendingAnchor effect for why that rule alone put his parcel on a row he could not see.
+  const [activeGridRowId, setActiveGridRowId] = useState(null);
+  // What the sheet SAYS about a pick that landed — "Location added to row 2." A pick that answers
+  // a row other than the one on screen must never be silent again.
+  const [gridLocationNote, setGridLocationNote] = useState(null);
+  const [gridSelectRowId, setGridSelectRowId] = useState(null);
   const [armedRowId, setArmedRowId] = useState(null);
   const [gridSaving, setGridSaving] = useState(false);
   const [gridSaveError, setGridSaveError] = useState(null);
   // ⛔ HARDENING-13 (B986096, owner P0 live-test, "clicking [Location] arms pin placement") —
   // arming a row used to only set `armedRowId`; the map's OWN "am I placing a pin right now" state
-  // (`placingCompPin`, owned entirely inside MapFinder) was a SEPARATE switch the user still had to
+  // (`placingPin`, owned entirely inside MapFinder) was a SEPARATE switch the user still had to
   // flip by hand via the toolbar's "Drop a pin" button — so "click Location, then click the map"
   // silently did nothing, because the map was never told to start listening for that click. This
   // wrapper arms BOTH in one call; disarming (id === null, the Escape/Cancel path) only clears the
-  // row side — the map's own Cancel/Escape already owns turning `placingCompPin` back off.
+  // row side — the map's own Cancel/Escape already owns turning `placingPin` back off.
   const armRow = (id) => { setArmedRowId(id); if (id) onArmMapPin?.(); else onDisarmMapPin?.(); };
   // B849233/NEW-2 — the KML-import draft staging area. `armedRowId` above is a SINGLE slot
   // shared with the grid: it names either a grid row's `_id` or a draft's real uuid, and the
@@ -694,7 +707,10 @@ export default function CompsPanel({
 
   useEffect(() => {
     if (!open) return;
-    currentIdentity().then(({ uid }) => setCurrentUserId(uid));
+    currentIdentity().then(({ uid }) => {
+      setCurrentUserId(uid);
+      loadCompsRatePeriod(uid).then(({ period }) => setCompsRatePeriod(period));
+    });
     listMyTeams().then(setTeams).catch(() => setTeams([]));
   }, [open]);
 
@@ -791,6 +807,11 @@ export default function CompsPanel({
     // soft, non-blocking flag on the row's Location cell (comps.js's `anchorCountyFlag`) instead
     // of a silent null — cleared automatically the moment a later pick DOES carry one.
     const locFlag = anchorCountyFlag(pendingAnchor);
+    // The sheet's row numbers are 1-based and are what the user reads off the screen.
+    const noteFor = (rowId) => {
+      const i = gridRows.findIndex((r) => r._id === rowId);
+      return i === -1 ? null : `Location added to row ${i + 1}.`;
+    };
     if (armedRowId) {
       if (gridRows.some((r) => r._id === armedRowId)) {
         // NEW-2 — picking a location for an armed row is a real edit to that row; mark it
@@ -802,13 +823,29 @@ export default function CompsPanel({
           if (locFlag) cellFlags.location = locFlag; else delete cellFlags.location;
           return { ...r, draft: { ...r.draft, anchor: pendingAnchor }, cellFlags, touched: true };
         }));
+        setGridLocationNote(noteFor(armedRowId));
+        setGridSelectRowId(armedRowId);
       } else {
         setDraftAnchors((m) => ({ ...m, [armedRowId]: pendingAnchor }));
       }
       setArmedRowId(null);
     } else {
-      const openTarget = view === "grid" ? gridRows.find((r) => !r.draft.anchor) : null;
+      // ⛔ NEW-2 (owner report, 2026-09-08) — HARDENING-12's rule below ("fill the TOPMOST row
+      // still missing a location") was the right fix for ITS report ("the toolbar pin ignores the
+      // row and makes a new one") and is deliberately KEPT as the fallback. What it could not do
+      // is prefer the row the user is on, because nothing told it which that was: with NEW-1's
+      // unfilled phantom row sitting above the row he was filling, his parcel silently attached to
+      // the phantom, the row on screen went on reporting "missing a Location", and Save stayed
+      // blocked. The active row now wins whenever it genuinely needs a location; the topmost rule
+      // still answers every case where it does not (nothing focused, focus elsewhere in the app,
+      // the active row already anchored).
+      const activeRow = gridRows.find((r) => r._id === activeGridRowId);
+      const openTarget = view === "grid"
+        ? ((activeRow && !activeRow.draft.anchor) ? activeRow : gridRows.find((r) => !r.draft.anchor))
+        : null;
       if (openTarget) {
+        setGridLocationNote(noteFor(openTarget._id));
+        setGridSelectRowId(openTarget._id);
         setGridRows((rows) => rows.map((r) => {
           if (r._id !== openTarget._id) return r;
           const cellFlags = { ...r.cellFlags };
@@ -816,7 +853,10 @@ export default function CompsPanel({
           return { ...r, draft: { ...r.draft, anchor: pendingAnchor }, cellFlags, touched: true };
         }));
       } else {
-        setGridRows((rows) => [...rows, draftFromParsedRow({ draft: emptyDraft(pendingAnchor), cellFlags: locFlag ? { location: locFlag } : {} })]);
+        const appended = draftFromParsedRow({ draft: emptyDraft(pendingAnchor), cellFlags: locFlag ? { location: locFlag } : {} });
+        setGridRows((rows) => [...rows, appended]);
+        setGridLocationNote(`Location added to row ${gridRows.length + 1} — a new row.`);
+        setGridSelectRowId(appended._id);
         setView("grid");
       }
     }
@@ -967,7 +1007,11 @@ export default function CompsPanel({
   };
 
   // B849232/NEW-1 — the paste-grid create surface.
-  const openGrid = () => { setGridRows([]); setArmedRowId(null); setGridSaveError(null); setView("grid"); };
+  const openGrid = () => {
+    setGridRows([]); setArmedRowId(null); setGridSaveError(null);
+    setActiveGridRowId(null); setGridLocationNote(null); setGridSelectRowId(null);
+    setView("grid");
+  };
   const closeGrid = () => { setView("list"); setArmedRowId(null); };
   const saveGridRows = async (readyRows) => {
     if (!readyRows.length) return;
@@ -1128,7 +1172,7 @@ export default function CompsPanel({
             {kmlImportError && <div style={{ padding: "6px 14px 0", fontSize: 10.5, color: "var(--danger-text)" }}>{kmlImportError}</div>}
             <SummaryStrip comps={comps} />
             {comps.length === 0 && <div style={{ padding: 14, fontSize: 12, color: "var(--text-secondary)" }}>No comps yet. Paste a few from a broker email with “＋ Paste comps” above, or point at the map and choose “Log a comp”.</div>}
-            {comps.map((c) => <CompRow key={c.id} comp={c} onOpen={openDetail} overlaysById={overlaysById} />)}
+            {comps.map((c) => <CompRow key={c.id} comp={c} onOpen={openDetail} overlaysById={overlaysById} compsRatePeriod={compsRatePeriod} />)}
 
             {/* B1066368 — "Recently deleted", mirroring SitePlansSection.jsx's own trash disclosure
                 exactly (collapsed by default, fetched lazily on first open). */}
@@ -1148,7 +1192,7 @@ export default function CompsPanel({
                   <div style={{ fontSize: 10.5, color: "var(--text-secondary)", padding: "4px 0" }}>Nothing here.</div>
                 ) : (
                   trash.map((c) => (
-                    <TrashRow key={c.id} comp={c} overlaysById={overlaysById} onRestore={restoreOne} onPurge={purgeForever} />
+                    <TrashRow key={c.id} comp={c} overlaysById={overlaysById} onRestore={restoreOne} onPurge={purgeForever} compsRatePeriod={compsRatePeriod} />
                   ))
                 )
               )}
@@ -1170,6 +1214,10 @@ export default function CompsPanel({
         {view === "grid" && (
           <CompEntryGrid
             rows={gridRows} onRowsChange={setGridRows}
+            onActiveRowChange={setActiveGridRowId}
+            selectRowId={gridSelectRowId}
+            locationNote={gridLocationNote}
+            onDismissLocationNote={() => setGridLocationNote(null)}
             armedRowId={armedRowId} onArm={armRow}
             onFocusAnchor={(anchor) => onFocusAnchor?.(anchor)}
             onSave={saveGridRows} onCancel={closeGrid}
@@ -1183,7 +1231,7 @@ export default function CompsPanel({
             comp={activeComp} canEdit={activeComp.userId === currentUserId} onEdit={openEdit} onDelete={remove} onBack={() => setView("list")}
             overlaysById={overlaysById} onOpenBrochure={onOpenBrochure}
             assignNotice={assignNotice} onDismissAssignNotice={() => setAssignNotice(null)}
-            projects={projects} trackedSites={trackedSites}
+            projects={projects} trackedSites={trackedSites} compsRatePeriod={compsRatePeriod}
           />
         )}
 

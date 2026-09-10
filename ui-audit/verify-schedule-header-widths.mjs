@@ -90,9 +90,11 @@ try {
       return { sampled: xs.length * ys.length, bad, box: { left: r.left, right: r.right, width: r.width } };
     };
     const tabs = [...root.querySelectorAll('[data-testid^="module-tab-"]')];
-    // The center group is TWO controls (Grid/Split/Gantt toggle + the review-inbox button) — its
-    // tight content box is the union of both, never just the toggle alone, or the inbox button's
-    // own width gets mistaken for empty space on one side.
+    // The center group is TWO controls (Grid/Split/Gantt toggle; the review-inbox button) — its
+    // tight content box is the union of both, never just one, or a real control's width gets
+    // mistaken for empty space on one side. (NEW-1, 2026-09-10 — the "Schedules" switcher button
+    // that used to be a third member here was removed; the Row-1 breadcrumb's schedule crumb now
+    // does that job, outside this zone entirely.)
     const centerParts = [
       root.querySelector('[role="group"][aria-label="View"]'),
       root.querySelector('[title="Review suggested updates from forwarded emails"]'),

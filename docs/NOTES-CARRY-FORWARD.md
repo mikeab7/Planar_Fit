@@ -100,10 +100,73 @@ Two more found since, each worth its own line because each returned a confident 
    the second gesture, where a body drag correctly stands down in favour of text selection. Four
    consecutive "the drag does nothing" rows came from that and from nothing else. Open a fresh page
    per case, or drive the grip, which drags unconditionally.
-12. **A CLICK IN THE MAT NOW CREATES A NOTE, so "click away" is not a neutral act (2026-09-08).**
-   A harness that dismisses something by clicking elsewhere on the grey mat has placed another
-   note, and a count that was 1 before and 1 after may be a different box entirely. Click away onto
-   the page, or count identities rather than nodes.
+12. **⛔ CORRECTED SAME DAY (NEW-8): A CLICK IN THE MAT CREATES NOTHING — IT ARMS A CARET, AND THE
+   FIRST CHARACTER MAKES THE NOTE.** This entry originally read "a click in the mat now creates a
+   note, so click away is not a neutral act", which was true for about six hours and is exactly the
+   kind of stale instruction that costs a session. What survives is the reason it was written: a
+   count that reads 1 before and 1 after can still be a DIFFERENT box, so compare the stored
+   document as a STRING or compare identities — never counts. And the new rule has its own trap in
+   the other direction: a harness that presses and expects a node without typing will report the
+   correct behaviour as "the placement gesture has stopped working". `ui-audit/lib/pressFeature.mjs`
+   sends the committing keystroke for you.
+
+13. **A CONTROL THAT LIVES IN THE "More" SHEET READS AS *MISSING*, NOT AS *BROKEN* (2026-09-08,
+   NOTES-TOOLBAR-STATE).** The first run of `verify-notes-font-control.mjs` reported the three
+   alignment buttons as exposing "no state at all". They expose it fine — they simply are not
+   rendered until the More sheet is open, and a closed toolbar has nothing to query. Same
+   species as trap 9 and as DRIVER-SCROLL-IS-NOT-APP-SCROLL §6: **the harness's own question
+   produced the reading.** Open the sheet for the read (every control on the bar stops
+   `mousedown`, so the selection survives) — and ASSERT that it survived rather than assuming,
+   which is what that harness's `snapshot()` now does.
+14. **A "MIXED" FIXTURE IS ONLY MIXED IN THE DIMENSIONS YOU ACTUALLY VARIED (2026-09-08).** The
+   same harness graded Block style, Line spacing and both list toggles as "guessing" because
+   they reported the same value on its uniform and its mixed range. They were right: both of its
+   blocks were plain paragraphs in no list, so those four properties genuinely agreed across
+   both ranges. **A table that grades N properties needs a fixture that disagrees in all N** —
+   otherwise the honest answers fail and the real defects hide among them. The fixture now
+   varies list membership, block style, alignment, line spacing, every mark, font, size and
+   colour at once.
+15. **AND THE OLDEST ONE IN THIS REPO, WHICH STILL COST A ROUND TODAY: THE HARNESS MEASURED A
+   BUNDLE THAT DID NOT CONTAIN THE FIX (2026-09-08).** A paste fix read as "still broken" — the
+   run that reported it was driving a `dist/` built before the fix was written. It is the local
+   twin of the repo's own live-measurement rule (a deployed chunk hash must be read in the same
+   call as the assertion): **rebuild, then measure, and treat a fix that "changed nothing at
+   all" as a build-staleness suspect before a code suspect.**
+16. **A GUARD CAN PASS WHILE THE MECHANISM BEHIND IT IS DEAD (2026-09-08, and this one shipped).**
+   A VIEWPORT-STABLE compensation read `dom.offsetLeft` to detect a layout shift. That value is
+   ALWAYS 0 for the editor body — its offsetParent is a wrapper inside the sheet, not the scroller
+   — so the delta was always 0 and the effect never once ran. Its harness was green because every
+   case pointed at it had the sheet centred and growing rightward, where there is no shift to
+   compensate. **Point a new guard at the one scene it exists for, and prove it RED there**, or it
+   is measuring nothing. Measured tell: the sheet's padding went 40px → 236px while the watched
+   value read 0 both times.
+17. **A SCROLL DEFECT IS INVISIBLE ON A PAGE THAT CANNOT SCROLL (2026-09-08).** Two sections
+   asserting "the view does not move" stayed green on a build that moved the view 362px, because
+   their fixtures were short enough to fit. Only a note long enough for the pane to scroll, already
+   scrolled, caught it. Any harness asserting scroll invariance needs a VACUITY GUARD that fails if
+   there was no scroll available to lose.
+18. **A HARNESS EDIT IS CODE AND CAN BE THE BUG (2026-09-08).** Adapting a suite to a changed model
+   (a press no longer creates a note; the first keystroke does) meant adding a committing keystroke
+   after every press — and one of those presses was the double-click-to-select-a-WORD case, where
+   the keystroke typed over the very selection being asserted. The harness then correctly reported
+   a defect that existed only in itself. **Diff failure IDENTITIES against a baseline build, never
+   counts**: that is what separated three real regressions from twelve pre-existing ones here.
+
+16. **A DRAG THAT STARTS INSIDE AN EXISTING SELECTION IS A DRAG-AND-DROP, NOT A NEW SELECTION
+   (2026-09-09).** Caught by a harness contradicting ITSELF: "two genuinely different colours go
+   indeterminate" failed in the suite and PASSED when the same two runs were driven alone. The
+   difference was the PRECEDING gesture — the new drag's mousedown landed inside the range the
+   last one had left selected, so the browser began dragging that text instead of selecting. It
+   is silent, it can MOVE content, and every assertion after it describes a selection nobody
+   made. **Click once to collapse before every drag, and then PROVE what got selected**
+   (`document.getSelection().toString()` must contain both endpoints) rather than assuming.
+17. **THE BASELINE FOR A "WAS THIS ALREADY BROKEN ON MAIN?" CHECK MUST INCLUDE UNTRACKED FILES
+   (2026-09-09) — and getting this wrong nearly filed one of our own regressions as someone
+   else's.** `git stash push -- src/` does NOT stash untracked files, so a NEW module added by
+   the work under test stays on disk and is counted in the "clean main" measurement. That is how
+   the design-drift ceiling read 580 on "untouched main" when the real number was a passing 572:
+   the new file was in both arms. **Use `git stash push -u`**, and treat any baseline that is
+   itself failing as a claim to verify rather than a relief.
 
 See also `ui-audit/TRAPS.md`, and the named rules **FOREGROUND-OR-VOID** (a background tab cannot
 be measured — not its clock, not its pixels) and **COUNT-EVERY-KIND**.
@@ -135,6 +198,16 @@ sat BESIDE the pressed line, not under it. Live copy: `ui-audit/diagnose-notes-o
 ---
 
 ## 3 · Data facts
+
+**Font and size, as stored (2026-09-08).** A `textStyle` mark's `fontFamily` holds the source's
+RAW stack string — Word writes `"Calibri",sans-serif`, the palette writes `Calibri, Candara,
+sans-serif`, and **those are the same typeface**; compare with `notesFontFamily.js`'s
+`familyKey` (first family, unquoted, lower-cased), never with `===`. A `fontSize` is normalised
+to **px at the paste boundary** (`fontSizePx` — 11pt is stored as `14.67px`), because
+`parseFloat("11pt")` is 11 and made an 11pt run and an 11px run read as the same "11". **Notes
+already saved keep whatever they hold** — there is no migration and no repair pass; the owner
+was explicit that rewriting existing formatting is a separate decision he has not made, so the
+DISPLAY path resolves units too rather than the stored data being touched.
 
 **Local keys** — `planyr:notes:tree:v1:<uid>` · `planyr:notes:page:v1:<uid>:<pageId>` ·
 `planyr:notes:sync:v1:<uid>` (`<uid>` is the user id, or `local` when signed out).
@@ -179,6 +252,16 @@ position**.
 
 ## 5 · The recurring bug families — suspect these first
 
+-1. **⛔ A FIX THAT MOVES A DEFECT RATHER THAN REMOVING IT — AND THE TELL IS THAT THE SAME LINE HAS
+   NOW CARRIED THREE RULES (added 2026-09-08).** The sheet's horizontal alignment went: centre until
+   anything grows, then flush left (killed a 48px jump, made the left gutter ZERO so half the
+   feature became unreachable) → centre while it fits (restored the gutter, brought the jump back,
+   measured at 48px by the owner's own acceptance harness) → pin the left edge where centring would
+   put an ungrown page and grow only rightward (both, because the left edge stopped being a function
+   of the width). **When a fix's justification is the defect the previous fix caused, you are
+   trading, not fixing.** Look for the formulation where the two properties stop competing — here,
+   making the quantity that was moving independent of the quantity that was changing.
+
 0. **⛔ A RULE SHIPPED ON SOME OF ITS EDGES AND CLAMPED ON THE REST (added 2026-09-08,
    NOTES-FREE-PLACEMENT).** The page-grows-to-fit feature grew RIGHT and DOWN and floored LEFT and
    UP, and shipped, and read as working — because everything anybody tried first happened to go
@@ -189,6 +272,42 @@ position**.
    is exactly what shipped last time. Same species as **B539648** (the page grew down but crushed
    content sideways) and **B421490** (the vertical half existed, the horizontal half did not) —
    three instances now, all in this one feature.
+
+0b. **⛔ A TOOLBAR CONTROL THAT ANSWERS "WHAT IS AT ONE POSITION" WHEN IT WAS ASKED "WHAT IS IN
+   THIS SELECTION" (NOTES-TOOLBAR-STATE, 2026-09-08).** `editor.getAttributes()` /
+   `editor.isActive()` answer about the caret. For a RANGE they either read `$from` (so the
+   first run's value is presented as the whole selection's) or, for marks, return true only if
+   the mark covers the WHOLE range (so half-bold text reports a confident **false**,
+   indistinguishable from no bold at all). Both are guesses, and both look completely correct in
+   the code. **Every readout goes through `lib/notesMixedSelection.js`** — `selectionFontSizes`,
+   `selectionFontFamilies`, `selectionMarkPresence`, `selectionMarkAttrs`, `selectionAlignments`,
+   `selectionListKinds`, `formatDisplayValue`, `togglePressed`. **A bespoke mixed-check written
+   for one control is the defect, not the fix:** Font size was made correct in isolation
+   (B1139216) and eleven other controls stayed wrong for months, because nothing about a private
+   check in one control says anything about the next one. Guard: `ui-audit/verify-notes-font-
+   control.mjs` puts EVERY control through uniform · caret · mixed and prints the table.
+   ⛔ **AND `aria-pressed={active ? "true" : undefined}` IS A TWO-STATE ANSWER TO A THREE-STATE
+   QUESTION** — it gave Bold/Italic/Underline/Strikethrough no exposed state at all when off.
+   Measured on the pre-fix build: those four DO report `pressed=true` on genuinely bold text
+   (the positive case works), and report NOTHING when off or mixed. Use `togglePressed`'s
+   `"true"/"false"/"mixed"` for both the accessible state and the paint, from one value.
+
+0c. **⛔ A CONTROL THAT REPORTS WHETHER A MARK IS STORED, WHEN THE USER NEEDS THE RESOLVED VALUE
+   (NEW-7/NEW-8/NEW-9, 2026-09-09).** Sibling of 0b, and the one it does not cover: 0b is about
+   a RANGE disagreeing with itself; this is about a SINGLE run being reported by its storage
+   rather than by what it looks like. Three instances, all measured on his own note: a run with
+   no font mark read **"Default"**, which names no typeface (*"There's always a name to it"*); a
+   `color: inherit` mark painted NO swatch while an identical-looking run with no mark painted
+   the default one, and the pair reported as MIXED; and the size and spacing boxes answered
+   **"Size"** and **"Spacing"** — category labels for text that is plainly being rendered at some
+   real size and spacing. **`inherit` is not a colour. An absent mark is still a value.** Route
+   every readout through `lib/notesResolvedValue.js`, and resolve what CSS owns (the default
+   typeface, size and ink) off the LIVE DOM in a layout effect — never a hard-coded copy of a
+   token, which is wrong in the other theme immediately. Guard:
+   `ui-audit/verify-notes-font-control.mjs` §3b, red-proven on untouched main.
+   ⛔ **AND THE HIGHLIGHT BUTTON'S SWATCH IS A VACUITY TRAP**: with no highlight it paints the
+   colour it WOULD apply, so a "real yellow highlight" arm reports yellow whether the feature
+   works or not. Use a colour the button does not default to.
 
 1. **A GLOBAL KEY BINDING LEAKING INTO TEXT.** Escape handled twice (B434418); the arrow-nudge
    swallowed arrows while typing (B519681). The guard is a **PROPERTY** — every globally-bound key
@@ -288,7 +407,7 @@ position**.
      style, no attribute, no childList change anywhere; (b) `notesSpacing.js`'s `num()` is a bare
      `parseFloat`, which strips the `pt` suffix WITHOUT unit conversion, so `num('10pt')` reduces to
      the same `10` the block attr already stores — the two values agree numerically even though the
-     conversion itself is wrong (filed separately as **B839841**, a real but unrelated defect — a
+     conversion itself is wrong (filed separately as **B839841** — ⛔ **CORRECTED 2026-09-08: that number was never actually filed; it appears in no ledger, live or archived. The finding was real and is now carried by B1382547, which fixed it**: a
      point size renders as if it were a pixel size, everywhere, independent of this bug).
    - **Fractional `devicePixelRatio`** — the owner's actual production numbers (38.924, 35.8503,
      …) carry fractional residue; his panel measures `devicePixelRatio ≈ 2.15` under Windows
@@ -522,6 +641,91 @@ position**.
       is never re-examined for binned-ness. Worth closing if it is ever observed live; not closed
       here because doing so safely needs gating the whole integrity scan on "at least one seed
       has completed," which is a bigger change than this fix warranted.
+12. **⛔ A LIVE-VERIFY SESSION CLEANS UP ITS OWN NOTES PAGES, NOT JUST ITS OWN PROJECT (NEW-4,
+    owner report 2026-09-09 — established via the Supabase MCP against `planyr_production`, not
+    assumed).** He found six pages under "From a project you deleted," all titled "Untitled
+    page." **Every one is a session's own diagnostic probe, not his data** — confirmed by
+    reading the actual stored bodies: *"persistence check 6:52pm"* · *"V872976 persistence
+    check"* · *"soft delete check"* · *"race check after 1479"* · *"check after 1475"* ·
+    *"PERSIST CHECK 0227Z"*. All six were created within one 2.5-hour window, 2026-09-05 23:48
+    UTC → 2026-09-06 02:21 UTC, each under its OWN freshly-minted throwaway project id
+    (`smtp17mwi649` … `smtp6qplz47d`) — six separate repro cycles of **V872976 / B1202176**
+    (the "New project → first real write happens in Notes, not Site Planner → does the
+    `sites` row ever materialize?" bug, whose own live-verify steps 14-16 literally instruct
+    *"navigate to that project's Notes tab and click '+ New page'... paste or type some text
+    into it"* — this is not a guess, it is that exact script, run six times).
+    **The session (or sessions) DID clean up three of its six throwaway projects** — `sites`
+    rows for `smtp2dcu4i53`/`smtp6brrghkg`/`smtp6qplz47d` were bulk soft-deleted together at
+    the SAME timestamp, `2026-09-06 03:50:22.589677+00`, a single deliberate cleanup pass (the
+    other three never got a `sites` row at all, which is the original bug reproducing
+    correctly). **It just never went back for the NOTES pages the same cycles had filed** —
+    cleaning up the plan/project side of a repro and stopping there leaves exactly this
+    residue, because a Notes page's bytes are NEVER gated on its project's `sites` row existing
+    (`Notes.jsx`'s wiring to `ensureProjectRow` is deliberately best-effort — "its bytes are
+    never at risk," per V872976's own text — which is correct for not losing a real user's
+    words and is exactly what let a throwaway diagnostic page survive its own project's
+    deletion).
+    **THE RULE, stated so the next live-verify session cannot repeat this:** a live check that
+    creates a throwaway PROJECT to reproduce a bug must delete every NOTES PAGE it filed under
+    that project too, in the SAME cleanup pass — not as a separate, easy-to-forget step. Before
+    ending a live-verify session that touched Notes, confirm zero throwaway pages remain (the
+    Unfiled row this same item — NEW-1 — adds is now the fastest way to check: an account with
+    no real orphans should show none). This extends `CLAUDE.md`'s owner constraint #7 ("a live
+    check runs on a throwaway duplicate of a real plan... and the session says exactly what was
+    touched") — that constraint's own wording is about Site Planner plans; Notes pages filed
+    under a throwaway project are exactly the same kind of test residue and are covered by the
+    same discipline from here on.
+    **NOT cleaned up as part of this item, deliberately — STANDING RULE #2 applies to test
+    artifacts too, not just symptoms: they are surfaced under Unfiled (NEW-1), never
+    auto-deleted, so Michael can see them and decide.** A session correcting this defect does
+    not get to unilaterally delete rows it merely diagnosed.
+
+12. **A VISIBLE INDEX ENTRY CAN OUTLIVE THE THING IT POINTS AT, WHEN CREATING IT IS TWO STEPS AND
+    ONLY ONE OF THEM IS GUARANTEED TO RUN (B1405008, 2026-09-09).** `addPage` put a tree node
+    straight into the sidebar; the page's BODY was written only from the editor's own `onUpdate`
+    autosave — which fires only once the user actually types a character. A page created and then
+    abandoned (tab closed, distracted, or simply never typed into) left a clickable "Untitled
+    page" with **nothing wired to ever create its body**, for as long as it went untouched — one
+    real account measured 12+ hours and counting, while seven siblings made the same night each
+    got a body within ~2s because he happened to type into those. **This was not a failed write —
+    it was a write that was never attempted**, and it is the general shape to suspect any time one
+    user-visible action (an index/list/tree entry appearing) is produced by step A while the thing
+    it points at is produced only by a LATER, conditional step B (here: the user's first
+    keystroke). The fix is ordering, not a retry: write the body FIRST, synchronously, as part of
+    the same call that creates the entry (`notesStore.js`'s `createPage`), so there is no window
+    in which the entry can be seen with nothing behind it. **The tell that this was live on his
+    account and not merely theoretical:** the 17 tombstones in his tree naming no `notes_pages`
+    row at all are residue of this exact bug (a page created, abandoned bodiless, then deleted
+    before ever getting one) — not a separate defect, and not evidence `tombs` needs pruning
+    beyond the 400-day `TOMB_RETENTION_DAYS` mechanism `withTombstones` already has (see that
+    function's header in `lib/notesModel.js`); a tombstone's job is blocking the TREE ENTRY's
+    resurrection, which it does regardless of whether a row ever existed behind it.
+
+13. **⛔ "GROW THE PADDING BEFORE A FIXED ELEMENT" CANNOT SEPARATE THAT ELEMENT FROM CONTENT
+    MEASURED FROM A DIFFERENT ORIGIN — NO MATTER HOW GENEROUS THE CREDIT (B1433856,
+    NOTES-TITLE-BAND-DEAD-ZONE, 2026-09-09).** NEW-5 (B1370545) let a box render "above the body's
+    origin" by crediting the title band's own height as free padding-top room — reasoning that
+    looked identical in shape to the LEFT-edge credit two lines above it in the same effect (a box
+    20px left of origin still sits on the card because the side padding is wider than that). It is
+    NOT the same shape, and the difference is proof, not intuition: `note-title`'s `<input>` is
+    `width: 100%` always, so the "free" room inside the band is occupied by a real interactive
+    element, and — proved algebraically before touching any code — **padding-top growth can never
+    open distance between the band and a box measured from the document's origin**, because both
+    shift down by the identical amount for ANY function of the growth that is linear in the box's
+    own reach (which `anchorExtentTop` always is). Substituting a bigger credit only moves WHERE
+    the collision sits; it can never remove it. Measured live on the owner's account exactly as
+    predicted: `note-title`'s rect and a placed note's rect painted the same pixels, and a real
+    click on the shared pixels focused NEITHER (`document.activeElement` stayed `BODY`) —
+    permanent, reload-surviving, and CHROME-NEVER-EATS-A-PRESS's own inverse (two real, different
+    editable surfaces sharing one press, resolved to neither). **The fix is a different quantity,
+    not a different constant**: grow the GAP AFTER the element (here, `TITLE_BAND_GAP`, folded into
+    the band's own `marginBottom`) instead of the padding BEFORE it — the one distance that is not
+    shared between the fixed element and content measured from the far side of it. Generalizes past
+    this one bug: **any time a growth/credit budget is computed as "there is already free room
+    before a fixed piece of chrome," ask whether that chrome is a real, always-full-extent
+    interactive element (not decoration) before trusting the credit** — a `width: 100%` control is
+    the tell, and the fix a caller reaches for first (grow the SAME padding harder) is provably the
+    one that cannot work.
 
 ---
 

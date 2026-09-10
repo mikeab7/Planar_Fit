@@ -243,12 +243,22 @@ console.log("=".repeat(100));
   await page.context().close();
 }
 
-/* ═══ 6. NEW-5 — SOMETHING CAN SIT LEVEL WITH THE TITLE ═══════════════════════════════════ */
+/* ═══ 6. NEW-5 — SOMETHING CAN SIT ABOVE THE TITLE, NEVER BEHIND IT ═══════════════════════ */
 console.log("\n" + "=".repeat(100));
-console.log("6. LEVEL WITH THE PAGE TITLE — 'top: 0' used to render below the title band");
+console.log("6. ABOVE THE PAGE TITLE — never OVERLAPPING it (B1433856, NOTES-TITLE-BAND-DEAD-ZONE)");
 console.log("=".repeat(100));
-{
-  const page = await openPage(docWith([{ x: 300, y: -60, aid: "t1", text: "BESIDE THE TITLE" }]));
+/* ⛔ THIS SECTION USED TO ASSERT THE BUG. Its original title was "'top: 0' used to render below
+ * the title band" and its own passing assertion — `overlapsTitleBand` REQUIRED to be true — is
+ * exactly the defect B1433856 fixed: a box negative enough to reach the band rendered BEHIND the
+ * title's own `<input>` (which spans the band at `width: 100%`, always), and a real click on the
+ * shared pixels focused NEITHER element (`document.activeElement` stayed `BODY`) — a permanent,
+ * reload-surviving dead zone on the owner's own account. The corrected invariant is the opposite:
+ * NO anchored block may ever paint inside the title band's own rect, at ANY x within the sheet
+ * and ANY negative y. See the growth effect's own comment on `growGap` in `NoteEditor.jsx` for the
+ * mechanism (the GAP below the band grows to clear it; padding-top before the band cannot, because
+ * it shifts the band and the block down together). */
+for (const y of [-10, -30, -60, -90, -260]) {
+  const page = await openPage(docWith([{ x: 300, y, aid: "t1", text: "ABOVE THE TITLE" }]));
   const r = await page.evaluate(() => {
     const t = document.querySelector('[data-testid="note-title"]').getBoundingClientRect();
     const b = document.querySelector('.planyr-anchor[data-anchor-id="t1"]').getBoundingClientRect();
@@ -256,14 +266,154 @@ console.log("=".repeat(100));
     return {
       overlapsTitleBand: b.top < t.bottom && b.bottom > t.top,
       insideSheet: b.top >= s.top - 1 && b.bottom <= s.bottom + 1,
-      titleTop: Math.round(t.top), boxTop: Math.round(b.top), sheetTop: Math.round(s.top),
+      titleTop: Math.round(t.top), titleBottom: Math.round(t.bottom),
+      boxTop: Math.round(b.top), boxBottom: Math.round(b.bottom), sheetTop: Math.round(s.top),
     };
   });
-  ok("a box at a negative y renders level with the title, not below it", r.overlapsTitleBand,
-    `title top ${r.titleTop} · box top ${r.boxTop}`);
-  ok("…and the sheet grew upward to hold it rather than letting it escape", r.insideSheet,
+  ok(`y=${y}: ⛔ the block NEVER paints inside the title's own rect`, !r.overlapsTitleBand,
+    `title [${r.titleTop}..${r.titleBottom}] · box [${r.boxTop}..${r.boxBottom}]`);
+  ok(`y=${y}: …and the sheet grew to hold it rather than letting it escape`, r.insideSheet,
     `sheet top ${r.sheetTop}`);
   await page.context().close();
+}
+
+/* ⛔ RED-PROOF, PER THE ITEM'S OWN ASK: A PRESS ANYWHERE INSIDE THE TITLE BAND'S RECT MUST FOCUS
+ * EITHER THE TITLE OR A NOTE — NEVER NOTHING. This is the owner's OWN measured failure, reproduced
+ * exactly: he found a click landing where the title's rect and a note's rect share pixels focused
+ * NEITHER — `document.activeElement` stayed `BODY` — because the note's own first press only
+ * SELECTS it (B434416's two-stage model), invisibly, under text that reads as more title. Clicking
+ * at the ACTUAL geometric intersection (never a guessed point) is what makes this a genuine
+ * red-proof rather than a check that happens to land beside the collision. */
+{
+  const page = await openPage(docWith([{ x: 300, y: -60, aid: "u1", text: "ABOVE THE TITLE" }]));
+  const geo = await page.evaluate(() => {
+    const t = document.querySelector('[data-testid="note-title"]').getBoundingClientRect();
+    const b = document.querySelector('.planyr-anchor[data-anchor-id="u1"]').getBoundingClientRect();
+    const overlap = { left: Math.max(t.left, b.left), right: Math.min(t.right, b.right),
+      top: Math.max(t.top, b.top), bottom: Math.min(t.bottom, b.bottom) };
+    const hasOverlap = overlap.left < overlap.right && overlap.top < overlap.bottom;
+    const point = hasOverlap
+      ? { x: (overlap.left + overlap.right) / 2, y: (overlap.top + overlap.bottom) / 2 }
+      : { x: t.left + t.width / 2, y: t.top + t.height / 2 };
+    return { hasOverlap, point };
+  });
+  ok("⛔ …and this fixture genuinely produces the collision the click is aimed at (or, once fixed, none)",
+    true, geo.hasOverlap ? `real overlap at (${Math.round(geo.point.x)}, ${Math.round(geo.point.y)})` : "no overlap — clicking the title row instead");
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.mouse.click(Math.round(geo.point.x), Math.round(geo.point.y));
+  const after = await page.evaluate(() => {
+    const el = document.activeElement;
+    return { activeTag: el ? (el.getAttribute?.("data-testid") || el.tagName) : "none" };
+  });
+  /* ⛔ THE BAR IS `document.activeElement`, LITERALLY — that is what the owner measured
+   * ("activeElement stayed BODY") and it is the strict reading of "focuses neither": a box's own
+   * first press SELECTS it without focusing anything (B434416's two-stage model, correct
+   * everywhere else on the page), so a lenient "or was merely selected" bar would pass on the
+   * broken build too, which defeats the point of a red-proof. Once nothing overlaps the band, this
+   * collapses to an ordinary press on the title, which always focuses it. */
+  ok("⛔ a press at the collision point moves focus somewhere real — activeElement is never BODY",
+    after.activeTag !== "BODY" && after.activeTag !== "none", after.activeTag);
+  await page.context().close();
+}
+
+/* ⛔ THE ADJACENT CASES NAMED IN THE ITEM — a table, not an assumption. The fix does not measure
+ * the band's own height at all any more (`growGap` reads only `TITLE_BAND_GAP` and the document's
+ * own `y`s — see the comment on it), so it is provably indifferent to what makes the band taller
+ * or shorter. Proven here rather than left as an inference:
+ *   · title short → long → short again — does the dead zone clear?
+ *   · a note level with the CHIPS ROW ("Edited …") rather than the bare title
+ *   · the same, in dark mode
+ *   · a title long enough to wrap to two lines — N/A: `note-title` is a plain single-line
+ *     `<input>`, which cannot wrap regardless of length; confirmed against the live DOM below
+ *     rather than assumed from the source. */
+console.log("\n" + "=".repeat(100));
+console.log("6b. ADJACENT CASES — title short→long→short, the chips row, dark mode, title wrap");
+console.log("=".repeat(100));
+{
+  const overlap = async (page, aid) => page.evaluate((id) => {
+    const t = document.querySelector('[data-testid="note-title"]').getBoundingClientRect();
+    const b = document.querySelector(`.planyr-anchor[data-anchor-id="${id}"]`).getBoundingClientRect();
+    return b.top < t.bottom && b.bottom > t.top;
+  }, aid);
+
+  // title short → long → short again
+  {
+    const page = await openPage(docWith([{ x: 300, y: -60, aid: "s1", text: "ABOVE THE TITLE" }]));
+    ok("short title: no overlap", !(await overlap(page, "s1")));
+    await page.evaluate(() => document.querySelector('[data-testid="note-title"]').focus());
+    await page.keyboard.type("A very long page title that pushes the input's own text well past where a short placeholder would ever reach");
+    await pacedWait(page, 300);
+    ok("…grown to a long title: still no overlap", !(await overlap(page, "s1")));
+    await page.keyboard.press("Control+A");
+    await page.keyboard.type("Short");
+    await pacedWait(page, 300);
+    ok("…back to a short title: still no overlap (the dead zone never formed, so there is nothing to 'clear')", !(await overlap(page, "s1")));
+    await page.context().close();
+  }
+
+  // the chips row ("Edited …"), not just the bare title
+  {
+    const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
+    await assertMeasurable(page, "verify-notes-free-placement");
+    await page.goto(`${BASE}#/notes`, { waitUntil: "domcontentloaded" });
+    await pacedWait(page, 250);
+    const now = Date.now();
+    await page.evaluate(([tk, pk, d, now_]) => {
+      localStorage.clear();
+      localStorage.setItem(tk, JSON.stringify({
+        v: 3, tombs: [], trash: [],
+        pages: [{ id: "p1", title: "Chips row", createdAt: now_ - 100000, updatedAt: now_, projectId: null, pages: [] }],
+      }));
+      localStorage.setItem(pk, JSON.stringify(d));
+    }, [TREE_KEY, PAGE_KEY, docWith([{ x: 300, y: -60, aid: "c1", text: "ABOVE THE CHIPS ROW" }]), now]);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-testid="note-body"]', { timeout: 20000 });
+    await pacedWait(page, 700);
+    const hasChip = await page.evaluate(() => !!document.querySelector('[data-testid="note-edited"]'));
+    ok("⛔ the fixture genuinely shows the chips row (or this proves nothing)", hasChip);
+    const bandBottom = await page.evaluate(() => {
+      const chip = document.querySelector('[data-testid="note-edited"]');
+      return chip ? chip.getBoundingClientRect().bottom : null;
+    });
+    const boxTop = await page.evaluate(() => document.querySelector('.planyr-anchor[data-anchor-id="c1"]').getBoundingClientRect().top);
+    ok("…and the note renders below the CHIPS ROW's own bottom, not just below the title text",
+      bandBottom != null && boxTop >= bandBottom, `chips bottom ${Math.round(bandBottom)} · box top ${Math.round(boxTop)}`);
+    ok("…and no overlap with the title itself either", !(await overlap(page, "c1")));
+    await page.context().close();
+  }
+
+  // the same, in dark mode
+  {
+    const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
+    await assertMeasurable(page, "verify-notes-free-placement");
+    await page.goto(`${BASE}#/notes`, { waitUntil: "domcontentloaded" });
+    await pacedWait(page, 250);
+    await page.evaluate(([tk, pk, d]) => {
+      localStorage.clear();
+      localStorage.setItem("planyr.theme", "dark");
+      localStorage.setItem(tk, JSON.stringify({
+        v: 3, tombs: [], trash: [],
+        pages: [{ id: "p1", title: "Dark mode", createdAt: 1, updatedAt: 1, projectId: null, pages: [] }],
+      }));
+      localStorage.setItem(pk, JSON.stringify(d));
+    }, [TREE_KEY, PAGE_KEY, docWith([{ x: 300, y: -60, aid: "d1", text: "ABOVE THE TITLE, DARK" }])]);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-testid="note-body"]', { timeout: 20000 });
+    await pacedWait(page, 700);
+    const theme = await page.evaluate(() => document.documentElement.getAttribute("data-theme"));
+    ok("⛔ the fixture is genuinely in dark mode", theme === "dark", theme);
+    ok("dark mode: no overlap", !(await overlap(page, "d1")));
+    await page.context().close();
+  }
+
+  // a title long enough to "wrap" — confirmed N/A, not assumed
+  {
+    const page = await openPage(docWith([]));
+    const tag = await page.evaluate(() => document.querySelector('[data-testid="note-title"]').tagName);
+    ok("⛔ N/A CONFIRMED, NOT ASSUMED: note-title is a plain <input>, which cannot wrap at any length",
+      tag === "INPUT", tag);
+    await page.context().close();
+  }
 }
 
 /* ═══ 7. NEW-2 — THE BODY DRAGS; THE GRIP IS VISIBLE AND USABLE ═══════════════════════════ */
@@ -321,9 +471,19 @@ console.log("=".repeat(100));
   await page.context().close();
 }
 
-/* ═══ 8. NEW-3 — AN EMPTY NOTE IS NOT DESTROYED IN SILENCE ════════════════════════════════ */
+/* ═══ 8. SUPERSEDED — A PRESS NO LONGER CREATES ANYTHING TO DESTROY ═══════════════════════ */
+/* ⛔ THIS SECTION USED TO ASSERT NEW-3: that discarding an abandoned empty note SAID SO, with an
+ * Undo. That shipped, the owner saw it, and he reversed his own instruction (NEW-9): the toast
+ * reads wrong because nothing should have been created in the first place. Under NEW-8 a press
+ * arms a caret and creates nothing, so there is no empty note, nothing to discard, and nothing to
+ * announce — and the assertions that stood here would now be asserting the defect.
+ * They are not merely deleted: the whole model is asserted, harder, in
+ * `ui-audit/verify-notes-pending-caret.mjs`, which starts from his own words and checks the
+ * document is BYTE-IDENTICAL after a press you type nothing into, that no notice appears, and
+ * that the view never moves. What is kept here is the one line that connects the two files, so a
+ * reader of this harness is not left wondering where the case went. */
 console.log("\n" + "=".repeat(100));
-console.log("8. AN ABANDONED EMPTY NOTE — discarded, but visibly and undoably");
+console.log("8. (superseded by NEW-8/NEW-9 — see verify-notes-pending-caret.mjs)");
 console.log("=".repeat(100));
 {
   const page = await openPage(docWith([]));
@@ -332,27 +492,36 @@ console.log("=".repeat(100));
     return { x: Math.round(s.right + 60), y: Math.round(s.top + 420) };
   });
   await page.mouse.click(spot.x, spot.y);
-  await pacedWait(page, 350);
-  const made = await page.evaluate(() => document.querySelectorAll(".planyr-anchor").length);
-  ok("the gesture creates a note", made === 1, `${made} on the page`);
-  await page.mouse.click(spot.x + 40, spot.y + 220);
-  await pacedWait(page, 500);
-  const notice = await page.evaluate(() => {
-    const el = document.querySelector('[data-testid="note-anchor-discarded"]');
-    return { shown: !!el, text: el?.innerText?.replace(/\s+/g, " ").trim() || "" };
-  });
-  ok("⛔ discarding it SAYS SO — it does not vanish in silence", notice.shown, notice.text);
-  await page.click('[data-testid="note-anchor-discarded-undo"]').catch(() => {});
   await pacedWait(page, 400);
-  const restored = await page.evaluate(() => {
-    const els = [...document.querySelectorAll(".planyr-anchor")];
-    return { n: els.length, left: els[0] ? Math.round(parseFloat(els[0].style.left)) : null };
-  });
-  ok("…and Undo puts it back", restored.n >= 1, `${restored.n} on the page, at left ${restored.left}`);
+  const armed = await page.evaluate(() => ({
+    caret: !!document.querySelector('[data-testid="note-pending-caret"]'),
+    notes: document.querySelectorAll(".planyr-anchor").length,
+    notice: !!document.querySelector('[data-testid="note-anchor-discarded"]'),
+  }));
+  ok("a press arms a caret and creates NOTHING (NEW-8)",
+    armed.caret && armed.notes === 0, `caret ${armed.caret} · ${armed.notes} note(s)`);
+  ok("⛔ …and there is no discard notice anywhere, because there is nothing to discard (NEW-9)",
+    !armed.notice, String(armed.notice));
   await page.keyboard.type("kept");
   await pacedWait(page, 900);
-  const kept = await stored(page);
-  ok("…and it survives once something is typed in it", kept.length === 1, `${kept.length} stored`);
+  const after = await stored(page);
+  ok("…and the first keystroke is what makes the note", after.length === 1, `${after.length} stored`);
+  /* ⛔ AND THE BYTE CLAIM IS PROVEN, NOT GESTURED AT. A first draft of this line was written as an
+   * expression that could not evaluate to false — a check that cannot fail is worse than no check,
+   * because it reads as coverage. This one re-arms on a fresh point, abandons it, and compares the
+   * stored document to what it was before the press. */
+  const armedAgain = await page.evaluate(() => {
+    const s = document.querySelector('[data-testid="note-sheet"]').getBoundingClientRect();
+    return { x: Math.round(s.right + 90), y: Math.round(s.top + 560) };
+  });
+  const beforeAbandon = await page.evaluate((k) => localStorage.getItem(k) || "", PAGE_KEY);
+  await page.mouse.click(armedAgain.x, armedAgain.y);
+  await pacedWait(page, 350);
+  await page.keyboard.press("Escape");
+  await pacedWait(page, 800);
+  ok("⛔ …while a press typed into nothing leaves the document BYTE-IDENTICAL",
+    (await page.evaluate((k) => localStorage.getItem(k) || "", PAGE_KEY)) === beforeAbandon,
+    `${beforeAbandon.length} bytes, unchanged`);
   await page.context().close();
 }
 

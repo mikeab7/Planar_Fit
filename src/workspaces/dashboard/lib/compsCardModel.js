@@ -31,26 +31,49 @@
  * scale is EXCLUDED and counted — never rescaled into agreement, because the conversion that would
  * make it agree is exactly the one the app cannot honestly perform.
  *
- * ⛔ AND THE PERIOD THE CARD SPEAKS IN IS NAMED, NOT IMPLIED (`CARD_LEASE_PERIOD` below). Lease
- * rates are entered monthly OR annually, per comp; Michael's own account holds both. Every figure
- * this card renders — the featured headline, every peer dot, both scale ticks and the comparison
- * sentence — passes through ONE normalization to ONE period, so no two numbers on this card can
- * ever be in different periods. It used to be true only because `annualLeaseRate` happened to be
- * the only rate function in reach; nothing said so, and nothing would have caught it changing.
+ * ⛔ AND THE PERIOD THE CARD SPEAKS IN IS NAMED, NOT IMPLIED, AND — since the period toggle (see
+ * `components/CompsCard.jsx`) — IT IS MICHAEL'S CHOICE, NOT A HARDCODED CONSTANT. Lease rates are
+ * entered monthly OR annually, per comp; Michael's own account holds both. Every figure this card
+ * renders — the featured headline, every peer dot, both scale ticks and the comparison sentence —
+ * passes through ONE normalization to ONE period (`period`, threaded through every function
+ * below, defaulting to `DEFAULT_LEASE_PERIOD`), so no two numbers on this card can ever be in
+ * different periods — they just may now both be monthly instead of both annual. It used to be
+ * true only because `annualLeaseRate` happened to be the only rate function in reach; nothing
+ * said so, and nothing would have caught it changing.
  */
 import {
-  landPricePerSf, buildingPricePerSf, annualLeaseRate, landPricePerAreaUnit, landSizeSf,
+  landPricePerSf, buildingPricePerSf, leaseRateForPeriod, landPricePerAreaUnit, landSizeSf,
 } from "../../../shared/comps/lib/comps.js";
 
 export const TYPE_LABEL = { land: "Land", building_sale: "Building sale", lease: "Lease" };
 
-/** THE ONE PERIOD THIS CARD SPEAKS IN — annual, matching the comps sheet's own derived `$/SF/yr`
- * column (`shared/comps/lib/compSheetColumns.js`'s `leaseAnnualRate`, whose header "commits to ONE
- * unit"), so a rate read off the Dashboard and the same rate read off the sheet are the same
- * number. Named here rather than left implicit in a `"$/SF/yr"` string literal so that changing the
- * card's period is one edit in one place, and so a reader can see WHICH period without tracing
- * `annualLeaseRate` two modules away. */
-export const CARD_LEASE_PERIOD = Object.freeze({ key: "annual", unit: "$/SF/yr" });
+/** The period every function below normalizes to when the caller doesn't say otherwise — matches
+ * the comps sheet's own derived `$/SF/yr` column (`shared/comps/lib/compSheetColumns.js`'s
+ * `leaseAnnualRate`) and is what a brand-new account (never touched the toggle) sees. */
+export const DEFAULT_LEASE_PERIOD = "annual";
+
+/** The `$/SF/yr` or `$/SF/mo` unit string for a chosen lease display period. */
+export function leaseRateUnit(period) {
+  return period === "monthly" ? "$/SF/mo" : "$/SF/yr";
+}
+
+/** THE one rate-figure formatter — 2 decimals under $10 (so a $/mo rate reads as real cents, not
+ * a rounded-away dollar), 0 decimals at or above it (matching how every other dollar figure on
+ * this dashboard reads). Moved here from `CompsCard.jsx` (B1405457, 2026-09-08 review FEED-3)
+ * so `sinceLastHereFeed.js`'s "New comp" row can render the SAME comp's rate through the exact
+ * same math AND the exact same formatting the card uses — a second, hand-rolled formatter is
+ * exactly how the two surfaces drifted apart the first time. */
+export function formatRateValue(v) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const decimals = Math.abs(v) < 10 ? 2 : 0;
+  return `$${v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+}
+
+/** The words Michael actually sees on the toggle — "per year" / "per month" — named here once so
+ * the card and any other reader of a period value can't drift on wording. */
+export function periodWords(period) {
+  return period === "monthly" ? "per month" : "per year";
+}
 
 /** How many peers the horizontal scale needs before it means anything. Below this the card draws no
  * scale and says so in one line — exported so `CompsCard.jsx` and `peerComparisonSentence` can
@@ -106,19 +129,20 @@ export function compSizeSf(comp) {
 }
 
 /** The comp's headline RATE — the single biggest number the card renders. Type-honest: a lease's
- * rate normalized to the card's own period (`CARD_LEASE_PERIOD`) and carrying its NNN/gross basis,
- * a building sale's $/SF price, a land comp's price per its OWN recorded unit (AC or SF) — never a
- * cross-type average and never a borrowed unit. Null when the comp doesn't carry enough to compute
- * one (never guessed), which includes a lease whose period isn't recorded: an un-normalizable rate
- * is not a rate this card can speak, so it is refused rather than printed raw under an annual label.
- * `scale` is the key on which two of these may honestly be compared — see `compScaleKey`. */
-export function compHeadlineRate(comp) {
+ * rate normalized to the CHOSEN display `period` (`DEFAULT_LEASE_PERIOD` if omitted) and carrying
+ * its NNN/gross basis, a building sale's $/SF price, a land comp's price per its OWN recorded unit
+ * (AC or SF) — never a cross-type average and never a borrowed unit. Null when the comp doesn't
+ * carry enough to compute one (never guessed), which includes a lease whose period isn't recorded:
+ * an un-normalizable rate is not a rate this card can speak, so it is refused rather than printed
+ * raw under a mismatched label. `scale` is the key on which two of these may honestly be compared
+ * — see `compScaleKey`. */
+export function compHeadlineRate(comp, period = DEFAULT_LEASE_PERIOD) {
   if (!comp) return null;
   if (comp.compType === "lease") {
-    const v = annualLeaseRate(comp); // the app's one lease-period normalizer; annual by definition
+    const v = leaseRateForPeriod(comp, period); // the app's one lease-period converter
     if (v == null) return null;
     const basis = comp.leaseRateExpense || null;
-    return { value: v, unit: CARD_LEASE_PERIOD.unit, period: CARD_LEASE_PERIOD.key, basis, scale: compScaleKey(comp) };
+    return { value: v, unit: leaseRateUnit(period), period, basis, scale: compScaleKey(comp, period) };
   }
   if (comp.compType === "building_sale") {
     const v = buildingPricePerSf(comp);
@@ -137,13 +161,14 @@ export function compHeadlineRate(comp) {
  * the same "$" sign. Null means the comp declares no usable scale at all (an unstated lease basis —
  * `summarizeLeaseComps` counts exactly this case as `unknownCount` — or a land size in no known
  * unit), which disqualifies it rather than defaulting it. Building sales are always plain $/SF, so
- * they carry one shared key. */
-export function compScaleKey(comp) {
+ * they carry one shared key. `period` only distinguishes a lease's ruler — every rate on one card
+ * render shares the same chosen period, so this never causes a false non-match in practice. */
+export function compScaleKey(comp, period = DEFAULT_LEASE_PERIOD) {
   if (!comp) return null;
   if (comp.compType === "lease") {
     const basis = comp.leaseRateExpense;
     if (basis !== "nnn" && basis !== "gross") return null;
-    return `lease:${CARD_LEASE_PERIOD.key}:${basis}`;
+    return `lease:${period}:${basis}`;
   }
   if (comp.compType === "building_sale") return "building_sale:sf";
   if (comp.compType === "land") {
@@ -155,11 +180,13 @@ export function compScaleKey(comp) {
 }
 
 /** How the card names a scale in one short phrase, for the "excluded" note — so the reason a comp
- * was held out is stated, never left as a bare count. */
+ * was held out is stated, never left as a bare count. Matched by SUFFIX rather than the old exact
+ * `"lease:annual:nnn"` string — a scale key now carries whichever period the card is displaying
+ * (`compScaleKey`), and this must recognize a lease's basis regardless of which period that is. */
 export function scaleLabel(scaleKey) {
   if (!scaleKey) return null;
-  if (scaleKey === "lease:annual:nnn") return "NNN";
-  if (scaleKey === "lease:annual:gross") return "gross";
+  if (scaleKey.startsWith("lease:") && scaleKey.endsWith(":nnn")) return "NNN";
+  if (scaleKey.startsWith("lease:") && scaleKey.endsWith(":gross")) return "gross";
   if (scaleKey === "land:ac") return "$/AC";
   if (scaleKey === "land:sf") return "$/SF";
   return null;
@@ -175,11 +202,13 @@ export function scaleLabel(scaleKey) {
  * size, or a computable rate; and `incomparable` — a comp matching on type, county and band but
  * measured on a different scale (gross against NNN, $/AC against $/SF). A comp that is simply a
  * different type, county or band is NOT an exclusion, just a non-match, and is never counted.
- * Never mutates its input. */
-export function buildPeerSet(allComps, featured) {
+ * Never mutates its input. `period` is the display period every rate normalizes to (see this
+ * file's header) — defaults to `DEFAULT_LEASE_PERIOD` so an untouched card behaves exactly as it
+ * did before the period toggle existed. */
+export function buildPeerSet(allComps, featured, period = DEFAULT_LEASE_PERIOD) {
   const county = featured?.anchor?.county || null;
   const band = featured ? sizeBandFor(compSizeSf(featured)) : null;
-  const scale = compScaleKey(featured);
+  const scale = compScaleKey(featured, period);
   const empty = { peers: [], excludedCount: 0, excludedReason: null, band, county, scale };
   if (!featured || !county || !band || !scale) return empty;
   let incomplete = 0;
@@ -190,7 +219,7 @@ export function buildPeerSet(allComps, featured) {
     if (c.compType !== featured.compType) continue;
     const cCounty = c.anchor?.county || null;
     const cBand = sizeBandFor(compSizeSf(c));
-    const cRate = compHeadlineRate(c);
+    const cRate = compHeadlineRate(c, period);
     if (!cCounty || !cBand || cRate == null) { incomplete++; continue; }
     if (cCounty !== county || cBand.key !== band.key) continue; // a non-match, not an exclusion
     // Matched on type, county and band — so this comp WOULD be a peer. It joins only if it is
@@ -302,18 +331,30 @@ export function compScaleLayout(featuredRate, peerRates) {
   return { min, max, peerFracs: peerRates.map(frac), featuredFrac: frac(featuredRate) };
 }
 
-/** A county routing key ("harris", "co_denver" — see shared/CLAUDE.md's County ROUTING KEYS note:
- * a `co_` prefix means Colorado, no prefix means Texas) formatted as a short display name. This is
- * deliberately a light, dependency-free formatter rather than a lookup into the full `COUNTIES` GIS
- * registry (site-planner/lib/counties.js) — that module is sized for the map workspace, not a
+/** A county routing key ("harris", "co_denver", "fort_bend" — see shared/CLAUDE.md's County
+ * ROUTING KEYS note: a `co_` prefix means Colorado, no prefix means Texas) title-cased into a
+ * proper display name ("Harris", "Denver", "Fort Bend") — no "County"/state suffix, so both this
+ * module's own `countyLabel` (which appends " County, TX/CO") and any other caller that wants a
+ * differently-suffixed form (e.g. the Dashboard feed's own "Harris County", B1407824) can build
+ * their own sentence on top of ONE capitalization rule rather than each re-splitting the key. This
+ * is deliberately a light, dependency-free formatter rather than a lookup into the full `COUNTIES`
+ * GIS registry (site-planner/lib/counties.js) — that module is sized for the map workspace, not a
  * Dashboard card that loads on every visit, and every routing key this app mints already reads as
- * a plain county name once split on its underscore/prefix. Null for no key. */
-export function countyLabel(countyKey) {
-  if (!countyKey) return null;
+ * a plain county name once split on its underscore/prefix. `{ words, isColorado }` — `words` null
+ * for no key / nothing left after splitting. */
+export function countyNameWords(countyKey) {
+  if (!countyKey) return { words: null, isColorado: false };
   const isColorado = countyKey.startsWith("co_");
   const raw = isColorado ? countyKey.slice(3) : countyKey;
   const words = raw.split(/[_\s]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-  if (!words.length) return null;
+  return { words: words.length ? words : null, isColorado };
+}
+
+/** A county routing key formatted as a short display name — "Harris County, TX" / "Denver County,
+ * CO". Null for no key. See `countyNameWords` above for the capitalization rule this builds on. */
+export function countyLabel(countyKey) {
+  const { words, isColorado } = countyNameWords(countyKey);
+  if (!words) return null;
   return `${words.join(" ")} County, ${isColorado ? "CO" : "TX"}`;
 }
 
@@ -347,12 +388,15 @@ export function mostRecentlyAddedComp(comps) {
   return [...comps].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0];
 }
 
-/** The whole card's derived data in one call — what the fetch layer hands the component. */
-export function buildCompsCardData(comps) {
+/** The whole card's derived data in one call — what the fetch layer hands the component.
+ * `period` ("annual" | "monthly") is Michael's own toggle choice (persisted — see
+ * `shared/comps/lib/compsRatePeriodPrefs.js`), defaulting to `DEFAULT_LEASE_PERIOD` for a brand
+ * new account that has never touched it. */
+export function buildCompsCardData(comps, period = DEFAULT_LEASE_PERIOD) {
   const featured = mostRecentlyAddedComp(comps);
   if (!featured) return { featured: null, total: 0 };
-  const peerSet = buildPeerSet(comps, featured);
-  const rate = compHeadlineRate(featured);
+  const peerSet = buildPeerSet(comps, featured, period);
+  const rate = compHeadlineRate(featured, period);
   const cLabel = countyLabel(featured.anchor?.county || null);
   const sentence = rate == null ? null : peerComparisonSentence({
     featuredRate: rate.value, peerSet, compType: featured.compType, countyLabel: cLabel,

@@ -50,10 +50,11 @@ import { RecentPlansCard } from "./components/RecentPlansCard.jsx";
 import { SinceLastHereCard } from "./components/SinceLastHereCard.jsx";
 import {
   CARD_DEFS, GRID_COLS, normalizeLayout, availableToAdd, addCard, removeCard, resetLayout,
-  applyGridChange, narrowOrder, toRglItem,
+  applyGridChange, narrowOrder, toRglItem, dismissCard, undismissCard,
 } from "./lib/dashboardLayout.js";
 import { pickRecentPlans } from "./lib/recentPlans.js";
 import { loadDashboardLayout, saveDashboardLayout } from "./lib/dashboardPrefs.js";
+import { loadCompsRatePeriod, saveCompsRatePeriod } from "../../shared/comps/lib/compsRatePeriodPrefs.js";
 import { loadSinceLastHere, saveSinceLastHere } from "./lib/dashboardSinceLastHerePrefs.js";
 import { fetchSiteSummaries } from "./lib/dashboardSitesFetch.js";
 import { fetchAllCompsForCard, fetchCompsForMap } from "./lib/dashboardCompsFetch.js";
@@ -71,6 +72,18 @@ import { needsAttentionList } from "./lib/needsAttentionList.js";
 import { pursuitsTable, quietDaysByGroupFromRows } from "./lib/pursuitsList.js";
 import { buildSinceLastHereFeed } from "./lib/sinceLastHereFeed.js";
 import { spanWords } from "./lib/dashboardDates.js";
+
+// B1426608 — cards whose content is a short text/number list (no chart, map, or
+// thumbnail grid measuring its own box) shrink to content instead of stretching to fill their
+// reserved grid tile — see DashboardCard's own `sizeToContent` header. Left off for recentPlans
+// (its thumbnail grid measures its own box to choose a layout), compsSummary (its peer scale bar
+// is laid out against the card's available room) and locationsMap (a real Leaflet map needs a
+// defined height to render into). Applied only once `dataReady` (below) — every card still shows
+// the SAME stable, full-height skeleton while loading, so this never touches the "every card
+// swaps to real content in one synchronized paint" guarantee CardSkeleton's own header describes.
+const SIZE_TO_CONTENT_CARDS = new Set([
+  "jumpBackIn", "pipelineStatus", "needsAttention", "pursuitsTable", "scheduleHealth", "goingQuiet", "sinceLastHere",
+]);
 
 const SAVE_DEBOUNCE_MS = 900;
 const ROW_HEIGHT_PX = 32;
@@ -109,8 +122,12 @@ function useMeasuredWidth() {
   return [ref, width];
 }
 
-export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenCompInSitePlanner, onOpenNoteInNotes }) {
+export default function Dashboard({ onShellSwitch, authControl, accountActive, userId, onNewProject, onNavigate, onOpenReviewInDocReview, onOpenTaskInScheduler, onOpenCompInSitePlanner, onOpenMissingLocationsInSitePlanner, onOpenNoteInNotes }) {
   const [layout, setLayout] = useState(() => normalizeLayout(null));
+  // B1422496 — cards this account has deliberately removed, so catalog reconciliation (see
+  // dashboardPrefs.js's loadDashboardLayout) never re-adds them; see dashboardLayout.js's own
+  // header for the full reasoning.
+  const [dismissed, setDismissed] = useState([]);
   const [customizing, setCustomizing] = useState(false);
   const [saveNote, setSaveNote] = useState(null); // null | "saved" | "local" | "error"
   const layoutLoadedRef = useRef(false);
@@ -125,27 +142,47 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   const [gridInteracting, setGridInteracting] = useState(false);
 
   // Load the saved layout once per mount (this component is not kept alive — see Shell.jsx).
+  // loadDashboardLayout already reconciles it against the current card catalog — any card shipped
+  // since this was last saved is appended here, before it ever reaches state (B1422496).
   useEffect(() => {
     let live = true;
     layoutLoadedRef.current = false;
-    loadDashboardLayout(userId).then(({ layout: loaded }) => {
+    loadDashboardLayout(userId).then(({ layout: loaded, dismissed: loadedDismissed }) => {
       if (!live) return;
       setLayout(loaded);
+      setDismissed(loadedDismissed);
       layoutLoadedRef.current = true;
     });
     return () => { live = false; };
   }, [userId]);
 
-  // Persist on every change, debounced — never on the initial load itself.
+  // NEW-COMPS-CARD — the Comps card's own "per year / per month" toggle. A per-user preference,
+  // same account-scoped store as the layout above (`compsRatePeriodPrefs.js`), so it follows him
+  // across reloads and devices rather than resetting per visit. Loaded once per mount, same as
+  // the layout; the toggle writes straight through (no debounce needed — it's a single flip, not
+  // a drag gesture).
+  const [compsPeriod, setCompsPeriod] = useState("annual");
+  useEffect(() => {
+    let live = true;
+    loadCompsRatePeriod(userId).then(({ period }) => { if (live) setCompsPeriod(period); });
+    return () => { live = false; };
+  }, [userId]);
+  const changeCompsPeriod = (period) => {
+    setCompsPeriod(period);
+    saveCompsRatePeriod(userId, period);
+  };
+
+  // Persist on every change, debounced — never on the initial load itself. Also fires right after
+  // load when reconciliation appended a newly-shipped card, so that addition is saved back
+  // immediately rather than only living in this session's state (B1422496).
   useEffect(() => {
     if (!layoutLoadedRef.current) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      saveDashboardLayout(userId, layout).then((res) => setSaveNote(res.ok ? "saved" : userId ? "error" : "local"));
+      saveDashboardLayout(userId, layout, dismissed).then((res) => setSaveNote(res.ok ? "saved" : userId ? "error" : "local"));
     }, SAVE_DEBOUNCE_MS);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, userId]);
+  }, [layout, dismissed, userId]);
 
   // react-grid-layout calls onLayoutChange on mount and on every width recalculation, not just a
   // real drag/resize — most of those echo back the SAME grid-unit positions (only pixel sizes
@@ -236,6 +273,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         notePages: recentNotePages,
         prevSnapshot: mark.snapshot,
         scheduleLastWriteAt,
+        compsRatePeriod: compsPeriod,
       });
       setSinceLastHere({ feed, headerSpan: spanWords(feed.spanAnchorMs, nowMs), now: nowMs });
       // Fire-and-forget: this visit's own mark for NEXT time. Never blocks dataReady — a failed
@@ -246,6 +284,11 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
       setDataReady(true);
     })();
     return () => { live = false; };
+    // `compsPeriod` deliberately excluded: it only seeds the "New comp" rows' initial subline
+    // (SinceLastHereCard.jsx recomputes it live off the current period on every render regardless
+    // — see sinceLastHereFeed.js's header, FEED-3) and re-running this whole fetch waterfall on a
+    // toggle flip would refetch everything for no reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   const projects = useMemo(() => groupProjectsByGroupId(sites), [sites]);
@@ -260,10 +303,10 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     needsAttention: { rows: needsAttentionRows },
     pursuitsTable: { rows: pursuitsRows, yieldBySite: yieldBySiteMap },
     goingQuiet: { rows: goingQuiet(projects) },
-    compsSummary: { data: buildCompsCardData(comps) },
+    compsSummary: { data: buildCompsCardData(comps, compsPeriod) },
     scheduleHealth: { rows: scheduleProjects ? summarizeScheduleHealth(scheduleProjects) : [] },
     sinceLastHere: { feed: sinceLastHere?.feed || null },
-  }), [projects, sites, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap, sinceLastHere]);
+  }), [projects, sites, doc, comps, scheduleProjects, needsAttentionRows, pursuitsRows, yieldBySiteMap, sinceLastHere, compsPeriod]);
 
   const openProject = (p) => onNavigate?.({ module: "site-planner", projectId: p.groupId, cross: false, org: false });
   const openSchedule = (p) => onNavigate?.({ module: "scheduler", projectId: p.linkedSiteId, cross: false, org: false });
@@ -276,10 +319,16 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
   // Empty-state "add one" — there's no specific comp to deep-link into yet, so this lands the
   // owner on the map/finder view, one click from the Comps tab (MapFinder's own toolbar).
   const addComp = () => onNavigate?.({ module: "site-planner", projectId: null, cross: false, org: false });
-  // NEW-1 (Locations map card) — "wherever he can fix them": the Site Planner's own project list
-  // (no project id lands on MapFinder, never an auto-resumed last plan — SitePlannerApp.jsx's own
-  // bootActiveId), where every located-or-not project is reachable to open and set a location on.
-  const fixLocations = () => onNavigate?.({ module: "site-planner", projectId: null, cross: false, org: false });
+  // LOCATIONS-MAP-CARD FIX (owner report, 2026-09-09) — this used to call `onNavigate` directly,
+  // landing on the Site Planner's plain, unfiltered project list: exactly what clicking the Site
+  // Planner tab itself gives you, with nothing to show it was about the missing locations at all
+  // (read, and reported, as a dead link). `onOpenMissingLocationsInSitePlanner` is the same
+  // token-stamped-intent shape `onOpenCompInSitePlanner` already uses — it still lands on the
+  // Site Planner's project list (there's no dedicated "missing locations" page to send him to
+  // instead), but MapFinder's own effect on the intent arriving opens the Sites tab and narrows
+  // the list to exactly the projects with no location, so the destination actually answers "which
+  // ones, and let me fix them."
+  const fixLocations = () => onOpenMissingLocationsInSitePlanner?.();
 
   // NEW-1 — while data is still loading every slot renders the SAME stable-height skeleton
   // instead of its real (variable-height) content; see the `dataReady` effect above.
@@ -291,12 +340,13 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
     needsAttention: () => <NeedsAttentionCard {...cardData.needsAttention} onOpenTask={openTask} />,
     pursuitsTable: () => <PursuitsCard {...cardData.pursuitsTable} onOpenProject={openProject} />,
     goingQuiet: () => <GoingQuietCard {...cardData.goingQuiet} onOpenProject={openProject} />,
-    compsSummary: () => <CompsCard {...cardData.compsSummary} onOpenComp={openComp} onAddComp={addComp} />,
+    compsSummary: () => <CompsCard {...cardData.compsSummary} onOpenComp={openComp} onAddComp={addComp} onChangePeriod={changeCompsPeriod} />,
     scheduleHealth: () => <ScheduleHealthCard {...cardData.scheduleHealth} onOpenSchedule={openSchedule} />,
     sinceLastHere: () => (
       <SinceLastHereCard
         feed={cardData.sinceLastHere.feed}
         now={sinceLastHere?.now ?? Date.now()}
+        compsRatePeriod={compsPeriod}
         onOpenProject={openProject}
         onOpenTask={openTask}
         onOpenSchedule={openSchedule}
@@ -330,7 +380,11 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
         headerRight={entry.key === "sinceLastHere" ? sinceLastHere?.headerSpan : null}
         customizing={customizing}
         showDragHandle={!isNarrow}
-        onRemove={() => setLayout((l) => removeCard(l, entry.key))}
+        sizeToContent={dataReady && SIZE_TO_CONTENT_CARDS.has(entry.key)}
+        onRemove={() => {
+          setLayout((l) => removeCard(l, entry.key));
+          setDismissed((d) => dismissCard(d, entry.key));
+        }}
       >
         {render()}
       </DashboardCard>
@@ -364,7 +418,7 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
             </span>
           )}
           {customizing && (
-            <Button size="sm" variant="ghost" onClick={() => setLayout(resetLayout())}>Reset layout</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setLayout(resetLayout()); setDismissed([]); }}>Reset layout</Button>
           )}
           <Button
             size="sm"
@@ -416,7 +470,13 @@ export default function Dashboard({ onShellSwitch, authControl, accountActive, u
             {toAdd.length ? (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                 {toAdd.map((key) => (
-                  <ToggleChip key={key} onClick={() => setLayout((l) => addCard(l, key))}>
+                  <ToggleChip
+                    key={key}
+                    onClick={() => {
+                      setLayout((l) => addCard(l, key));
+                      setDismissed((d) => undismissCard(d, key));
+                    }}
+                  >
                     + {CARD_DEFS[key].title}
                   </ToggleChip>
                 ))}

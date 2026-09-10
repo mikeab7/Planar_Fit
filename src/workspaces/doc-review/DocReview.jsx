@@ -24,6 +24,7 @@ import { useReviewPersistence, docSaveState } from "./lib/usePersistence.js";
 import { newReviewId, newSourceId, storeSource, isStoredSource, downloadSource, downloadFromDrive, driveStreamSource, MAX_BYTES, loadReview, currentUid, readDraft, reconcile, cloudReady, composeTitle } from "./lib/reviewStore.js";
 import { writeLastDoc, readLastDoc, readLastDocMap, readLegacyPointers, resolveResume, resumeAllowedForRoute } from "./lib/lastDoc.js";
 import { recordOpen } from "../../shared/recents/recentDocs.js";
+import { liveProjectIds, openableProjectId } from "../../shared/projects/docProjectLiveness.js";
 import { classifySource, sourceUnavailableMessage } from "./lib/sourceState.js";
 import { cacheSourceBytes, getSourceBytes } from "./lib/sessionBytes.js";
 import { isPdfName } from "../../shared/files/uploadQueue.js";
@@ -392,6 +393,11 @@ export default function DocReview({
   const [bootResolved, setBootResolved] = useState(false); // pointer writes arm only after the boot resume settled
   const [source, setSource] = useState(null);     // { srcId, name, size, storageKey, oversize }
   const [redrop, setRedrop] = useState("");        // "re-drop on load" banner when bytes aren't available
+  // B1456896 — a non-PDF open never downloads on its own; this holds the already-fetched bytes
+  // so the redrop banner's "Download" button can do it on an explicit click. Never set outside
+  // fetchSourceBytes's non-PDF branch, and cleared everywhere else `redrop` is cleared to "" so a
+  // stale offer can't survive onto an unrelated banner message or a freshly opened document.
+  const [nonPdfOffer, setNonPdfOffer] = useState(null); // { name, blob } | null
   const [openErr, setOpenErr] = useState("");      // visible banner when an open no-ops / loadReview returns null (NEW-1) — so it can't fail silently
   const [signedIn, setSignedIn] = useState(false);
   // Takeoff is a TOOL-RAIL TOGGLE, hidden by default (owner, B664 — "why is takeoff a separate
@@ -1002,21 +1008,15 @@ export default function DocReview({
         blob = buf;
       }
     }
-    // B685/B686 — the Library stores ANY file type, but the markup canvas can only render a PDF.
-    // A non-PDF reaches here when it's opened from a Library-Home pin (or an older resume). We
-    // already have the bytes, so DOWNLOAD the original right here — never a dead-end note — and
-    // show a clear message. (Non-PDFs are barred from becoming the resume target below, so this
-    // only fires on a deliberate open, never as a surprise download on load.)
+    // B685/B686/B1456896 — the Library stores ANY file type, but the markup canvas can only
+    // render a PDF. A non-PDF reaches here whenever it's OPENED (a Dashboard card, the Library,
+    // a boot-resume deep link) — never a dead-end note, but also never an unrequested write to
+    // the user's machine (B1456896: opening a document is navigation, not "save this to disk").
+    // We already have the bytes, so just hold them — the banner's own Download button fires the
+    // save only on that explicit click.
     if (!pdf && src && src.name && !isPdfName(src.name)) {
-      try {
-        const dl = blob instanceof Blob ? blob : new Blob([blob]);
-        const url = URL.createObjectURL(dl);
-        const a = document.createElement("a"); a.href = url; a.download = src.name; document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 4000);
-        setRedrop(`“${src.name}” isn’t a PDF, so it can’t be shown on the markup canvas — it’s downloading instead. Find it anytime in the Library.`);
-      } catch (_) {
-        setRedrop(`“${src.name}” isn’t a PDF, so it can’t be shown on the markup canvas. Open it from the Library to download it.`);
-      }
+      setNonPdfOffer({ name: src.name, blob: blob instanceof Blob ? blob : new Blob([blob]) });
+      setRedrop(`“${src.name}” isn’t a PDF, so it can’t be shown on the markup canvas. Download it, or find it anytime in the Library.`);
       return;
     }
     if (!pdf) {
@@ -1030,16 +1030,23 @@ export default function DocReview({
     setNumPages(pdf.numPages); setView(null); setPageBase(null); detailTileRef.current = null; setDetailTile(null); setLoadNonce((n) => n + 1); // refit on load (B329)
     scanSheets(pdf, pdf.numPages); // re-read sheets for the labeled/grouped sidebar (B266/B348); won't override saved cals
   };
+  // B1456896 — the ONE deliberate action that writes a non-PDF to the user's machine. Fired only
+  // by the redrop banner's own Download button, never automatically.
+  const downloadNonPdfOffer = () => {
+    if (!nonPdfOffer) return;
+    try {
+      const url = URL.createObjectURL(nonPdfOffer.blob);
+      const a = document.createElement("a"); a.href = url; a.download = nonPdfOffer.name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 4000);
+    } catch (_) {
+      setOpenErr(`Couldn’t download “${nonPdfOffer.name}”. Open it from the Library and try again.`);
+    }
+  };
   const loadSingleReview = async (rec) => {
     const tok = ++loadTok.current; // supersede any in-flight load so its late PDF can't land on this review (B52)
     suspendSave(); // don't let this programmatic load re-save itself with a fresh updatedAt (B19)
     const s = rec.single || {};
     const src = (rec.sources || [])[0] || null;
-    // Library-Home "Recent": every open stamps the local opened-list — but not a non-PDF (B686),
-    // which can't be marked up and shouldn't clutter "Recent drawings" (opening it just downloads).
-    if (!(src && src.name && !isPdfName(src.name))) {
-      currentUid().then((uid) => recordOpen(uid, { id: rec.id, projectId: rec.projectId || null })).catch(() => {});
-    }
     // B446: a clear canvas-level "Opening…" overlay covers the whole load (setPdfDoc(null) below
     // blanks the backdrop, so without this the switch looks like nothing registered). Cleared in
     // the finally — but ONLY by the still-current load, so a rapid A→B switch doesn't let A's
@@ -1048,13 +1055,31 @@ export default function DocReview({
     setPdfDoc(null);
     sourceRef.current = src ? { srcId: src.srcId, name: src.name } : null;
     setReviewId(rec.id);
-    setMeta({ title: rec.title || "", projectId: rec.projectId || null, project: rec.project || "", discipline: rec.discipline || "", item: rec.item || "", revision: rec.revision || "", docDate: rec.docDate || "" });
-    if (rec.projectId) onNavigate?.({ projectId: rec.projectId }); // reflect the open file's project in the URL + breadcrumb (Work Item A)
+    // B1340368 (×2) — `rec.projectId` is the record's OWN copy of "which project is this
+    // filed under" (reviewStore.loadReview reads the `data` jsonb), which a project purge can
+    // leave stale even after the offer-time check (docProjectLiveness, reading the separate flat
+    // mirror column) has already cleared and offered this exact document as safe to open. Never
+    // trust it for a real navigation without re-checking liveness here — the one place that
+    // actually builds the route. Fails open on an inconclusive check (network/RLS), so an
+    // ordinary open never stalls or misfires on a maybe.
+    let liveIds = null;
+    if (rec.projectId) { try { liveIds = await liveProjectIds([rec.projectId]); } catch (_) { liveIds = null; } }
+    if (tok !== loadTok.current) return; // superseded while checking liveness — the newer load owns the outcome
+    const openProjectId = openableProjectId(rec, liveIds);
+    // Library-Home "Recent": every open stamps the local opened-list — but not a non-PDF (B686),
+    // which can't be marked up and shouldn't clutter "Recent drawings" (opening it just downloads).
+    // Uses the SAME re-checked id as the navigation below, so a dead project can't re-enter
+    // Library Home's own offer-time check through this recorded pointer either.
+    if (!(src && src.name && !isPdfName(src.name))) {
+      currentUid().then((uid) => recordOpen(uid, { id: rec.id, projectId: openProjectId })).catch(() => {});
+    }
+    setMeta({ title: rec.title || "", projectId: openProjectId, project: rec.project || "", discipline: rec.discipline || "", item: rec.item || "", revision: rec.revision || "", docDate: rec.docDate || "" });
+    if (openProjectId) onNavigate?.({ projectId: openProjectId }); // reflect the open file's project in the URL + breadcrumb (Work Item A)
     setSource(src ? { srcId: src.srcId, name: src.name, size: src.size || 0, storageKey: src.storageKey || null, driveKey: src.driveKey || null, oversize: !!src.oversize } : null);
     setMarkups(sanitizeMarkups(s.markups)); setCalByPage(s.calByPage || {}); setCalInfo(s.calInfo || {}); // sanitize: a corrupted/partial saved review can't crash the overlay
     setSheetMeta({}); setOpenGroups({}); // re-read on load (B266/B348); saved cals preserved
     setFileName(s.fileName || ""); setNumPages(s.numPages || 0); setPage(s.page || 1);
-    setDraft(null); clearSelection(); setTool("select"); setRedrop(""); setCalInput(null); clearHistory();
+    setDraft(null); clearSelection(); setTool("select"); setRedrop(""); setNonPdfOffer(null); setCalInput(null); clearHistory();
     scanTok.current++; // a programmatic load supersedes any in-flight auto-scale scan (use the saved cals)
     try { await fetchSourceBytes(src, tok); }
     finally { if (tok === loadTok.current) { setBusy(false); setBusyLabel(""); } } // only the winning load clears the overlay (B447)
@@ -1067,7 +1092,7 @@ export default function DocReview({
     // under the project you're in (it does NOT drop you back to "Select a project").
     // Clear the empty-state hint too (B914): switching to a project's clean empty state must
     // not inherit a stale "Pick exactly two PDFs…" / bad-drop message from the last one.
-    setSource(null); setRedrop(""); setErr("");
+    setSource(null); setRedrop(""); setNonPdfOffer(null); setErr("");
     setFileName(""); setNumPages(0); setPage(1); setView(null); setPageBase(null); detailTileRef.current = null; setDetailTile(null); setLoadNonce((n) => n + 1);
     setMarkups([]); setCalByPage({}); setCalInfo({}); setSheetMeta({}); setOpenGroups({}); setDraft(null); clearSelection(); setTool("select"); setCalInput(null);
     clearHistory();
@@ -2256,7 +2281,12 @@ export default function DocReview({
       {redrop && (
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", background: "var(--warn-bg)", color: "var(--warn-text)", fontSize: 12, fontFamily: "system-ui, sans-serif" }}>
           <span>⚠ {redrop}</span>
-          <button onClick={() => fileRef.current?.click()} style={{ marginLeft: "auto", padding: "4px 9px", fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", borderRadius: RADIUS.sm, border: "1px solid var(--warn-border)", background: "var(--surface-raised)", color: "var(--warn-text)" }}>Re-open file…</button>
+          {nonPdfOffer ? (
+            // B1456896 — the ONE explicit action that saves this file to disk; nothing here fires it on its own.
+            <button onClick={downloadNonPdfOffer} style={{ marginLeft: "auto", padding: "4px 9px", fontSize: FONT_SIZE.control, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", borderRadius: RADIUS.sm, border: "1px solid var(--warn-border)", background: "var(--surface-raised)", color: "var(--warn-text)" }}>Download</button>
+          ) : (
+            <button onClick={() => fileRef.current?.click()} style={{ marginLeft: "auto", padding: "4px 9px", fontSize: FONT_SIZE.control, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", borderRadius: RADIUS.sm, border: "1px solid var(--warn-border)", background: "var(--surface-raised)", color: "var(--warn-text)" }}>Re-open file…</button>
+          )}
         </div>
       )}
 

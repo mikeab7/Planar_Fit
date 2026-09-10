@@ -468,13 +468,34 @@ export async function purgeExpiredDeleted({ days = 30 } = {}) {
  * convention for that field) rather than soft-deleting the document itself: the drawing and its
  * markup are not what was destroyed, only the project they were filed under. Returns
  * { ok, unfiled } so the caller can report a failure loudly without it blocking the purge that
- * already happened (same shape as `purgeProjectFoldersFor`'s own Drive-cleanup call). */
+ * already happened (same shape as `purgeProjectFoldersFor`'s own Drive-cleanup call).
+ *
+ * ⛔ B1340368 (×2), recurrence 2026-09-09 — `project_id` is not the only copy of this fact.
+ * `reviewRowFor` mirrors it from the RECORD's own `projectId` field on every ordinary save (the
+ * `data` jsonb this function's original version never touched), and `reviewStore.loadReview`
+ * hands that jsonb back as the review's authoritative record — which is exactly what
+ * DocReview.jsx's open path navigates by. Nulling only the flat column here left that second
+ * copy dead-project-stale, so a document this function had already made safe to OFFER (the
+ * Dashboard/Library liveness checks read the flat column) could still ROUTE to the dead project
+ * the moment it was opened. Read each affected row's `data` back and null its `projectId` too —
+ * but only when it still agrees with the group being purged, never blind, so a row whose record
+ * already disagrees with its own mirror for some other reason is left alone rather than guessed
+ * at. */
 export async function unfileReviewsForDeletedProject(groupId) {
   if (!supabase || !groupId) return { ok: true, unfiled: 0 };
   try {
-    const { data, error } = await supabase.from("doc_reviews").update({ project_id: null }).eq("project_id", groupId).select("id");
-    if (error) return { ok: false, unfiled: 0, error: error.message || "unfile failed" };
-    return { ok: true, unfiled: Array.isArray(data) ? data.length : 0 };
+    const { data: rows, error: selErr } = await supabase.from("doc_reviews").select("id, data").eq("project_id", groupId);
+    if (selErr) return { ok: false, unfiled: 0, error: selErr.message || "unfile failed" };
+    if (!rows || !rows.length) return { ok: true, unfiled: 0 };
+    let unfiled = 0, lastError = null;
+    for (const row of rows) {
+      const patchedData = row && row.data && typeof row.data === "object" && row.data.projectId === groupId
+        ? { ...row.data, projectId: null }
+        : (row && row.data) || null;
+      const { error } = await supabase.from("doc_reviews").update({ project_id: null, data: patchedData }).eq("id", row.id);
+      if (error) lastError = error.message || "unfile failed"; else unfiled += 1;
+    }
+    return lastError ? { ok: false, unfiled, error: lastError } : { ok: true, unfiled };
   } catch (e) {
     return { ok: false, unfiled: 0, error: (e && e.message) || "unfile threw" };
   }

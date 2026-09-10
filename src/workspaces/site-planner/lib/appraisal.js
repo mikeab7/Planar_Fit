@@ -146,6 +146,37 @@ export function mailingAddressValues(attrs) {
   return out;
 }
 
+/* NEW-1 (owner report, 2026-09-09) — a name composed from address PARTS must drop the parts that
+ * came back empty, not keep their separators. Measured live on production: `sites.site` held
+ * "ALUMAX RD, NASH," for a real Bowie County parcel. That trailing comma is not a display glitch
+ * and not something Planyr's own code joined from scratch — it is BAKED INTO THE UPSTREAM DATA
+ * ITSELF and passed straight through:
+ *
+ *   - Bowie County's own appraisal-district record, harvested verbatim by the state's TxGIO/
+ *     StratMap parcel service, publishes a single composed `SITUS_ADDR` field that already reads
+ *     "ALUMAX RD, NASH," (confirmed live against the real service — SITUS_CITY is "NASH",
+ *     SITUS_STAT and SITUS_ZIP are both blank for this record). `situsAddress()` above returns
+ *     that field's value unmodified, by design — it's a single county column, not something this
+ *     codebase assembles.
+ *   - A second real row (`smtuc8z2x9w0`, "16000 Aldine Westfield Rd, Houston, Texas, 77032") shows
+ *     the identical shape one level up: that string is Esri's OWN forward-geocode `Match_addr`
+ *     (confirmed live against the real geocoder for that exact address), reaching this ladder as
+ *     `searched` when no parcel/situs was available. Both sources happen to be fully populated
+ *     there, so nothing was dropped — the shape only bites when a source's own city/state/zip are
+ *     genuinely absent, which a rural, less-developed record legitimately can be.
+ *
+ * So this codebase does not control the composer that produced either string, and can't rely on
+ * either upstream provider to fix its own join — the safe, general fix is to never let a
+ * comma-joined label with an empty segment reach a project's name, regardless of which address
+ * source produced it. Pure and reused by every "name a project from an address-shaped string"
+ * call site — never re-derive this ad hoc at a call site.
+ */
+export function tidyAddressLabel(s) {
+  if (s == null) return null;
+  const parts = String(s).split(",").map((p) => p.trim()).filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
+}
+
 /**
  * The name a new plan is seeded with from a picked parcel — the SITUS, else what the user actually
  * searched, else the account id, else "Untitled site".
@@ -165,7 +196,9 @@ export function siteNameFromParcel(attrs, { addr = null, searched = null, acct =
   const clean = (v) => (v == null ? null : String(v).replace(/\s+/g, " ").trim() || null);
   const ok = (v) => v && !mailed.has(v.toUpperCase());
   for (const cand of [clean(addr) || situsAddress(attrs), clean(searched), clean(acct)]) {
-    if (ok(cand)) return cand;
+    // NEW-1 — tidy AFTER the mailing-address check, so a raw candidate that happens to equal a
+    // mailing value (compared verbatim above) is still caught; only the WINNING candidate is tidied.
+    if (ok(cand)) return tidyAddressLabel(cand) || cand;
   }
   return "Untitled site";
 }
@@ -197,6 +230,11 @@ export const APPR_FIELDS = [
   [/(land_?use|state_?use|use_?cd|use_?desc|^class|prop_?type|stat_?land_?use|land_?state_?code|categor)/i, "Land use"],
   [/zoning/i, "Zoning"],
   [/(year_?built|yr_?built)/i, "Year built"],
+  // B1455632 — Nevada's statewide layer publishes a per-parcel deep link to the county assessor's
+  // own record (field `Website`) — no other wired source carries this. `apprVal` leaves it
+  // untouched (only a "value"-labeled row gets $ formatting) and `InfoRow` (ParcelInfoCard.jsx)
+  // renders an http(s) value as a link rather than plain text.
+  [/^website$/i, "County record"],
   // ...|^legal matches CCAD's Legal1–Legal4 (first match, Legal1, wins).
   [/(legal_?desc|^legal|subdiv|abstract|^abst)/i, "Legal"],
 ];

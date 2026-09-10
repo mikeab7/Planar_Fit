@@ -281,6 +281,32 @@ the correct, non-lazy disposition under this repo's own three-state lifecycle
 doesn't already do, and would not close the live-verify gap either. It needs a Cowork-thread pass
 against `planyr.io`, via the `verification-inbox/` mechanism, not more code.
 
+**⛔ CORRECTION (B1440976, 2026-09-09) — NEW-3's "already shipped" verdict above was wrong about ONE
+seam, and it is the seam that actually reached the owner.** He reported the rename "doesn't hold"
+from both entry points (map view and inside a plan). Reproducing it required no live sign-in at
+all: `db/rename_site_group.sql` was read directly off `planyr_production` (Supabase project
+`lyeqzkuiwngunutlkkmi`) via the Supabase MCP tools available in THIS session, and it stamps
+`data.siteRenamedAt` without ever bumping `data.updatedAt` — deliberately, per this file's ROLE row
+below and `projectName.js`'s own header ("this is exactly why a project's name uses its own
+dedicated `siteRenamedAt` stamp instead of `updatedAt`"). But `siteModel.mergeSiteContent` — the
+function `mergePulledSites` runs on every cloud pull to reconcile a locally-cached plan against the
+freshly-fetched row — never actually read that stamp: it picked `site`/`siteRenamedAt` as ordinary
+scalars from whichever side had the newer-or-tied generic `updatedAt`, exactly the B1181104 shape.
+So a device holding any locally-cached copy of a plan from before a rename made elsewhere kept the
+OLD name on every later pull, with no split for `reconcileGroupNames` to catch (the losing side's
+`site` AND `siteRenamedAt` were discarded together, so every plan in the group agreed — wrongly —
+and looked coherent). Confirmed against production: a query across every live group in
+`planyr_production` found zero split-name groups (`SELECT … HAVING count(distinct site) > 1` — the
+mechanism this fix's absence would otherwise be expected to leave evidence of), consistent with the
+symptom being a silent, UNANIMOUS revert rather than a visible split. Fixed in `mergeSiteContent`
+itself (resolves `site`/`siteRenamedAt` via `projectName.nameAuthority`, not the generic
+`updatedAt` pick), proven the same way B1181104 was — a real-shaped fixture in
+`test/siteModel.test.js`, not a synthetic claim. This is `Verify: sandbox`, not `Verify: live`: the
+defect and its fix are both in pure, network-free code, so the mechanism is fully provable without
+a signed-in two-device session (the same reasoning that let B1181104 close directly rather than
+park). Do not "fix" a recurrence by bumping `data.updatedAt` in the RPC instead of teaching the
+merge to read the stamp it was designed to honor.
+
 **Direction 4 (causal batching)** — already shipped (§4). The 2026-07-14 handoff's own framing —
 that this was "identified over a month ago… dropped… never done" — no longer describes the code:
 `closeAssemblies` + `commit_elements_atomic`/`group_cas` + the toast-batch timestamp correlation

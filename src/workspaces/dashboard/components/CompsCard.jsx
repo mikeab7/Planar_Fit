@@ -24,16 +24,54 @@ import Chip from "../../../shared/ui/Chip.jsx";
 import { pinFallbackText, siteplanLocationText } from "../../../shared/comps/lib/compLocationText.js";
 import {
   TYPE_LABEL, compSizeSf, relativeTimeLabel, countyEntry, compScaleLayout, MIN_PEERS_FOR_SCALE,
+  formatRateValue as fmtRateValue,
 } from "../lib/compsCardModel.js";
 
 const MUTED = { fontSize: 12, color: "var(--text-secondary)" };
 const EMPTY = { fontSize: 12, color: "var(--text-secondary)", fontStyle: "italic" };
 const UPPER_LABEL = { fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-secondary)" };
 
-function fmtRateValue(v) {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const decimals = Math.abs(v) < 10 ? 2 : 0;
-  return `$${v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+/* PeriodToggle — the small, quiet "per year / per month" switch (NEW-COMPS-CARD, the period
+ * toggle). Flipping it is what re-normalizes the featured rate, the peer scale, both tick labels
+ * and the sentence underneath all together — the toggle itself carries none of that logic; it
+ * just reports the chosen period up to `onChangePeriod`, and everything downstream already reads
+ * off `period` (see compsCardModel.js's header). `onChangePeriod` is optional so an embedding that
+ * hasn't wired persistence yet still renders (no toggle shown, current behavior unchanged).
+ * MODULE-SCOPE-COMPONENTS: defined here, not inside CompsCard's render body.
+ * The whole card is one big `onClick`/`onKeyDown` button (opens the comp) — every event here is
+ * stopped from bubbling so a press on the toggle can never also open the comp underneath it. */
+function PeriodToggle({ period, onChangePeriod }) {
+  if (!onChangePeriod) return null;
+  const stop = (e) => { e.stopPropagation(); };
+  const seg = (key, label) => {
+    const active = period === key;
+    return (
+      <button
+        key={key}
+        type="button"
+        aria-pressed={active}
+        onClick={(e) => { e.stopPropagation(); if (!active) onChangePeriod(key); }}
+        style={{
+          border: "none", background: "none", cursor: "pointer", fontFamily: "inherit",
+          fontSize: 10.5, fontWeight: active ? 700 : 500, padding: "2px 4px", borderRadius: RADIUS.sm,
+          color: active ? "var(--accent)" : "var(--text-secondary)",
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
+  return (
+    <div
+      role="group" aria-label="Rate period"
+      onClick={stop} onKeyDown={stop}
+      style={{ display: "flex", alignItems: "center", gap: 1, flex: "none" }}
+    >
+      {seg("annual", "per year")}
+      <span aria-hidden="true" style={{ color: "var(--text-tertiary)", fontSize: 10 }}>·</span>
+      {seg("monthly", "per month")}
+    </div>
+  );
 }
 
 /** The featured comp's address — the synchronous fallback (county name, or a site-plan's own
@@ -89,7 +127,7 @@ function CompScale({ featuredRate, peerRates }) {
   );
 }
 
-export default function CompsCard({ data, onOpenComp, onAddComp }) {
+export default function CompsCard({ data, onOpenComp, onAddComp, onChangePeriod }) {
   const featured = data?.featured || null;
   const address = useCompAddress(featured); // called unconditionally — safe on null (returns null)
 
@@ -159,22 +197,27 @@ export default function CompsCard({ data, onOpenComp, onAddComp }) {
 
       <div style={UPPER_LABEL}>{[countyLabel, addedAgo].filter(Boolean).join(" · ")}</div>
 
-      {rate != null ? (
-        <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
-          <span
-            style={{
-              fontSize: 28, // design-exempt: the single biggest number on the card, per spec — the largest KPI figure in the app, deliberately above the shared FONT_SIZE ceiling for the same reason as the headline literal above.
-              fontWeight: 800, color: "var(--accent)", lineHeight: 1,
-              fontFamily: NUM_FONT, fontVariantNumeric: TABULAR_NUMS,
-            }}
-          >
-            {fmtRateValue(rate.value)}
-          </span>
-          <span style={{ fontSize: FONT_SIZE.label, color: "var(--text-secondary)" }}>{rate.unit.replace(/^\$/, "")}</span>
-        </div>
-      ) : (
-        <div style={MUTED}>Rate not recorded</div>
-      )}
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+        {rate != null ? (
+          <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
+            <span
+              style={{
+                fontSize: 28, // design-exempt: the single biggest number on the card, per spec — the largest KPI figure in the app, deliberately above the shared FONT_SIZE ceiling for the same reason as the headline literal above.
+                fontWeight: 800, color: "var(--accent)", lineHeight: 1,
+                fontFamily: NUM_FONT, fontVariantNumeric: TABULAR_NUMS,
+              }}
+            >
+              {fmtRateValue(rate.value)}
+            </span>
+            <span style={{ fontSize: FONT_SIZE.label, color: "var(--text-secondary)" }}>{rate.unit.replace(/^\$/, "")}</span>
+          </div>
+        ) : (
+          <div style={MUTED}>Rate not recorded</div>
+        )}
+        {/* Only a LEASE rate carries a period at all (a land $/AC or a building-sale $/SF price
+            doesn't) — the toggle only ever shows when it would actually do something. */}
+        {rate?.period != null && <PeriodToggle period={rate.period} onChangePeriod={onChangePeriod} />}
+      </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {rate?.basis && <Chip tone="neutral" text={rate.basis.toUpperCase()} />}

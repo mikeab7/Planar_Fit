@@ -7,11 +7,100 @@
  * any workspace without dragging in the localStorage/Supabase chain.
  */
 
+/* B1407824 — a name shortened for a tight display spot (a map pin label, a table cell, a tile
+ * caption) must never just cut to a length and stop: a plain `name.slice(0, n)` can land the cut
+ * immediately after a comma, period, hyphen or space, and the result reads as broken text
+ * ("ALUMAX RD, NASH,") rather than as a shortened name — no ellipsis, no sign anything was cut.
+ * Five Dashboard surfaces (the Locations map pin, the Pursuits table, the Recent plans tile
+ * caption, and the Since-you-were-last-here feed's plan rows) each show a project/plan name in a
+ * space too tight for the full string; this is the ONE place that decides how a name shortens, so
+ * none of the five has to reimplement the rule.
+ *
+ * ⛔ THE OWNER-REPORTED NAME IS NOT ACTUALLY LONG — it's exactly "ALUMAX RD, NASH," and nothing
+ * more (confirmed against production evidence surfaced by the sibling B1399568 fix, which read the
+ * same stored value straight off two real `sites` rows). Nothing shortens it for SPACE, because
+ * 16 characters fits comfortably in every one of this repo's name-display slots; the dangling
+ * comma is the stored value's own trailing character, in full. A length-only truncate can never
+ * fix that — there is nothing left to cut. So this function does two DIFFERENT things and only one
+ * of them is "shortening": (1) a name over `maxLen` is cut, trimmed back past any trailing run of
+ * comma/period/hyphen/whitespace, then marked with a single trailing "…" — a shortened name is
+ * always both clean AND visibly identifiable as shortened, and a cut landing MID-WORD (nothing
+ * separator-like to trim) is left exactly as cut, which reads as an ordinary shortened name, not
+ * as broken text; (2) a name AT OR UNDER `maxLen` — nothing to cut — still has any trailing
+ * comma/period/hyphen stripped (never a mark, because nothing was hidden — this is cleanup, not
+ * shortening), because a name that just stops on a bare comma with nothing ever following it reads
+ * as broken regardless of how it got that way, and there is no more text this function could ever
+ * append to make it whole. A trailing SPACE alone is left alone in this branch — plain whitespace
+ * at the end of a fitting name is not "broken text" the way a dangling punctuation mark is. */
+const TRAILING_SEPARATOR_RE = /[,.\-\s]+$/;
+const TRAILING_PUNCTUATION_RE = /[,.\-]+$/;
+
+export function shortenDisplayName(name, maxLen) {
+  const s = name == null ? "" : String(name);
+  if (s.length <= maxLen) return s.replace(TRAILING_PUNCTUATION_RE, "") || s;
+  const cut = s.slice(0, maxLen);
+  const trimmed = cut.replace(TRAILING_SEPARATOR_RE, "");
+  // A pathological name that is nothing but separators for the first `maxLen` characters would
+  // otherwise trim to "" — fall back to the raw cut rather than hand back an empty label.
+  return `${trimmed || cut}…`;
+}
+
 // How long a deleted project stays in the "Recently deleted" bin before it's purged for good.
 // Canonical here (a pure, dependency-free constant) rather than in storage.js, so a caller that
 // only needs the NUMBER — the breadcrumb's confirmation copy — never has to import the engine
 // that owns the delete itself (B927105). storage.js imports it from here.
 export const DELETED_RETENTION_DAYS = 30;
+
+/* B1399568 — ADOPT, DON'T MINT: planning a site on ground that already carries a project must
+ * open that project instead of minting a second `group_id = id` row. Production showed two
+ * projects born 51 seconds apart at byte-identical origin coordinates — too far apart for any
+ * debounce/submit-disable/StrictMode guard to close (those all land within milliseconds), and it
+ * is unknown (and irrelevant) whether the second create came from a second press or the app
+ * re-entering the path on its own. So the guard is keyed on the GROUND, checked fresh at the
+ * moment of creation, not on suppressing a second click.
+ *
+ * `findProjectAtOrigin` is the ONE place that decides "does this origin already have a project."
+ * `SAME_GROUND_FT` is deliberately tight — the real duplicate matched to the last digit — with
+ * just enough slack to absorb float jitter from re-deriving an origin (e.g. a slightly different
+ * parcel-average) for what is unmistakably the same click, while staying far short of the
+ * distance between two genuinely different adjacent parcels. */
+export const SAME_GROUND_FT = 30;
+
+// Haversine distance in feet between two {lat, lon} points. Dependency-free (no projection
+// module) since this only needs to answer "is this the same spot," never a precise survey figure.
+export function distanceFeetBetween(a, b) {
+  if (!a || !b || !Number.isFinite(a.lat) || !Number.isFinite(a.lon) || !Number.isFinite(b.lat) || !Number.isFinite(b.lon)) {
+    return Infinity;
+  }
+  const EARTH_RADIUS_FT = 20925646.325;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const la1 = toRad(a.lat), la2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+  return 2 * EARTH_RADIUS_FT * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+// Find the existing project (group id) already anchored at `origin`, among a flat list of
+// site-model records (the same shape `groupProjects` consumes). Every plan in a group carries its
+// project's origin (copied verbatim by `newPlanSameParcel`/`duplicatePlan`), so matching any
+// record's origin is enough to identify the group — never re-derived from just the anchor row,
+// which the B1164192 family already showed can go missing while the group stays alive. Ties
+// (pre-existing duplicates at the same spot) resolve to the most recently updated group, never a
+// coin flip. Returns null when nothing at this ground exists yet, or `origin` is unusable.
+export function findProjectAtOrigin(records = [], origin, { excludeGroupId = null } = {}) {
+  if (!origin || !Number.isFinite(origin.lat) || !Number.isFinite(origin.lon)) return null;
+  let best = null;
+  for (const s of records || []) {
+    if (!s || !s.origin) continue;
+    const groupId = s.groupId || s.id;
+    if (!groupId || groupId === excludeGroupId) continue;
+    if (distanceFeetBetween(origin, s.origin) > SAME_GROUND_FT) continue;
+    const updatedAt = Number(s.updatedAt) || 0;
+    if (!best || updatedAt > best.updatedAt) best = { groupId, updatedAt };
+  }
+  return best ? best.groupId : null;
+}
 
 // B1202176 — Shell.jsx's route-level deletion gate (B848833) asks one honest question — does
 // this project id's cloud row exist, and if so is it soft-deleted? — and that question cannot
@@ -151,6 +240,26 @@ export function withCurrentProject(projects = [], currentProject = null) {
   ];
 }
 
+/* B1442592 ("An empty new project is never written to the server") — a project born through the Site
+ * Planner's LAZY "New project" flow (`newBlankSite`/`newSiteFromMap` in SitePlannerApp.jsx) gets
+ * no `public.sites` row, and no local plan record either, until its first real edit — that's the
+ * root CLAUDE.md's "Project creation is deliberately LAZY" owner constraint (2026-09-05), not a
+ * bug. Until that first edit, such a project can appear in the switcher ONLY via
+ * `withCurrentProject`'s synthetic "the project you're standing in" placeholder — it never shows
+ * up in `registryProjects` (the REAL list `listProjects()` reads off the on-device/cloud registry),
+ * because there is nothing saved anywhere for `listProjects()` to find.
+ *
+ * This is the ONE place that answers "does this project id actually have a saved record behind
+ * it" — pure, so the delete confirmation (ProjectBreadcrumb.jsx) can stop promising a "moves to
+ * Recently deleted" trip for a project that has nothing anywhere to move. `registryProjects` must
+ * be the REAL registry list (e.g. `listProjects()`), never a union that already includes the
+ * synthetic placeholder — unioning first would make this always answer true for the one case it
+ * exists to catch. */
+export function hasSavedProjectRecord(id, registryProjects = []) {
+  if (!id) return false;
+  return (registryProjects || []).some((p) => p && p.id === id);
+}
+
 // B854xxx/NEW-2 — Scheduler is the only controlled caller of the breadcrumb (its embedded Gantt
 // app bridges its OWN project list — schedule-only pseudo-projects like Pursuits/Operations that
 // carry no site id at all), and that bridged list was the WHOLE switcher on that route: no
@@ -248,8 +357,17 @@ export function filterProjects(projects = [], query = "") {
 // Compact relative timestamp for the switcher rows ("just now", "5m ago", "3h ago",
 // "2d ago", "3w ago", then a short calendar date for anything older than ~a month).
 // `now` is injectable so the behavior is deterministic under test.
+// ⛔ IT ACCEPTS AN ISO STRING AS WELL AS EPOCH MS, AND THAT IS A BUG FIX, NOT A CONVENIENCE.
+// `Number("2026-09-01T12:34:56Z")` is NaN, so the old `Number(ts) || 0` silently answered "" for
+// every ISO timestamp — and `cloudCheckDeleted` hands `deletedAt` straight through from Postgres,
+// where `deleted_at` IS an ISO string. The visible symptom was the deleted-project screen reading
+// "was moved to Recently deleted ." — a stray space before the period, which is the empty relative
+// time that should have been there. So the reported typo was the tail of a silently-swallowed
+// parse (LOUD-FAILURE: it degraded quietly instead of failing), and deleting the space would have
+// hidden it for good. The bin LIST was never affected — `listDeletedProjects` converts with
+// `toMs()` first — which is exactly why this survived: one of the two callers was already correct.
 export function relTime(ts, now = Date.now()) {
-  const t = Number(ts) || 0;
+  const t = typeof ts === "string" ? (Date.parse(ts) || Number(ts) || 0) : (Number(ts) || 0);
   if (!t) return "";
   const sec = Math.max(0, Math.floor((now - t) / 1000));
   if (sec < 45) return "just now";

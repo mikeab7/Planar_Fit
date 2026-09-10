@@ -53,7 +53,7 @@ export const CARD_KEYS = Object.keys(CARD_DEFS);
 // GRID_COLS, each card's own defaultW/defaultH. Every catalog card ships by default (NEW-2 — a
 // first-run Dashboard must never be empty); a user who wants a leaner view removes what they
 // don't need in Customize mode, rather than building one up from nothing.
-const DEFAULT_ORDER = [
+export const DEFAULT_ORDER = [
   "sinceLastHere", "jumpBackIn", "recentPlans", "pipelineStatus", "locationsMap", "needsAttention", "pursuitsTable",
   "scheduleHealth", "compsSummary", "goingQuiet",
 ];
@@ -153,6 +153,77 @@ export function addCard(layout, key) {
  * destroyed — removing is just leaving it out of this array. */
 export function removeCard(layout, key) {
   return layout.filter((e) => e.key !== key);
+}
+
+// ── Catalog reconciliation (B1422496) — a newly shipped card reaches an already-saved layout ──
+//
+// Before this, a saved layout was purely a list of what the user placed. A catalog card added
+// after that save simply never appeared anywhere but the "Add a card" picker — indistinguishable
+// from a card the user had deliberately removed, so nothing here could safely re-add it. Michael
+// had to hand-add four cards through the picker after they'd already shipped and deployed; the
+// same silent miss will repeat for every future card unless something tells "never reached this
+// layout" apart from "removed on purpose."
+//
+// The fix: every account carries a `dismissed` list (persisted alongside the layout — see
+// dashboardPrefs.js's `dashboardDismissedCards`) naming exactly the catalog cards it has
+// deliberately excluded. A catalog card that is neither currently placed NOR in `dismissed` is
+// "new" and gets appended automatically, in DEFAULT_ORDER, below whatever's already on the grid
+// — existing cards' own x/y/w/h are never touched. A card in `dismissed` stays out even though
+// it's just as absent from the layout; it's still reachable any time from the "Add a card"
+// picker (availableToAdd doesn't consult `dismissed` — removal is reversible, never destructive).
+//
+// Bootstrap (normalizeDismissed below): an account saved before this shipped has no `dismissed`
+// list at all. Defaulting that to "empty" would treat every already-missing catalog card as
+// brand new and auto-resurrect anything that account ever removed — exactly the outcome rule 3
+// forbids, and there is no way to tell, from the layout alone, which historical absence was which.
+// So the bootstrap default is the opposite: every catalog card already missing at that moment is
+// treated as already-decided (silently seeded into `dismissed`), so a legacy layout is left
+// exactly as it was the first time this runs. From that point on `dismissed` is a real, persisted
+// list, so only cards added to the catalog AFTER this shipped are new to that account — and stay
+// new to every account, indefinitely, the same way, going forward.
+
+/** Catalog cards this layout has never been reconciled against: not currently placed, and not
+ * recorded as deliberately removed. DEFAULT_ORDER for a deterministic, sensible append order. */
+export function newCatalogCards(layout, dismissed) {
+  const present = new Set((Array.isArray(layout) ? layout : []).map((e) => e.key));
+  const removed = new Set(Array.isArray(dismissed) ? dismissed : []);
+  return DEFAULT_ORDER.filter((k) => !present.has(k) && !removed.has(k));
+}
+
+/** Append every not-yet-decided catalog card (see newCatalogCards) below what's already placed,
+ * at its own default size, via the same addCard used for a manual "Add a card" click — so an
+ * auto-reconciled card behaves identically to one the user added themselves. Existing entries are
+ * never reordered or resized. No-op (same array reference) when there's nothing new. */
+export function appendNewCatalogCards(layout, dismissed) {
+  const toAdd = newCatalogCards(layout, dismissed);
+  return toAdd.length ? toAdd.reduce((l, key) => addCard(l, key), layout) : layout;
+}
+
+/** Normalize a raw persisted `dismissed` list. `undefined`/`null` means "never recorded" — the
+ * bootstrap case for every account saved before this reconciliation existed — see the block
+ * comment above for why that defaults to "every catalog card currently missing," not to empty.
+ * An explicitly-saved list (even `[]`) is used as-is: unknown/malformed entries dropped, deduped. */
+export function normalizeDismissed(raw, layout) {
+  if (raw === undefined || raw === null) {
+    const present = new Set((Array.isArray(layout) ? layout : []).map((e) => e.key));
+    return CARD_KEYS.filter((k) => !present.has(k));
+  }
+  const list = Array.isArray(raw) ? raw : [];
+  return [...new Set(list.filter((k) => typeof k === "string" && !!CARD_DEFS[k]))];
+}
+
+/** Record a card as deliberately removed — idempotent. Called wherever removeCard is. */
+export function dismissCard(dismissed, key) {
+  const list = Array.isArray(dismissed) ? dismissed : [];
+  return list.includes(key) ? list : [...list, key];
+}
+
+/** Clear a card's dismissal — called wherever addCard is, so manually re-adding a dismissed card
+ * (from the picker) makes a later removal a fresh, freely-reachable decision again rather than
+ * silently reusing the stale record. */
+export function undismissCard(dismissed, key) {
+  const list = Array.isArray(dismissed) ? dismissed : [];
+  return list.filter((k) => k !== key);
 }
 
 /** Fold react-grid-layout's onLayoutChange payload (an array of { i, x, y, w, h }, `i` matching

@@ -46,14 +46,22 @@ export async function pressAt(page, docX, docY, { type = "", timeout = 2000 } = 
   const c = await clientOf(page, docX, docY);
   if (!c) throw new Error("pressAt: there is no note body on this page");
   await page.mouse.click(c.x, c.y);
+  /* ⛔ A PRESS ALONE NO LONGER MAKES A BLOCK (NEW-8, owner decision 2026-09-08). It arms a caret;
+   * the note comes into existence on the FIRST CHARACTER — *"just because I click outside of the
+   * page, it shouldn't automatically open the page up to it. Only once I actually type
+   * something."* So the committing keystroke is part of what this driver does, and a caller that
+   * did not name its own marker gets one. Without this every harness built on `pressAt` would
+   * report the new, correct behaviour as "the placement gesture has stopped working" — which is
+   * the exact false finding this file was written to prevent, arriving through a different door. */
+  const commit = type || "x";
   const deadline = Date.now() + timeout;
   for (;;) {
-    if (type) await page.keyboard.type(type);
+    if (commit) await page.keyboard.type(commit);
     const blocks = await blocksOn(page);
     const hit = blocks.find((b) => b.left === docX && b.top === docY);
     if (hit) return hit;
     if (Date.now() > deadline) {
-      throw new Error(`pressAt: no block at (${docX}, ${docY}) after a real press — ${blocks.length} block(s) on the page`);
+      throw new Error(`pressAt: no block at (${docX}, ${docY}) after a real press and a keystroke — ${blocks.length} block(s) on the page`);
     }
     await page.waitForTimeout(60);
   }

@@ -44,6 +44,7 @@ import {
 } from "../../../shared/files/uploadQueue.js";
 import { loadIdSet, saveIdSet } from "../../../shared/ui/persistedSet.js";
 import { RADIUS } from "../../../shared/ui/radius.js";
+import { FONT_SIZE } from "../../../shared/ui/designTokens.js";
 
 // Cross-project category tree: remembered set of OPEN categories (default: all collapsed).
 // Category names are stable canonical labels, so one shared key works across sessions.
@@ -129,6 +130,10 @@ export default function FileBrowser({
   const [moveNotice, setMoveNotice] = useState(null);      // refile moved metadata but not the Drive copy (B662 #3)
   const [folderNote, setFolderNote] = useState(null);      // { filed, skipped } after a FOLDER drop/pick (B664)
   const [dlNotice, setDlNotice] = useState(null);          // { name, busy?, error? } for a non-PDF download (B685)
+  // B1456896 — a non-PDF row click is NAVIGATION, never an implicit download: it arms this
+  // confirmation instead of calling downloadFile directly, so the file only reaches disk on the
+  // banner's own explicit Download click.
+  const [pendingDl, setPendingDl] = useState(null);         // the file row awaiting an explicit Download click
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
   const reqRef = useRef(0);
@@ -544,15 +549,19 @@ export default function FileBrowser({
   const onPickFolder = (e) => { ingestFolder([...(e.target.files || [])], dropTargetFolder()); e.target.value = ""; };
 
   // A PDF opens on the markup canvas; any other file type (B685) has no canvas preview, so
-  // clicking it DOWNLOADS the original instead. Legacy files carry no sourceFile — they were
-  // always PDFs, so an empty sourceFile reads as "PDF" (opens in Review, as before).
+  // clicking it OFFERS a download instead of opening one (B1456896 — a row click is navigation,
+  // never an implicit write to the user's machine; see the pendingDl confirmation below).
+  // Legacy files carry no sourceFile — they were always PDFs, so an empty sourceFile reads as
+  // "PDF" (opens in Review, as before).
   const isPdfFile = (f) => !f.sourceFile || isPdfName(f.sourceFile);
   const open = (f) => {
-    if (!isPdfFile(f)) { downloadFile(f); return; }
+    if (!isPdfFile(f)) { setPendingDl(f); return; }
     const r = reviews.find((x) => x.id === f.id); onOpenReview?.(r || f);
   };
   // Fetch a stored file's bytes (Drive-first, Supabase-fallback — the same read-back order the
   // Review canvas uses) and save it to disk. Failure is loud (a banner), never a dead click.
+  // Only ever called from the pendingDl confirmation's own Download button (B1456896) — never
+  // from a row click directly.
   const downloadFile = async (f) => {
     const label = f.sourceFile || f.title || f.item || "file";
     setDlNotice({ name: label, busy: true });
@@ -832,6 +841,19 @@ export default function FileBrowser({
           </div>
         )}
 
+        {/* B1456896 — the explicit consent step: a non-PDF row click arms THIS, never downloadFile
+            directly. Only the Download button below hands bytes to the OS; ✕/Cancel discards the
+            offer with nothing written to disk. */}
+        {pendingDl && (
+          <div style={{ flex: "none", margin: "8px 12px 0", padding: "7px 10px", borderRadius: RADIUS.sm, display: "flex", alignItems: "center", gap: 8,
+            border: "1px solid var(--border-default)", background: "var(--surface-raised)", color: "var(--text-secondary)", fontSize: FONT_SIZE.control, lineHeight: 1.45 }}>
+            <span style={{ flex: 1 }}>“{pendingDl.sourceFile || pendingDl.title || pendingDl.item || "This file"}” isn’t a PDF, so it can’t be previewed here.</span>
+            <button onClick={() => { const f = pendingDl; setPendingDl(null); downloadFile(f); }}
+              style={{ flex: "none", padding: "4px 9px", fontSize: FONT_SIZE.control, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", borderRadius: RADIUS.md, border: "1px solid var(--border-default)", background: "var(--surface-page)", color: "var(--text-primary)" }}>Download</button>
+            <button onClick={() => setPendingDl(null)} title="Cancel" style={{ flex: "none", border: "none", background: "transparent", color: "var(--text-secondary)", cursor: "pointer", fontSize: FONT_SIZE.emphasis, fontWeight: 700, padding: 2 }}>✕</button>
+          </div>
+        )}
+
         {/* non-PDF download — in-flight + honest failure (B685; never a dead click) */}
         {dlNotice && (
           <div style={{ flex: "none", margin: "8px 12px 0", padding: "7px 10px", borderRadius: 7, display: "flex", alignItems: "center", gap: 8,
@@ -931,14 +953,15 @@ export default function FileBrowser({
             const st = stateOf(f);
             const mapped = onMap(f), ref = isReference(f), spatial = isSpatial(f);
             const needs = st === FILE_STATES.NEEDS_FILING;
-            // A non-PDF (B685) has no markup-canvas preview: clicking it downloads the original,
-            // and a small type chip (its extension) makes clear it's not a drawing you mark up.
+            // A non-PDF (B685) has no markup-canvas preview: clicking it OFFERS the original for
+            // download (B1456896 — never fires the download itself), and a small type chip (its
+            // extension) makes clear it's not a drawing you mark up.
             const pdfRow = isPdfFile(f);
             const ext = (String(f.sourceFile || "").match(/\.([a-z0-9]+)$/i) || [])[1];
             return (
               <div key={f.id} style={{ border: "1px solid var(--border-default)", borderRadius: 8, padding: "8px 10px", marginBottom: 6, background: "var(--surface-raised)" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                  <button onClick={() => open(f)} title={pdfRow ? "Open to review / mark up" : "Download this file"}
+                  <button onClick={() => open(f)} title={pdfRow ? "Open to review / mark up" : "Not a PDF — click for a Download option"}
                     style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 9, textAlign: "left", border: "none", background: "transparent", cursor: "pointer", padding: 0, fontFamily: "inherit" }}>
                     <FileTypeIcon kind={f.kind} />
                     <span style={{ minWidth: 0 }}>
@@ -947,7 +970,7 @@ export default function FileBrowser({
                       </span>
                       <span style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3, flexWrap: "wrap" }}>
                         <Badge title="Subcategory (discipline)">{subcategoryOf(f)}</Badge>
-                        {!pdfRow && ext && <Badge tone="old" title="File type — click the row to download it">{ext.toUpperCase()}</Badge>}
+                        {!pdfRow && ext && <Badge tone="old" title="File type — click the row for a Download option">{ext.toUpperCase()}</Badge>}
                         {f.sheetNumber && <Badge title="Sheet number / range read off the title block">{f.sheetNumber}</Badge>}
                         {st === FILE_STATES.SUPERSEDED && <Badge tone="old" title="Replaced by a newer revision">superseded</Badge>}
                         {needs && <Badge title="Couldn’t classify confidently">needs filing</Badge>}

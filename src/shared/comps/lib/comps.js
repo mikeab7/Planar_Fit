@@ -70,7 +70,7 @@ export function validAnchor(anchor) {
 
 // B986096-HARDENING-7 (owner rule, "i dont need to input county as a default … do not just write
 // null and move on") — county is derived from the anchor at pick time (MapFinder.jsx's
-// `placeCompPinAt`/`placeCompOnOverlay`, `compParcelAnchor.js`'s `parcelCountyFromSelection`) and
+// `placePinAt`/`placeCompOnOverlay`, `compParcelAnchor.js`'s `parcelCountyFromSelection`) and
 // is NEVER a sheet input. A comp has no load-time self-heal the way a planned site does (B792
 // re-resolves a site's county from its origin on every load), so a lookup that failed silently —
 // timed out, no match, a thrown error — would leave `county: null` forever with nothing to catch
@@ -126,6 +126,44 @@ export function annualLeaseRate(comp) {
   if (comp?.leaseRatePeriod === "monthly") return rate * 12;
   if (comp?.leaseRatePeriod === "annual") return rate;
   return null;
+}
+
+/** LEASE rate converted (exact math, never guessed) to whichever PERIOD the caller wants —
+ * annual or monthly — regardless of which period the comp was actually entered in. This is the
+ * numeric basis for a period display TOGGLE: every comp has to convert through the SAME path so
+ * two comps entered in different periods can be shown on one scale/list without a silent 12x
+ * disagreement. Built on `annualLeaseRate` (the app's one lease-period normalizer), never a
+ * second parallel conversion. Null under the exact same conditions `annualLeaseRate` is null
+ * (an unset rate or period) — never guessed. */
+export function leaseRateForPeriod(comp, period) {
+  const annual = annualLeaseRate(comp);
+  if (annual == null) return null;
+  return period === "monthly" ? annual / 12 : annual;
+}
+
+/** The lease Rate FIELD's display value + the period it's actually shown in, for a caller that
+ * wants every comp rendered in ONE chosen period (`displayPeriod`) — the Dashboard's Comps card
+ * and the map's Comps rail both read this so a comp entered monthly never shows a different
+ * period than a sibling entered annually. Two rules, in order: **(1)** with no `displayPeriod`,
+ * or a comp whose own period can't be determined, this is EXACTLY the comp's stored rate in its
+ * own entered period (falling back to "annual" for the label only when the period is genuinely
+ * unset) — byte-identical to how `compHeadline`/`compFieldRows` always rendered a Rate, before a
+ * period toggle existed anywhere. **(2)** with a `displayPeriod` that differs from the comp's own,
+ * the rate is CONVERTED (`leaseRateForPeriod`, exact ×12/÷12 math) and formatted to 2 decimals —
+ * a DERIVED figure now, so it follows this file's existing derived-rate convention
+ * (`netEffectiveLeaseRate`/`opexNormalizedRate`'s `.toFixed(2)`) rather than the raw-precision
+ * `fmtRate` reserved for what was actually typed. Null only when there's no rate to show at all. */
+export function leaseRateDisplayFor(comp, displayPeriod) {
+  if (comp?.leaseRate == null) return null;
+  const nativePeriod = comp.leaseRatePeriod === "monthly" ? "monthly" : "annual";
+  if (!displayPeriod || displayPeriod === nativePeriod) {
+    return { formatted: fmtRate(comp.leaseRate), period: nativePeriod };
+  }
+  const converted = leaseRateForPeriod(comp, displayPeriod);
+  // A comp whose own period is genuinely unset can't be honestly converted (annualLeaseRate
+  // refuses it) — fall back to the untouched native reading rather than guess.
+  if (converted == null) return { formatted: fmtRate(comp.leaseRate), period: nativePeriod };
+  return { formatted: converted.toFixed(2), period: displayPeriod };
 }
 
 /** Total annual rent for one lease comp — the whole reason a leased-SF figure matters: the
@@ -419,8 +457,11 @@ export function partyLabels(compType) {
 
 /** Ordered {key,label,value} rows for a comp — a field with no value is simply not in the
  * array, never rendered as an empty row or an em-dash. The list panel, the map popup and the
- * detail form all read this instead of re-deriving which fields apply per type. */
-export function compFieldRows(comp) {
+ * detail form all read this instead of re-deriving which fields apply per type.
+ * `displayPeriod` ("annual" | "monthly", optional) is a lease Rate row's chosen display period —
+ * see `leaseRateDisplayFor`'s header. Omit it to keep showing a lease's own entered rate/period
+ * untouched, exactly as before a period toggle existed anywhere. */
+export function compFieldRows(comp, displayPeriod) {
   const rows = [];
   const push = (key, label, value) => {
     if (value != null && value !== "") rows.push({ key, label, value });
@@ -465,9 +506,10 @@ export function compFieldRows(comp) {
     if (comp?.bldgCapRate != null) push("capRate", "Cap rate", `${(Number(comp.bldgCapRate) * 100).toFixed(2)}%`);
   } else if (comp?.compType === "lease") {
     if (comp?.leaseRate != null) {
-      const period = comp.leaseRatePeriod === "monthly" ? "/mo" : comp.leaseRatePeriod === "annual" ? "/yr" : "";
+      const disp = leaseRateDisplayFor(comp, displayPeriod);
+      const period = disp.period === "monthly" ? "/mo" : disp.period === "annual" ? "/yr" : "";
       const basis = comp.leaseRateExpense ? ` ${comp.leaseRateExpense.toUpperCase()}` : "";
-      push("rate", "Rate", `$${fmtRate(comp.leaseRate)}/SF${period}${basis}`);
+      push("rate", "Rate", `$${disp.formatted}/SF${period}${basis}`);
     }
     if (comp?.leaseSizeSf != null) push("size", "Leased SF", `${Number(comp.leaseSizeSf).toLocaleString()} SF`);
     // NEW-COMPS-CARD — building-spec facts, property attributes rather than deal economics.
@@ -522,8 +564,10 @@ export function compFieldRows(comp) {
   return rows;
 }
 
-/** Compact one-line label for a map marker / list row. */
-export function compHeadline(comp) {
+/** Compact one-line label for a map marker / list row. `displayPeriod` ("annual" | "monthly",
+ * optional) is the chosen period a lease rate should read in — see `leaseRateDisplayFor`'s
+ * header. Omit it to keep showing a lease's own entered rate/period untouched. */
+export function compHeadline(comp, displayPeriod) {
   if (comp?.compType === "land") {
     const psf = landPricePerSf(comp);
     return psf != null ? `${fmtPsf(psf)} land` : "Land comp";
@@ -533,10 +577,11 @@ export function compHeadline(comp) {
     return psf != null ? `${fmtPsf(psf)} sale` : "Building sale";
   }
   if (comp?.compType === "lease") {
-    if (comp?.leaseRate != null) {
-      const period = comp.leaseRatePeriod === "monthly" ? "/mo" : "/yr";
+    const disp = leaseRateDisplayFor(comp, displayPeriod);
+    if (disp) {
+      const period = disp.period === "monthly" ? "/mo" : "/yr";
       const basis = comp.leaseRateExpense ? ` ${comp.leaseRateExpense.toUpperCase()}` : "";
-      return `$${fmtRate(comp.leaseRate)}/SF${period}${basis}`;
+      return `$${disp.formatted}/SF${period}${basis}`;
     }
     return "Lease comp";
   }

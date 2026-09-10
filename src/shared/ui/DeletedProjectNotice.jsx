@@ -65,9 +65,19 @@ export default function DeletedProjectNotice({ status, name, deletedAt, onRestor
         <div style={{ fontSize: FONT_EMPHASIS, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 16 }}>
           {deleted ? (
             <>
-              <strong style={{ color: "var(--text-primary)" }}>{name || "Untitled project"}</strong> was moved to
-              Recently deleted{deletedAt ? ` ${relTime(deletedAt)}` : ""}. Restore it to keep working here, or head
-              back to your projects — it stays restorable for {DELETED_RETENTION_DAYS} days from when it was deleted.
+              <strong style={{ color: "var(--text-primary)" }}>{name || "Untitled project"}</strong>
+              {/* ONE expression builds the whole sentence fragment, so the spacing is decided here
+                  rather than by JSX's whitespace-condensing rules. The owner reported this line
+                  reading "was moved to Recently deleted ." — a stray space before the period. That
+                  space was an EMPTY relative time: `relTime` could not parse the ISO timestamp this
+                  screen receives and silently returned "" (fixed at source — see its own header).
+                  Gating on the rendered string rather than on `deletedAt` being truthy means any
+                  future unparseable value degrades to "Recently deleted." and never re-grows the
+                  space. */}
+              {relTime(deletedAt)
+                ? ` was moved to Recently deleted ${relTime(deletedAt)}. `
+                : " was moved to Recently deleted. "}
+              Restore it to keep working here, or head back to your projects — it stays restorable for {DELETED_RETENTION_DAYS} days from when it was deleted.
             </>
           ) : (
             "The link may be out of date, or the project may already have been permanently removed."

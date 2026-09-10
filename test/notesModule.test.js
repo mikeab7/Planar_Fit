@@ -102,6 +102,18 @@ const ALL_NOTES_FILES = [
   "lib/notesTableToText.js",
   // B849105 — orders a conflict's two copies by recency, never by which browser window they came from.
   "lib/notesVersionOrder.js",
+  // NOTES-TOOLBAR-STATE (B1382549) — the ONE mechanism every toolbar readout goes through:
+  // does this selection agree on a value, or is it mixed? A control that grows its own
+  // mixed-check is the defect, which is exactly why this file is on the list.
+  "lib/notesMixedSelection.js",
+  // B1382544/B1382545 — "is this the same typeface": compare by first family, never by the raw
+  // stack string, or Word's `"Calibri",sans-serif` reads as "Default".
+  "lib/notesFontFamily.js",
+  // B1382548 — a pasted run inherits the font its source gave it. Paste boundary only.
+  "lib/notesPasteInherit.js",
+  // NEW-7/NEW-8/NEW-9 — a control reports the RESOLVED VALUE, not whether a mark is stored:
+  // `inherit` is not a colour, and an absent font mark is still a font.
+  "lib/notesResolvedValue.js",
 ];
 const SKETCH_FILES = ALL_NOTES_FILES.filter((f) => f.includes("Sketch"));
 
@@ -447,9 +459,20 @@ describe("no dialog boxes anywhere in the module (owner rule)", () => {
      * `editor.getAttributes("noteCallout")` on every render, and FormatMenu reads its current
      * VALUE from the `value`/`mixed` props its caller computes off the editor's own selection
      * (lib/notesMixedSelection.js) — never off its own `open` state — which is the sharper
-     * assertion above and the reason raising this blunt cap by one is not a weakening. */
+     * assertion above and the reason raising this blunt cap by one is not a weakening.
+     *
+     * ⛔ RAISED 9 → 10 (NEW-7/NEW-9), and here is the justification rather than a silent bump.
+     * The tenth is `resolvedDefaults` — the typeface, size and ink an UNSTYLED run is actually
+     * rendered in, which is the one question in this file the editor cannot answer, because the
+     * answer lives in CSS and only the browser knows it ("Default" is not a font). It is
+     * therefore not a mirror of anything the editor holds: it is seeded from `getComputedStyle`
+     * (never from `editor.`, so the sharp assertion above still covers it), it is re-read in a
+     * layout effect after EVERY render, and the setter returns the previous object unless the
+     * value genuinely changed — so it cannot drift as the caret moves, which is the failure
+     * this cap exists to catch. If a future change makes it read `editor.` at init, the sharp
+     * assertion fails first and this comment is not what saves it. */
     const states = [...bar.matchAll(/useState\(/g)].length;
-    expect(states, "a mirrored active-state copy drifts the moment the caret moves").toBeLessThanOrEqual(9);
+    expect(states, "a mirrored active-state copy drifts the moment the caret moves").toBeLessThanOrEqual(10);
   });
 });
 
@@ -1387,7 +1410,10 @@ describe("the project a notebook belongs to", () => {
      * one of them goes through `treeNow()` now. */
     expect(workspace, "the live-tree accessor exists").toMatch(/const treeNow = useCallback\(\(\) => treeRef\.current \|\| emptyTree\(\), \[\]\)/);
     const MUTATORS = [
-      "addPage(", "renameNode(", "setPageProject(", "deleteNode(",
+      // B1405008 — page creation goes through `createPage` (notesStore.js), which writes the
+      // body before the tree node is ever handed back; `addPage` alone is no longer called
+      // from the workspace.
+      "createPage(", "renameNode(", "setPageProject(", "deleteNode(",
       "restoreNode(", "purgeTrashEntry(", "movePage(", "commitTitle(", "touchPage(",
     ];
     for (const fn of MUTATORS) {

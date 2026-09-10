@@ -6,6 +6,11 @@
  * appears only in each row's own sub-line. Reads `needsAttentionSince`, a field the embedded
  * Scheduler stamps (see needsAttentionList.js's own header for why this is the right source of
  * truth and why a days-past-due proxy is refused).
+ *
+ * B1411504 — a `bulkStamped` row (its `needsAttentionSince` shared with another currently-
+ * flagged task account-wide, the signature of the Scheduler's mass first-load stamp rather than
+ * an individually observed transition) renders its day count with a trailing "+" and a hover
+ * tooltip naming the batch date, instead of a bare number that would silently overclaim precision.
  */
 import { useEffect, useRef, useState } from "react";
 import { RADIUS } from "../../../shared/ui/radius.js";
@@ -52,16 +57,21 @@ function AttentionBar({ fraction }) {
 
 function AttentionRow({ row, maxDays, showBar, onOpen }) {
   const dueLabel = row.dueDate ? formatShortDate(row.dueDate) : null;
+  // B1411504 — a bulk-stamped row's `days` is a floor, not an exact count (see
+  // needsAttentionList.js's own header); the "+" says so without a sentence, and the tooltip
+  // carries the one plain-English fact behind it for anyone who hovers.
+  const stampLabel = row.bulkStamped ? formatShortDate(row.stampedAt) : null;
   return (
     <div
       onClick={() => onOpen?.(row)}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen?.(row); } }}
+      title={row.bulkStamped ? `Flagged with a batch of other items on ${stampLabel} — actual time in this state may be longer.` : undefined}
       style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", cursor: "pointer", borderRadius: RADIUS.sm }}
     >
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: "none", width: 32 }}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: "var(--accent)", lineHeight: 1 }}>{row.days}</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: "var(--accent)", lineHeight: 1 }}>{row.days}{row.bulkStamped ? "+" : ""}</span>
         <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", color: "var(--text-secondary)" }}>DAYS</span>
       </div>
       <div style={{ minWidth: 0, flex: 1 }}>
@@ -116,6 +126,7 @@ export function NeedsAttentionCard({ rows, onOpenTask }) {
   const maxDays = rows[0].days;
   const totals = needsAttentionTotals(rows);
   const showBar = listWidth == null || listWidth >= BAR_MIN_ROW_WIDTH;
+  const anyBulkStamped = rows.some((r) => r.bulkStamped);
 
   return (
     <div>
@@ -124,6 +135,11 @@ export function NeedsAttentionCard({ rows, onOpenTask }) {
           <AttentionRow key={`${r.projectId}:${r.taskId}`} row={r} maxDays={maxDays} showBar={showBar} onOpen={onOpenTask} />
         ))}
       </div>
+      {anyBulkStamped && (
+        <div style={{ fontSize: 10.5, color: "var(--text-secondary)", marginTop: 4 }}>
+          + = flagged in a batch when tracking began — could be longer than shown.
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border-default)" }}>
         <div style={{ ...MUTED, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {totals.map((t) => `${t.projectName} ${t.count}`).join(" · ")}

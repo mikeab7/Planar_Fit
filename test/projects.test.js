@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId } from "../src/shared/projects/projectModel.js";
+import { groupProjects, filterProjects, relTime, suggestNameMatch, normalizeProjectName, resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId, shortenDisplayName, findProjectAtOrigin, distanceFeetBetween, SAME_GROUND_FT, hasSavedProjectRecord } from "../src/shared/projects/projectModel.js";
 import { listProjects } from "../src/shared/projects/projects.js";
 import { setActiveUser } from "../src/workspaces/site-planner/lib/activeUser.js";
 
@@ -283,6 +283,38 @@ describe("resolveControlledId — resolves a switcher row's id to what a control
   });
 });
 
+// B1442592 ("An empty new project is never written to the server") — a lazily-created project (the
+// "+ New project" button, never edited) has no public.sites row and no local plan record, so it
+// can only ever show up here via withCurrentProject's synthetic placeholder. This is the pure
+// decision the delete confirmation uses to stop promising "moves to Recently deleted" for a
+// project that has nothing anywhere to move.
+describe("hasSavedProjectRecord — does this project id actually have a saved record behind it (B1442592)", () => {
+  const registry = [
+    { id: "g1", name: "Grand Port" },
+    { id: "g2", name: "Goose Creek" },
+  ];
+  it("true for an id present in the real registry", () => {
+    expect(hasSavedProjectRecord("g1", registry)).toBe(true);
+  });
+  it("false for an id absent from the registry — the lazily-created, never-edited case", () => {
+    expect(hasSavedProjectRecord("g9", registry)).toBe(false);
+  });
+  it("MUST be asked of the real registry, never a list already unioned with the synthetic current-project placeholder", () => {
+    // withCurrentProject would make g9 answer true here — that's exactly the false positive
+    // this function exists to avoid, which is why callers must pass listProjects(), not
+    // withCurrentProject(listProjects(), current).
+    const unioned = withCurrentProject(registry, { id: "g9", name: "Untitled site" });
+    expect(hasSavedProjectRecord("g9", unioned)).toBe(true); // demonstrates the trap...
+    expect(hasSavedProjectRecord("g9", registry)).toBe(false); // ...which asking the real registry avoids
+  });
+  it("false for a missing id, and never throws on junk", () => {
+    expect(hasSavedProjectRecord(null, registry)).toBe(false);
+    expect(hasSavedProjectRecord(undefined, registry)).toBe(false);
+    expect(hasSavedProjectRecord("g1", [null, undefined, {}])).toBe(false);
+    expect(hasSavedProjectRecord("g1")).toBe(false);
+  });
+});
+
 describe("resolveCurrentName — header crumb tracks a live rename (auto-update-name)", () => {
   const projects = [
     { id: "g1", name: "Eight South" },
@@ -302,6 +334,34 @@ describe("resolveCurrentName — header crumb tracks a live rename (auto-update-
   });
   it("never throws on junk entries in the list", () => {
     expect(resolveCurrentName({ id: "g1", name: "x" }, [null, undefined, {}])).toBe("x");
+  });
+});
+
+describe("relTime — the ISO-string case behind the deleted-project screen's stray space", () => {
+  /* ⛔ RED-PROOF. Every assertion here fails on current main, where `Number(ts) || 0` turns an ISO
+   * timestamp into NaN → 0 → "". `cloudCheckDeleted` hands `deletedAt` through from Postgres,
+   * where `deleted_at` IS an ISO string, so the deleted-project screen rendered
+   * "was moved to Recently deleted ." — the reported stray space was the missing relative time,
+   * not a typo. The bin LIST was unaffected (`listDeletedProjects` calls toMs first), which is
+   * exactly how one broken caller stayed invisible beside a correct one. */
+  const now = Date.parse("2026-09-08T12:00:00.000Z");
+
+  it("parses the Postgres ISO timestamp the deleted-project screen actually receives", () => {
+    expect(relTime("2026-09-08T11:55:00.000Z", now)).toBe("5m ago");
+    expect(relTime("2026-09-08T09:00:00.000Z", now)).toBe("3h ago");
+    expect(relTime("2026-09-06T12:00:00.000Z", now)).toBe("2d ago");
+    expect(relTime("2026-09-08T11:59:50.000Z", now)).toBe("just now");
+  });
+
+  it("still reads a numeric epoch, whether as a number or a numeric string", () => {
+    expect(relTime(now - 5 * 60_000, now)).toBe("5m ago");
+    expect(relTime(String(now - 5 * 60_000), now)).toBe("5m ago");
+  });
+
+  it("returns empty — never a partial string — for something genuinely unparseable", () => {
+    for (const junk of ["", "not a date", null, undefined, 0, {}, []]) {
+      expect(relTime(junk, now)).toBe("");
+    }
   });
 });
 
@@ -360,5 +420,189 @@ describe("listProjects — pursuit-only by default (NEW-1)", () => {
       fresh: { id: "fresh", groupId: "fresh", site: "Fresh site", role: "pursuit", updatedAt: 60 },
     }));
     expect(listProjects().map((p) => p.id).sort()).toEqual(["fresh", "legacy"]);
+  });
+});
+
+// B1407824 — a truncated project/plan name was rendering with a dangling trailing comma and no
+// ellipsis ("ALUMAX RD, NASH,") on five Dashboard surfaces (the Locations map pin, the Pursuits
+// table, the Recent plans tile caption, and the Since-you-were-last-here feed's plan rows).
+// `shortenDisplayName` is the ONE shared place that decides how a name shortens for all of them —
+// and, per the production evidence surfaced by the sibling B1399568 fix below (the exact same
+// stored value, read straight off two real `sites` rows), the reported name is not actually long:
+// it's exactly "ALUMAX RD, NASH," with nothing more ever following, so a length-only truncate can
+// never fix it — there's nothing left to cut. This function does two different things accordingly.
+describe("shortenDisplayName", () => {
+  // The adjacent-case table the fix was built against, one row per case.
+  it("a name shorter than the limit, with no dangling punctuation, is returned untouched", () => {
+    expect(shortenDisplayName("Short Name", 20)).toBe("Short Name");
+  });
+
+  it("a name exactly at the limit is returned untouched — fits exactly, not 'cut'", () => {
+    expect(shortenDisplayName("ExactlyTenChars!", 16)).toBe("ExactlyTenChars!");
+  });
+
+  it("a name cut mid-word is shortened cleanly — a mid-word cut IS an ordinary shortened name", () => {
+    expect(shortenDisplayName("Alumax Road Industrial Park", 10)).toBe("Alumax Roa…");
+  });
+
+  it("a name cut immediately after a comma trims the comma before marking it shortened", () => {
+    expect(shortenDisplayName("ALUMAX RD, NASH, TX 75569", 16)).toBe("ALUMAX RD, NASH…");
+  });
+
+  it("a name that FITS but itself dangles on a comma is cleaned, with no ellipsis — nothing was cut, there's nothing left to shorten it to", () => {
+    // The exact reported production string, confirmed elsewhere in this file (see
+    // findProjectAtOrigin's own fixture below) to be the real, complete stored value — not a
+    // truncated prefix of something longer. A length-based cut can't fix this; only cleanup can.
+    expect(shortenDisplayName("ALUMAX RD, NASH,", 16)).toBe("ALUMAX RD, NASH");
+    expect(shortenDisplayName("ALUMAX RD, NASH,", 100)).toBe("ALUMAX RD, NASH");
+  });
+
+  it("a name cut immediately after a period trims the period before marking it shortened", () => {
+    expect(shortenDisplayName("Building A. Extra text here", 11)).toBe("Building A…");
+  });
+
+  it("a name cut immediately after a hyphen trims the hyphen before marking it shortened", () => {
+    expect(shortenDisplayName("Alumax-Rd-Extension", 10)).toBe("Alumax-Rd…");
+  });
+
+  it("a name cut immediately after a space trims the space before marking it shortened", () => {
+    expect(shortenDisplayName("Foo Bar Baz Qux", 8)).toBe("Foo Bar…");
+  });
+
+  it("one long word with no separators — nothing to trim back to, so it just cuts and marks it", () => {
+    expect(shortenDisplayName("Supercalifragilisticexpialidocious", 10)).toBe("Supercalif…");
+  });
+
+  it("a run of several trailing separators is trimmed in full, not just the last one", () => {
+    expect(shortenDisplayName("Foo Bar, , TX", 9)).toBe("Foo Bar…");
+  });
+
+  it("a fitting name's trailing SPACE is left alone — plain whitespace isn't 'broken text'", () => {
+    expect(shortenDisplayName("Trailing Space  ", 20)).toBe("Trailing Space  ");
+  });
+
+  it("null/empty/undefined never throw and never fabricate a mark", () => {
+    expect(shortenDisplayName(null, 10)).toBe("");
+    expect(shortenDisplayName(undefined, 10)).toBe("");
+    expect(shortenDisplayName("", 10)).toBe("");
+  });
+
+  // RED-PROOF — no name this function returns may end on a dangling comma, period or hyphen, and
+  // every name it genuinely SHORTENED (cut for space) must carry the one visible mark that it was.
+  // Run across a spread of inputs and limits so this is a property of the function, not one lucky
+  // case — including the "fits but dangles" shape the naive length-only design above couldn't
+  // reach at all.
+  it("RED-PROOF: never ends on a comma/period/hyphen, and every space-driven cut is visibly marked", () => {
+    const names = [
+      "ALUMAX RD, NASH, TX 75569",
+      "ALUMAX RD, NASH,", // fits under every maxLen tried below — the reported case itself
+      "Building A. Extra text here",
+      "Alumax-Rd-Extension Industrial",
+      "Foo Bar Baz Qux Industrial Park",
+      "Supercalifragilisticexpialidocious",
+      "St. Louis, MO - Industrial Park",
+      "One,Two,Three,Four,Five,Six,Seven",
+    ];
+    for (const name of names) {
+      for (let maxLen = 1; maxLen <= name.length + 2; maxLen++) {
+        const out = shortenDisplayName(name, maxLen);
+        expect(out).not.toMatch(/[,.\-]$/); // never ends on a dangling comma/period/hyphen
+        if (name.length <= maxLen) {
+          expect(out.endsWith("…")).toBe(false); // nothing was cut for space — no mark
+          continue;
+        }
+        expect(out.endsWith("…")).toBe(true); // genuinely shortened — always visibly marked
+        expect(out.slice(0, -1)).not.toMatch(/\s$/); // and never on a dangling space either
+      }
+    }
+  });
+});
+
+// B1399568 — ADOPT, DON'T MINT: planning a site on ground that already carries a project must
+// find that project rather than let a second `group_id = id` row be minted. Production evidence:
+// two projects born 51s apart at byte-identical origin coordinates (lat 33.44769381770632, lon
+// -94.13769222822577 — "ALUMAX RD, NASH,", Bowie county), both empty shells. `findProjectAtOrigin`
+// is the pure decision SitePlannerApp.jsx's newSiteFromMap/newBlankSite consult before minting —
+// see its header in projectModel.js. Full mint-vs-adopt integration proof (through the real
+// storage.js saveSite/loadSitesList) lives in test/duplicateProjectOrigin.test.js; this suite
+// covers the matching rule itself.
+describe("distanceFeetBetween — pure haversine distance", () => {
+  it("is 0 for the identical point", () => {
+    expect(distanceFeetBetween({ lat: 33.4, lon: -94.1 }, { lat: 33.4, lon: -94.1 })).toBe(0);
+  });
+
+  it("is Infinity for a missing or non-finite point on either side", () => {
+    expect(distanceFeetBetween(null, { lat: 1, lon: 1 })).toBe(Infinity);
+    expect(distanceFeetBetween({ lat: 1, lon: 1 }, { lat: NaN, lon: 1 })).toBe(Infinity);
+    expect(distanceFeetBetween({ lat: 1, lon: 1 }, undefined)).toBe(Infinity);
+  });
+
+  it("reports a real distance in the right ballpark for a known-separated pair", () => {
+    // Roughly a degree of latitude apart ≈ 364,000-366,000 ft (~69 miles) at this latitude.
+    const d = distanceFeetBetween({ lat: 33.0, lon: -94.0 }, { lat: 34.0, lon: -94.0 });
+    expect(d).toBeGreaterThan(360000);
+    expect(d).toBeLessThan(367000);
+  });
+});
+
+describe("findProjectAtOrigin — the ADOPT decision", () => {
+  const ORIGIN = { lat: 33.44769381770632, lon: -94.13769222822577 };
+
+  it("returns null when nothing exists at this ground yet", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: { lat: 40, lon: -100 }, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBeNull();
+  });
+
+  it("returns null for an unusable origin (missing / non-finite)", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: ORIGIN, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, null)).toBeNull();
+    expect(findProjectAtOrigin(records, { lat: NaN, lon: ORIGIN.lon })).toBeNull();
+  });
+
+  it("finds a project at the byte-identical production origin", () => {
+    const records = [{ id: "smtu8o27freg", groupId: "smtu8o27freg", site: "ALUMAX RD, NASH,", origin: ORIGIN, updatedAt: 1000 }];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBe("smtu8o27freg");
+  });
+
+  it("matches any plan in a group, not only the anchor row (a plan's origin mirrors its project's)", () => {
+    const records = [
+      { id: "anchorA", groupId: "anchorA", origin: ORIGIN, updatedAt: 100 },
+      { id: "plan2", groupId: "anchorA", origin: ORIGIN, updatedAt: 500 }, // a second plan of the SAME project
+    ];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBe("anchorA");
+  });
+
+  it("does not match a genuinely different location", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: { lat: 29.76, lon: -95.37 }, updatedAt: 100 }]; // Houston, TX — far away
+    expect(findProjectAtOrigin(records, ORIGIN)).toBeNull();
+  });
+
+  it("tolerates float jitter within SAME_GROUND_FT but not beyond it", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: ORIGIN, updatedAt: 100 }];
+    // ~1e-6 deg of lat is on the order of a few inches — well inside the tolerance.
+    const nudgedIn = { lat: ORIGIN.lat + 0.000001, lon: ORIGIN.lon };
+    expect(findProjectAtOrigin(records, nudgedIn)).toBe("g1");
+    // A degree of latitude is tens of miles — far outside SAME_GROUND_FT.
+    const farAway = { lat: ORIGIN.lat + 1, lon: ORIGIN.lon };
+    expect(findProjectAtOrigin(records, farAway)).toBeNull();
+    expect(SAME_GROUND_FT).toBeLessThan(500); // sanity: this is a tight "same click" tolerance, not a neighborhood radius
+  });
+
+  it("excludes a given group id (never adopts itself)", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: ORIGIN, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, ORIGIN, { excludeGroupId: "g1" })).toBeNull();
+  });
+
+  it("breaks a tie between pre-existing duplicates by picking the most recently updated group", () => {
+    const records = [
+      { id: "older", groupId: "older", origin: ORIGIN, updatedAt: 100 },
+      { id: "newer", groupId: "newer", origin: ORIGIN, updatedAt: 900 },
+    ];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBe("newer");
+  });
+
+  it("ignores records with no origin at all", () => {
+    const records = [{ id: "g1", groupId: "g1", origin: null, updatedAt: 100 }];
+    expect(findProjectAtOrigin(records, ORIGIN)).toBeNull();
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   candidateCountiesForPoint, COUNTIES_MAP, countyKeyForName, STATEWIDE_KEYS, countyIdentity, noParcelSourceNote,
-  STATEWIDE_PARCEL_LAYER, statewideFallbackFor, countyForView,
+  STATEWIDE_PARCEL_LAYER, statewideFallbackFor, countyForView, countyBboxIntersectsView,
 } from "../src/workspaces/site-planner/lib/counties.js";
 
 // candidateCountiesForPoint routes a map click to the CAD service(s) that could
@@ -113,28 +113,16 @@ describe("candidateCountiesForPoint — click routing (B11/B130/B787)", () => {
  * found` — both findings were wrong (docs/STATEWIDE-PARCELS.md), and both sources were found by
  * the official-ArcGIS-Online-organization pass NEW-2 makes systematic.
  *
- * ⛔ WHAT THIS DOES *NOT* CLAIM. Neither state has a dialed-in county entry, so its point matches
- * no bbox and `siteState`'s envelopes cover only TX/CO — the list therefore falls through to the
- * every-key branch, which is the SAME coarse routing every out-of-TX/CO statewide source added
- * since B1332016 already has. That coarseness is deliberately not narrowed here (it would change
- * routing for 27 other states); what is asserted is only the property the wiring is for: the
- * state's own source is genuinely among the candidates, and a Texas click is not made to carry it. */
-describe("NEW-1 — California and Rhode Island are reachable by a click in their own state", () => {
-  it("a Fresno point can reach ca_statewide", () => {
-    expect(candidateCountiesForPoint(36.74, -119.79)).toContain("ca_statewide");
-  });
-
-  it("a Providence point can reach ri_statewide", () => {
-    expect(candidateCountiesForPoint(41.824, -71.412)).toContain("ri_statewide");
-  });
-
-  it("a Houston point carries NEITHER — a Texas click must not drag 49 other states' sources along", () => {
-    const cand = candidateCountiesForPoint(29.76, -95.37);
-    expect(cand).not.toContain("ca_statewide");
-    expect(cand).not.toContain("ri_statewide");
-    expect(cand).toContain("txgio_statewide");
-  });
-});
+ * ⛔ MOVED to test/countyStatewideDerivation.test.js (B1457152, 2026-09-10) — this described the
+ * old "falls through to the every-key branch" behaviour as a deliberate, accepted coarseness. It
+ * stopped being deliberate: with ~30 statewide sources now wired (and Michael's own 2026-09-10
+ * instruction to wire the rest county-by-county), that "every key" branch is what fired 67+ parcel
+ * queries for one Las Vegas click. The reachability assertions (a Fresno click can reach
+ * `ca_statewide`, a Providence click can reach `ri_statewide`) now live alongside the fan-out
+ * regression suite in the file that already warms the nationwide county-polygon asset
+ * `candidateCountiesForPoint` needs to answer them narrowly — this file deliberately keeps that
+ * asset cold (see the `countyIdentity` "reports pending" test below), so a test needing it lives
+ * elsewhere rather than warm the singleton here for everyone after it. */
 
 // The statewide TxGIO layer is the universal fallback when a county's own CAD server
 // is down. statewideFallbackFor returns that layer scoped to the requested county, so
@@ -387,5 +375,46 @@ describe("B1332016 continuation — HI/MD/NE/NH statewide composites", () => {
     expect(COUNTIES_MAP.ms_statewide).toBeUndefined();
     expect(COUNTIES_MAP.ms_east_statewide).toBeUndefined();
     expect(COUNTIES_MAP.ms_west_statewide).toBeUndefined();
+  });
+});
+
+// countyBboxIntersectsView — the plausibility check behind the Texarkana/Chambers fix. Reported
+// live: panned to Texarkana (Bowie County, far NE Texas) and the map named "Chambers County's live
+// parcel server" as unavailable — Chambers being a Gulf Coast county ~300 miles away. The banner
+// itself is `MapFinder`'s job (it can't be reached from a pure module); this is the pure predicate
+// its guard is built on, so the geometry claim is provable without a browser.
+describe("countyBboxIntersectsView (the Texarkana/Chambers fix)", () => {
+  // A generous viewport around Texarkana, TX (≈33.44, -94.05) — plausible at any reasonable zoom.
+  const texarkanaView = { south: 33.0, west: -94.6, north: 33.9, east: -93.5 };
+  // A generous viewport around Chambers County's own center (≈29.7, -94.66).
+  const chambersView = { south: 29.3, west: -95.0, north: 30.1, east: -94.3 };
+
+  it("Chambers County's bbox does NOT reach a Texarkana viewport — the reported case", () => {
+    expect(countyBboxIntersectsView("chambers", texarkanaView)).toBe(false);
+  });
+
+  it("Chambers County's bbox DOES reach a viewport actually over Chambers County", () => {
+    expect(countyBboxIntersectsView("chambers", chambersView)).toBe(true);
+  });
+
+  it("a viewport straddling a county's bbox edge still counts as reaching it", () => {
+    const c = COUNTIES_MAP.harris.bbox; // [minLat, minLng, maxLat, maxLng]
+    const straddling = { south: c[0] - 1, west: c[1] - 1, north: c[0] + 0.01, east: c[1] + 0.01 };
+    expect(countyBboxIntersectsView("harris", straddling)).toBe(true);
+  });
+
+  it("a viewport just past a county's bbox on every side does not reach it", () => {
+    const c = COUNTIES_MAP.harris.bbox;
+    const justPast = { south: c[2] + 1, west: c[3] + 1, north: c[2] + 2, east: c[3] + 2 };
+    expect(countyBboxIntersectsView("harris", justPast)).toBe(false);
+  });
+
+  it("an unconfigured or bbox-less key (a statewide composite) always stays plausible — never silence a real notice on a resolution gap", () => {
+    expect(countyBboxIntersectsView("txgio_statewide", texarkanaView)).toBe(true);
+    expect(countyBboxIntersectsView("not_a_real_key", texarkanaView)).toBe(true);
+  });
+
+  it("no bounds given (map not ready) stays plausible rather than suppress", () => {
+    expect(countyBboxIntersectsView("chambers", null)).toBe(true);
   });
 });

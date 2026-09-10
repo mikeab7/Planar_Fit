@@ -20,7 +20,7 @@ vi.mock("../src/workspaces/site-planner/lib/supabase.js", () => ({
   },
 }));
 
-import { liveProjectIds, docProjectIsDead } from "../src/shared/projects/docProjectLiveness.js";
+import { liveProjectIds, docProjectIsDead, openableProjectId } from "../src/shared/projects/docProjectLiveness.js";
 
 describe("liveProjectIds — batched group-aware liveness, mirrors cloudCheckDeleted's own rule", () => {
   beforeEach(() => { h.rows = []; h.error = null; });
@@ -98,5 +98,41 @@ describe("docProjectIsDead — the pure per-doc predicate, given a resolved live
 
   it("no liveIds info at all (null — check not yet run / failed) fails OPEN, never dead on a maybe", () => {
     expect(docProjectIsDead({ project_id: "p1" }, null)).toBe(false);
+  });
+});
+
+/* B1340368 (×2), recurrence 2026-09-09 — the Dashboard's "Last document" row could offer a
+ * document with no project (docProjectIsDead correctly says a null project_id is never dead) and
+ * then, on click, DocReview.jsx navigated using the record's own `projectId` field with no
+ * liveness check at all — a separate copy of the same fact (see reviewStore.js's reviewRowFor /
+ * unfileReviewsForDeletedProject) that a project purge could leave stale even after the flat
+ * mirror column had already been cleared. openableProjectId is the fix: the one function the
+ * OPEN path must consult before it ever builds a route.
+ */
+describe("openableProjectId — re-checked at OPEN time, so a document's own stale record can never win", () => {
+  it("a document with no project at all never gets an open project id", () => {
+    expect(openableProjectId({ projectId: null }, new Set())).toBe(null);
+  });
+
+  it("a document whose filed project is live navigates to it", () => {
+    expect(openableProjectId({ projectId: "live1" }, new Set(["live1"]))).toBe("live1");
+  });
+
+  it("the exact reported repro: the record's own projectId is a project with no trace anywhere — refused, even though the doc has no live project to fall back to", () => {
+    const rec = { projectId: "smtov116eka7" }; // the stale copy DocReview.jsx's record carried
+    const liveIds = new Set(["some-other-live-project"]); // smtov116eka7 resolves to nothing
+    expect(openableProjectId(rec, liveIds)).toBe(null);
+  });
+
+  it("RED-PROOF: the pre-fix rule (a bare rec.projectId, no liveness check) routes straight to the dead project; the fix never does", () => {
+    const preFixRoute = (rec) => rec.projectId || null; // DocReview.jsx's old, unguarded expression
+    const rec = { projectId: "smtov116eka7" };
+    const confirmedDead = new Set(); // liveProjectIds() found nothing at all for this id
+    expect(preFixRoute(rec)).toBe("smtov116eka7"); // the bug: a route to a project nothing holds
+    expect(openableProjectId(rec, confirmedDead)).toBe(null); // the fix
+  });
+
+  it("an inconclusive liveness check (null — offline/RLS/thrown) fails open and keeps the record's id", () => {
+    expect(openableProjectId({ projectId: "someproj" }, null)).toBe("someproj");
   });
 });

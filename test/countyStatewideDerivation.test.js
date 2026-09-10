@@ -142,13 +142,16 @@ describe("the derivation changes nothing about enumeration or the statewide pseu
     // ISLAND, raising 27 to 29: both had been recorded as `no-free-source` / `Candidate: none
     // found`, and both were found by the ArcGIS-Online-organization pass this repo had only ever
     // run for New York (see counties.js's `ca_statewide` comment, and NEW-2 which makes that pass
-    // systematic). The invariant this test guards is "still small and literal", not "still exactly
-    // two" (or twenty-one, or twenty-seven).
+    // systematic). B1344720 (2026-09-10) added DC/ME/NV, raising 29 to 32 — all three were
+    // likewise corrected FALSE prior findings (shape-mismatch/shape-mismatch/no-free-source), each
+    // recorded as a genuine single-layer statewide source in counties.js's own comments. The
+    // invariant this test guards is "still small and literal", not "still exactly two" (or
+    // twenty-one, or twenty-nine).
     expect(STATEWIDE_KEYS).toEqual([
       "txgio_statewide", "co_statewide",
-      "ak_statewide", "ar_statewide", "ca_statewide", "ct_statewide", "de_statewide", "fl_statewide",
-      "hi_statewide", "in_statewide", "ma_statewide", "md_statewide", "mn_statewide", "mt_statewide", "nc_statewide",
-      "nd_statewide", "ne_statewide", "nh_statewide", "nj_statewide", "ny_statewide", "oh_statewide",
+      "ak_statewide", "ar_statewide", "ca_statewide", "ct_statewide", "dc_statewide", "de_statewide", "fl_statewide",
+      "hi_statewide", "in_statewide", "ma_statewide", "me_statewide", "md_statewide", "mn_statewide", "mt_statewide", "nc_statewide",
+      "nd_statewide", "ne_statewide", "nh_statewide", "nj_statewide", "nv_statewide", "ny_statewide", "oh_statewide",
       "ri_statewide", "tn_statewide",
       "ut_statewide", "va_statewide", "vt_statewide", "wi_statewide", "wv_statewide", "wy_statewide",
     ]);
@@ -157,7 +160,9 @@ describe("the derivation changes nothing about enumeration or the statewide pseu
   it("Object.keys(COUNTIES_MAP) still enumerates only the literal, dialed-in rows", () => {
     const keys = Object.keys(COUNTIES_MAP);
     expect(keys).not.toContain("dallas");
-    expect(keys.length).toBeLessThan(60); // ~18 dialed-in TX+CO rows + 21 statewide pseudo-keys, not 254 or 3,143
+    // ~18 dialed-in TX+CO rows + 32 statewide pseudo-keys + 13 Idaho counties (B1344721) + 19
+    // other-state counties (B1344722), not 254 or 3,143.
+    expect(keys.length).toBeLessThan(90);
   });
 
   it("candidateCountiesForPoint still answers via the existing txgio_statewide fallback for a derived county — unchanged, not doubled", () => {
@@ -191,5 +196,82 @@ describe("a point genuinely outside every state + DC still reports honestly", ()
 
   it("Toronto, Canada resolves to `outside`, never a guessed US derivation", () => {
     expect(countyIdentity(43.6532, -79.3832).status).toBe("outside");
+  });
+});
+
+/* ⛔ B1457152 (2026-09-10) — CLICK ROUTING NO LONGER QUERIES THE WHOLE COUNTRY FOR ONE POINT.
+ *
+ * Measured live on planyr.io: a single click on a Las Vegas point fired 67+ `/query` requests —
+ * Harris County TX, Fort Bend TX, the Texas statewide layer (twice), Brazoria/Liberty/Austin/
+ * Galveston TX, Larimer CO, Alaska, Arkansas (503), California, Connecticut, and on — because
+ * `candidateCountiesForPoint`'s last-resort fallback (no bbox match, and `stateForPoint`'s TX/CO-only
+ * envelope came up empty for Nevada) used to return EVERY configured source in the country. Nevada's
+ * own source (`nv_statewide`) WAS in that list and answered 200 — the sources were never the
+ * problem, the dispatcher in front of them was.
+ *
+ * The fix (this file's `beforeAll` already warms the SAME nationwide county-polygon asset the fix
+ * itself reads) is `resolvedState` in counties.js: it asks `resolveCounty` — the real, nationwide
+ * geometry, not the two-rectangle TX/CO envelope — for the point's state, so a purely-statewide
+ * state with no per-county bbox of its own (Nevada, DC, California, Rhode Island, every other
+ * `_statewide`-only entry) narrows to exactly its own configured source(s) instead of being
+ * indistinguishable from "no state resolved at all". A test here that regresses to querying more
+ * than a small, fixed number of sources for ONE point is exactly the bug this item closes — see
+ * MAX_CANDIDATES_PER_POINT below. */
+describe("B1457152 — candidateCountiesForPoint never fans out to every configured source", () => {
+  // Normally one source, occasionally two (a county CAD + a statewide backup, or two overlapping
+  // county bboxes — Sugar Land's harris+fortbend). A handful of headroom above that for a state
+  // that later grows a couple of real county entries alongside its statewide composite — NEVER
+  // anywhere near "every wired state at once" (~70+ as of this item).
+  const MAX_CANDIDATES_PER_POINT = 6;
+
+  it("REGRESSION FIXTURE — the exact Las Vegas point from the live repro resolves to nv_statewide ALONE", () => {
+    // -115.157, 36.1167 as measured live (lng, lat) → (lat, lng) for this function.
+    const cand = candidateCountiesForPoint(36.1167, -115.157);
+    expect(cand).toEqual(["nv_statewide"]);
+    expect(cand.length).toBeLessThanOrEqual(MAX_CANDIDATES_PER_POINT);
+  });
+
+  it.each([
+    ["Las Vegas, NV", 36.1167, -115.157],
+    ["Fresno, CA", 36.74, -119.79],
+    ["Providence, RI", 41.824, -71.412],
+    ["Washington, DC", 38.9072, -77.0369],
+    ["Portland, ME", 43.6591, -70.2568],
+  ])("%s never issues more than %i parcel-source candidates, and every one is that point's own state", (label, lat, lng) => {
+    const cand = candidateCountiesForPoint(lat, lng);
+    expect(cand.length).toBeGreaterThan(0);
+    expect(cand.length).toBeLessThanOrEqual(MAX_CANDIDATES_PER_POINT);
+    const states = new Set(cand.map((k) => COUNTIES_MAP[k].state));
+    expect(states.size).toBe(1); // never a mix of two states' sources for one point
+  });
+
+  it("a purely-statewide state resolves to EXACTLY its own composite — no Texas, no Colorado, no Arkansas", () => {
+    const cand = candidateCountiesForPoint(36.1167, -115.157); // Las Vegas
+    expect(cand).toContain("nv_statewide");
+    expect(cand.some((k) => COUNTIES_MAP[k].state === "TX")).toBe(false);
+    expect(cand.some((k) => COUNTIES_MAP[k].state === "CO")).toBe(false);
+    expect(cand).not.toContain("ar_statewide"); // measured live returning a 503 for this exact click
+    expect(cand).not.toContain("ak_statewide");
+    expect(cand).not.toContain("ca_statewide");
+    expect(cand).not.toContain("ct_statewide");
+  });
+
+  it("a Texas click still carries none of the other ~30 states' sources (unchanged behaviour)", () => {
+    const cand = candidateCountiesForPoint(29.76, -95.37); // Harris County
+    expect(cand).toContain("harris");
+    expect(cand).toContain("txgio_statewide");
+    expect(cand.every((k) => COUNTIES_MAP[k].state === "TX")).toBe(true);
+  });
+
+  it("a state with NO wired source at all resolves to NO candidates — never every candidate", () => {
+    // Albuquerque, NM — a real, geometry-resolvable county with zero configured parcel sources.
+    // This is the case the old fallback got backwards: "we don't know a source" became "try all of
+    // them" instead of the honest "we have none to try".
+    const cand = candidateCountiesForPoint(35.0844, -106.6504);
+    expect(cand).toEqual([]);
+  });
+
+  it("a point genuinely outside every covered state/asset still returns NO candidates, not everyone's", () => {
+    expect(candidateCountiesForPoint(35.0, -50.0)).toEqual([]); // mid-Atlantic
   });
 });

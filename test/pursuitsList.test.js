@@ -1,71 +1,84 @@
 import { describe, it, expect } from "vitest";
 import {
-  nextContractualDate, pursuitsTable, quietDaysByGroupFromRecency, quietDaysByGroupFromRows, nextLineTone, isQuietEmphasized,
+  pursuitsTable, quietDaysByGroupFromRecency, quietDaysByGroupFromRows, isQuietEmphasized,
 } from "../src/workspaces/dashboard/lib/pursuitsList.js";
 
 const NOW = new Date(2026, 8, 6).getTime(); // Sep 6, 2026, local midnight
 
-describe("nextContractualDate", () => {
-  it("picks the SOONEST upcoming of the three fields", () => {
-    const p = { feasibilityExpiry: "2026-09-20", loiDate: "2026-09-12", closingDate: "2026-11-01" };
-    expect(nextContractualDate(p, NOW)).toEqual({ label: "LOI response due", date: "2026-09-12", days: 6 });
-  });
-
-  it("ignores a date that has already passed", () => {
-    const p = { feasibilityExpiry: "2026-08-01", loiDate: null, closingDate: "2026-10-01" };
-    expect(nextContractualDate(p, NOW)).toEqual({ label: "Closing", date: "2026-10-01", days: expect.any(Number) });
-  });
-
-  it("returns null when nothing is set or everything has passed", () => {
-    expect(nextContractualDate({}, NOW)).toBe(null);
-    expect(nextContractualDate({ feasibilityExpiry: "2020-01-01" }, NOW)).toBe(null);
-  });
-});
-
+// B1342848 (owner instruction, 2026-09-09: "remove the deal date from pursuits") — the card's
+// "Next" column and its soonest-contractual-date sort are gone; see pursuitsList.js's header.
+// The table now sorts alphabetically, unconditionally, and no longer reads/returns any
+// contractual-date field at all — these cases replace the pre-removal sort suite.
 describe("pursuitsTable", () => {
   const base = { role: "pursuit", status: "active" };
-  it("sorts ascending by soonest upcoming date; undated sorts to the bottom", () => {
+
+  it("sorts alphabetically by name", () => {
     const projects = [
-      { ...base, groupId: "a", name: "Undated", county: "harris" },
-      { ...base, groupId: "b", name: "Soon", county: "harris", loiDate: "2026-09-10" },
-      { ...base, groupId: "c", name: "Later", county: "harris", closingDate: "2026-12-01" },
+      { ...base, groupId: "z", name: "Zebra Site", county: "harris" },
+      { ...base, groupId: "a", name: "Alpha Site", county: "harris" },
+      { ...base, groupId: "m", name: "Mid Site", county: "harris" },
     ];
-    const rows = pursuitsTable(projects, {}, { nowMs: NOW });
-    expect(rows.map((r) => r.name)).toEqual(["Soon", "Later", "Undated"]);
+    const rows = pursuitsTable(projects, {});
+    expect(rows.map((r) => r.name)).toEqual(["Alpha Site", "Mid Site", "Zebra Site"]);
   });
 
-  it("never lets quiet time drive the sort — a stale-but-dated pursuit still outranks an undated one, and a near-deadline pursuit beats a quiet one", () => {
+  // Quiet time is real, available, and deliberately NOT the sort — the owner explicitly rejected
+  // quiet-first ordering when this card was designed ("I don't know that something that's been
+  // quiet the longest should really be the one at the top"). Alphabetical order must win
+  // regardless of how stale a row is.
+  it("never lets quiet time drive the sort", () => {
     const projects = [
-      { ...base, groupId: "quiet", name: "Quiet but dated", county: "harris", closingDate: "2026-10-01" },
-      { ...base, groupId: "fresh", name: "Fresh but undated", county: "harris" },
-      { ...base, groupId: "urgent", name: "Near deadline", county: "harris", loiDate: "2026-09-08" },
+      { ...base, groupId: "z", name: "Zebra Site", county: "harris" },
+      { ...base, groupId: "a", name: "Alpha Site", county: "harris" },
     ];
-    const quietDaysByGroup = { quiet: 400, fresh: 0, urgent: 0 };
-    const rows = pursuitsTable(projects, quietDaysByGroup, { nowMs: NOW });
-    // The near-deadline pursuit leads despite no quiet signal; the quiet-but-dated one still
-    // outranks the undated one even though it's the "staler" of the two by quiet time.
-    expect(rows.map((r) => r.name)).toEqual(["Near deadline", "Quiet but dated", "Fresh but undated"]);
+    const rows = pursuitsTable(projects, { z: 400, a: 0 }); // Zebra is far quieter (staler) than Alpha
+    expect(rows.map((r) => r.name)).toEqual(["Alpha Site", "Zebra Site"]);
   });
 
   it("excludes tracked records and settled stages (complete/dead)", () => {
     const projects = [
-      { ...base, groupId: "a", name: "Tracked", role: "tracked", loiDate: "2026-09-08" },
-      { ...base, groupId: "b", name: "Dead deal", status: "dead", loiDate: "2026-09-08" },
-      { ...base, groupId: "c", name: "Live pursuit", loiDate: "2026-09-08" },
+      { ...base, groupId: "a", name: "Tracked", role: "tracked" },
+      { ...base, groupId: "b", name: "Dead deal", status: "dead" },
+      { ...base, groupId: "c", name: "Live pursuit" },
     ];
-    const rows = pursuitsTable(projects, {}, { nowMs: NOW });
+    const rows = pursuitsTable(projects, {});
     expect(rows.map((r) => r.name)).toEqual(["Live pursuit"]);
   });
 
   it("carries the quietDays value through per row without using it for sorting", () => {
-    const projects = [{ ...base, groupId: "a", name: "P", loiDate: "2026-09-08" }];
-    const rows = pursuitsTable(projects, { a: 42 }, { nowMs: NOW });
+    const projects = [{ ...base, groupId: "a", name: "P" }];
+    const rows = pursuitsTable(projects, { a: 42 });
     expect(rows[0].quietDays).toBe(42);
+  });
+
+  it("never returns a contractual-date field on a row", () => {
+    const projects = [{ ...base, groupId: "a", name: "P", feasibilityExpiry: "2026-09-20" }];
+    const rows = pursuitsTable(projects, {});
+    expect(rows[0]).not.toHaveProperty("next");
   });
 
   it("handles empty/missing input without throwing", () => {
     expect(pursuitsTable(null, null)).toEqual([]);
     expect(pursuitsTable([], {})).toEqual([]);
+  });
+
+  // B1407824 — the Pursuit column shortens a long name at this pure model layer rather than
+  // leaving it to the cell's own CSS clamp (which has no idea where a comma/period/hyphen sits).
+  // See test/projects.test.js for shortenDisplayName's own case table; this just proves the wire.
+  it("shortens a long pursuit name, never on a dangling comma", () => {
+    const projects = [{ ...base, groupId: "a", name: "ALUMAX RD, NASHVILLE, TX 75569", county: "bowie" }];
+    const rows = pursuitsTable(projects, {});
+    expect(rows[0].name.length).toBeLessThan("ALUMAX RD, NASHVILLE, TX 75569".length);
+    expect(rows[0].name).not.toMatch(/[,.\-\s]…$/);
+    expect(rows[0].name.endsWith("…")).toBe(true);
+  });
+
+  // B1407824 — the exact reported production case: the stored name FITS under the Pursuit
+  // column's own limit (nothing to cut for space), but itself dangles on a bare trailing comma.
+  it("cleans a short name that itself dangles on a comma, even though nothing needed cutting for space", () => {
+    const projects = [{ ...base, groupId: "a", name: "ALUMAX RD, NASH,", county: "bowie" }];
+    const rows = pursuitsTable(projects, {});
+    expect(rows[0].name).toBe("ALUMAX RD, NASH");
   });
 });
 
@@ -110,18 +123,6 @@ describe("quietDaysByGroupFromRows", () => {
   it("handles empty/missing input without throwing", () => {
     expect(quietDaysByGroupFromRows([], [])).toEqual({});
     expect(quietDaysByGroupFromRows(null, null)).toEqual({});
-  });
-});
-
-describe("nextLineTone", () => {
-  it("red under 7 days, accent under 14, muted beyond and when undated", () => {
-    expect(nextLineTone(3)).toBe("danger");
-    expect(nextLineTone(6)).toBe("danger");
-    expect(nextLineTone(7)).toBe("accent");
-    expect(nextLineTone(13)).toBe("accent");
-    expect(nextLineTone(14)).toBe("muted");
-    expect(nextLineTone(30)).toBe("muted");
-    expect(nextLineTone(null)).toBe("muted");
   });
 });
 

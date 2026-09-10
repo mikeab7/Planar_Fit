@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildSinceLastHereFeed, KIND_META } from "../src/workspaces/dashboard/lib/sinceLastHereFeed.js";
+import { buildSinceLastHereFeed, KIND_META, compAddedSubline } from "../src/workspaces/dashboard/lib/sinceLastHereFeed.js";
+import { compHeadlineRate, formatRateValue, DEFAULT_LEASE_PERIOD } from "../src/workspaces/dashboard/lib/compsCardModel.js";
 
 const DAY = 86400000;
 const NOW = new Date(2026, 8, 8, 12, 0, 0).getTime(); // Sep 8, noon
@@ -45,6 +46,35 @@ describe("buildSinceLastHereFeed — plans", () => {
     const feed = buildSinceLastHereFeed(baseArgs({ sites }));
     expect(feed.rows).toHaveLength(1);
     expect(feed.rows[0].subline).toBe("Harris County · Pursuit");
+  });
+
+  // B1407824 — `site.county` is a lower-case ROUTING KEY ("bowie", "harris", "fort_bend"), not a
+  // display string; the subline used to print it verbatim ("bowie County"). Two adjacent cases:
+  // the routing key needs capitalizing, and one that already arrives correctly capitalized (a
+  // legacy row, or the map-marker path — see shared/CLAUDE.md's County ROUTING KEYS note) must
+  // read exactly the same either way.
+  it("title-cases a lower-case county routing key (single- and multi-word)", () => {
+    const sites = [{ id: "s1", group_id: "g1", site: "Alumax Rd", county: "bowie", status: "pursuit", created_at: new Date(NOW - DAY).toISOString(), updated_at: new Date(NOW - DAY).toISOString() }];
+    const feed = buildSinceLastHereFeed(baseArgs({ sites }));
+    expect(feed.rows[0].subline).toBe("Bowie County · Pursuit");
+
+    const multiWord = [{ id: "s2", group_id: "g2", site: "Katy Tract", county: "fort_bend", status: "active", created_at: new Date(NOW - DAY).toISOString(), updated_at: new Date(NOW - DAY).toISOString() }];
+    const feed2 = buildSinceLastHereFeed(baseArgs({ sites: multiWord }));
+    expect(feed2.rows[0].subline).toBe("Fort Bend County · Active");
+  });
+
+  it("a county name that already arrives correctly capitalized reads identically", () => {
+    const sites = [{ id: "s1", group_id: "g1", site: "Alumax Rd", county: "Harris", status: "pursuit", created_at: new Date(NOW - DAY).toISOString(), updated_at: new Date(NOW - DAY).toISOString() }];
+    const feed = buildSinceLastHereFeed(baseArgs({ sites }));
+    expect(feed.rows[0].subline).toBe("Harris County · Pursuit");
+  });
+
+  // B1407824 — the exact reported production case: the stored plan name FITS under the feed
+  // row's own limit (nothing to cut for space), but itself dangles on a bare trailing comma.
+  it("cleans a short plan name that itself dangles on a comma, even though nothing needed cutting for space", () => {
+    const sites = [{ id: "s1", group_id: "g1", site: "ALUMAX RD, NASH,", county: "bowie", status: "pursuit", created_at: new Date(NOW - DAY).toISOString(), updated_at: new Date(NOW - DAY).toISOString() }];
+    const feed = buildSinceLastHereFeed(baseArgs({ sites }));
+    expect(feed.rows[0].parts.map((p) => p.text).join("")).toBe("New plan ALUMAX RD, NASH");
   });
 
   it("never reports a plan backfilled to the 1970 sentinel as 'created'", () => {
@@ -140,7 +170,14 @@ describe("buildSinceLastHereFeed — schedule", () => {
     expect(feed.rows[0].parts.some((p) => p.text.includes("moved up"))).toBe(true);
   });
 
-  it("reports bulk task completion, naming the tasks and capping the list", () => {
+  // ── FEED-2, B1405456 (2026-09-08 adversarial review) ──────────────────────────────────────
+  // A task's raw `.health` field is a user-set status label (the HealthPicker color), not a
+  // recorded completion event, and it carries no real timestamp. The feed used to announce a
+  // "batch of tasks closed" purely off that field flipping to "green" — which can happen for
+  // reasons that have nothing to do with the work actually finishing (see sinceLastHereFeed.js's
+  // header). Per the review's own stated remedy — derive from real completions with real
+  // timestamps, or drop the row rather than infer one — that kind is now GONE entirely.
+  it("FEED-2: never reports a health-field flip as a 'tasks completed' event, however many tasks flip at once", () => {
     const manyTasks = {
       p1: {
         id: "p1", name: "Goose Creek", linkedSiteId: "s9",
@@ -153,33 +190,38 @@ describe("buildSinceLastHereFeed — schedule", () => {
       scheduleProjects: manyTasks,
       prevSnapshot: { plans: {}, tasks: { p1: prevTasks } },
     }));
-    expect(feed.rows).toHaveLength(1);
-    expect(feed.rows[0].kind).toBe("tasks-completed");
-    expect(feed.rows[0].parts.some((p) => p.bold && p.text === "Goose Creek")).toBe(true);
-    expect(feed.rows[0].subline).toBe("Task 1, Task 2, Task 3, Task 4, +2 more");
+    // On unfixed trunk this fixture produced exactly one "tasks-completed" row — health alone
+    // changing (no date moved) must now surface nothing at all.
+    expect(feed.rows.some((r) => r.kind === "tasks-completed")).toBe(false);
+    expect(feed.rows).toHaveLength(0);
   });
 
-  it("does not report a task with no prior snapshot as completed or slipped", () => {
+  it("FEED-2: KIND_META no longer carries the removed kind", () => {
+    expect(KIND_META["tasks-completed"]).toBeUndefined();
+  });
+
+  it("does not report a task with no prior snapshot as slipped", () => {
     const feed = buildSinceLastHereFeed(baseArgs({ scheduleProjects, prevSnapshot: { plans: {}, tasks: {} } }));
     expect(feed.rows).toHaveLength(0);
   });
 
-  it("excludes parent/summary rows from both slip and completion detection", () => {
+  it("excludes a parent/summary row from slip detection — only the leaf's own date move surfaces", () => {
     const withParent = {
       p1: {
         id: "p1", name: "Goose Creek", linkedSiteId: "s9",
         tasks: [
           { id: "parent", name: "Phase 1", end: "2026-10-20", health: "yellow", parentId: null },
-          { id: "t1", name: "Grading permit", end: "2026-10-05", health: "green", parentId: "parent" },
+          { id: "t1", name: "Grading permit", end: "2026-10-09", health: "yellow", parentId: "parent" },
         ],
       },
     };
     const feed = buildSinceLastHereFeed(baseArgs({
       scheduleProjects: withParent,
-      prevSnapshot: { plans: {}, tasks: { p1: { parent: { end: "2026-10-01", health: "yellow", name: "Phase 1" }, t1: { end: "2026-10-05", health: "yellow", name: "Grading permit" } } } },
+      prevSnapshot: { plans: {}, tasks: { p1: { parent: { end: "2026-10-01", name: "Phase 1" }, t1: { end: "2026-10-05", name: "Grading permit" } } } },
     }));
-    // parent's own end moved too, but only the leaf's health flip should surface
-    expect(feed.rows.map((r) => r.kind).sort()).toEqual(["tasks-completed"]);
+    // parent's own end moved too, but only the leaf's slip should surface
+    expect(feed.rows.map((r) => r.kind)).toEqual(["schedule-slip"]);
+    expect(feed.rows[0].parts.some((p) => p.bold && p.text === "Grading permit")).toBe(true);
   });
 });
 
@@ -194,7 +236,39 @@ describe("buildSinceLastHereFeed — comps", () => {
     expect(feed.rows).toHaveLength(1);
     expect(feed.rows[0].kind).toBe("comp-added");
     expect(feed.rows[0].parts.some((p) => p.bold && p.text === "FM 1463 Land")).toBe(true);
-    expect(feed.rows[0].subline).toBe("$8.5/SF/yr NNN · 18,200 SF");
+    // Two decimals, matching the Comps card's own `formatRateValue` — was "$8.5/SF/yr NNN" (raw,
+    // unpadded interpolation of the stored value) before FEED-3's fix.
+    expect(feed.rows[0].subline).toBe("$8.50/SF/yr NNN · 18,200 SF");
+  });
+
+  // ── FEED-3, B1405457 (2026-09-08 adversarial review) ──────────────────────────────────────
+  // The feed used to render a lease comp's rate in its OWN entered period; the Comps card always
+  // normalizes to Michael's chosen display period. Same comp, two different figures, on the same
+  // screen. Both must now read through the same `compHeadlineRate`/`formatRateValue` — proved here
+  // by computing the "expected" figure independently, off the exact functions the Comps card
+  // calls, rather than a second hand-typed string that could itself drift.
+  it("FEED-3: a monthly-quoted lease comp reads the SAME figure the Comps card would show, not its own raw entered period", () => {
+    const comp = {
+      id: "c1", title: "Monthly NNN lease", compType: "lease", leaseSizeSf: 10000,
+      leaseRate: 0.65, leaseRatePeriod: "monthly", leaseRateExpense: "nnn",
+      createdAt: new Date(NOW - DAY).toISOString(), projectId: "s1",
+    };
+    const feed = buildSinceLastHereFeed(baseArgs({ comps: [comp] }));
+    const cardRate = compHeadlineRate(comp, DEFAULT_LEASE_PERIOD); // what the Comps card shows by default (annual)
+    const expectedRateText = `${formatRateValue(cardRate.value)}${cardRate.unit.replace(/^\$/, "")} ${cardRate.basis.toUpperCase()}`;
+    expect(feed.rows[0].subline).toContain(expectedRateText);
+    expect(expectedRateText).toBe("$7.80/SF/yr NNN"); // 0.65 * 12, spelled out so the assertion above can't drift silently
+    // On unfixed trunk the feed printed the comp's own native period instead — must never reappear.
+    expect(feed.rows[0].subline).not.toContain("$0.65/SF/mo");
+  });
+
+  it("FEED-3: compAddedSubline follows whichever compsRatePeriod it is given, exported for the card to recompute live", () => {
+    const comp = {
+      id: "c1", title: "Monthly NNN lease", compType: "lease", leaseSizeSf: 10000,
+      leaseRate: 0.65, leaseRatePeriod: "monthly", leaseRateExpense: "nnn",
+    };
+    expect(compAddedSubline(comp, "annual")).toBe("$7.80/SF/yr NNN · 10,000 SF");
+    expect(compAddedSubline(comp, "monthly")).toBe("$0.65/SF/mo NNN · 10,000 SF");
   });
 });
 
@@ -259,7 +333,7 @@ describe("buildSinceLastHereFeed — first-ever visit", () => {
 
 describe("KIND_META", () => {
   it("has a glyph and an accent for every kind this module ever emits", () => {
-    const kinds = ["plan-created", "plan-renamed", "plan-edited", "schedule-slip", "tasks-completed", "comp-added", "note-written"];
+    const kinds = ["plan-created", "plan-renamed", "plan-edited", "schedule-slip", "comp-added", "note-written"];
     for (const k of kinds) {
       expect(KIND_META[k]).toBeTruthy();
       expect(typeof KIND_META[k].glyph).toBe("string");
@@ -270,14 +344,18 @@ describe("KIND_META", () => {
 
 
 /* ── The "Since you were last here" feed defect, 2026-09-08 adversarial review ────────────────
- * Reproduction: ui-audit/review-2026-09-08/probe-feed-month-away.mjs (17 events derived, 12 shown,
- * all 3 schedule events in the hidden 5). These are the CI guards for both halves of the fix.
+ * Reproduction: ui-audit/review-2026-09-08/probe-feed-month-away.mjs, as originally run (17 events
+ * derived, 12 shown, all 3 schedule events in the hidden 5 — back when a task-health flip still
+ * counted as a third schedule event kind; FEED-2 removed that kind afterward, so a fresh run now
+ * derives 16 and shows 2 schedule events, not 3 — the CAP fix below is unaffected either way).
+ * These are the CI guards for the cap/timing fix.
  */
-describe("buildSinceLastHereFeed — schedule events survive a long absence (B<PENDING>)", () => {
+describe("buildSinceLastHereFeed — schedule events survive a long absence (B1373536)", () => {
   const MONTH_AGO = NOW - 30 * DAY;
 
   /** The probe's scene, as a fixture: a month away, enough plan/comp activity to overflow the
-   * 12-row cap on its own, plus two slipped milestones and a closed task. */
+   * 12-row cap on its own, plus two slipped milestones. (Task 3's health-only flip to "green" is
+   * left in the fixture as a harmless no-op — FEED-2 means it no longer produces a row at all.) */
   function monthAwayArgs(extra = {}) {
     const sites = Array.from({ length: 10 }, (_, i) => ({
       id: "s" + i, group_id: "g" + i, site: "Plan " + i, county: "harris", status: "pursuit",
@@ -325,16 +403,15 @@ describe("buildSinceLastHereFeed — schedule events survive a long absence (B<P
     expect(feed.overflowCount).toBeGreaterThan(0);
   });
 
-  it("EVERY schedule event survives the cap (was 0 of 3)", () => {
+  it("EVERY schedule event survives the cap (was 0 of 2)", () => {
     const feed = buildSinceLastHereFeed(monthAwayArgs());
-    const scheduleRows = feed.rows.filter((r) => r.kind === "schedule-slip" || r.kind === "tasks-completed");
-    expect(scheduleRows.filter((r) => r.kind === "schedule-slip")).toHaveLength(2);
-    expect(scheduleRows.filter((r) => r.kind === "tasks-completed")).toHaveLength(1);
+    const scheduleRows = feed.rows.filter((r) => r.kind === "schedule-slip");
+    expect(scheduleRows).toHaveLength(2);
   });
 
   it("the cap can never delete a whole event kind", () => {
     const feed = buildSinceLastHereFeed(monthAwayArgs());
-    const derivedKinds = new Set(["plan-created", "comp-added", "schedule-slip", "tasks-completed"]);
+    const derivedKinds = new Set(["plan-created", "comp-added", "schedule-slip"]);
     const shownKinds = new Set(feed.rows.map((r) => r.kind));
     for (const k of derivedKinds) expect(shownKinds.has(k)).toBe(true);
   });
@@ -372,10 +449,10 @@ describe("buildSinceLastHereFeed — schedule events survive a long absence (B<P
     expect(feed.rows.some((r) => r.kind === "schedule-slip")).toBe(true);
   });
 
-  it("no event kind other than the two schedule ones is stamped approximately", () => {
+  it("no event kind other than schedule-slip is stamped approximately", () => {
     const feed = buildSinceLastHereFeed(monthAwayArgs());
     for (const r of feed.rows) {
-      if (r.kind === "schedule-slip" || r.kind === "tasks-completed") continue;
+      if (r.kind === "schedule-slip") continue;
       expect(r.tsApprox).toBeUndefined();
     }
   });

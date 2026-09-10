@@ -69,6 +69,59 @@ describe("needsAttentionList", () => {
     expect(needsAttentionList({})).toEqual([]);
     expect(needsAttentionList({ 1: { tasks: null } })).toEqual([]);
   });
+
+  // B1411504 — the Scheduler's reconcileNeedsAttention stamps EVERY already-red task with one
+  // shared `nowIso` on the first load of an existing schedule after this field shipped, so a
+  // bare `days` count is meaningless for those rows (confirmed on the owner's real account: 25 of
+  // 31 currently-flagged tasks share one exact stamp, another 6 share a second). `bulkStamped`
+  // must flag exactly the rows sharing an exact timestamp with another row, account-wide — never
+  // a row whose stamp is unique, even if its `days` value happens to collide with someone else's
+  // after flooring to whole days.
+  it("flags a row bulkStamped only when its EXACT needsAttentionSince is shared with another row", () => {
+    const sharedStamp = daysAgo(2);
+    const projects = {
+      1: {
+        id: 1, name: "Goose Creek",
+        tasks: [
+          { id: 1, name: "Bulk A", parentId: null, needsAttentionSince: sharedStamp },
+          { id: 2, name: "Genuinely new", parentId: null, needsAttentionSince: null }, // overwritten below with a unique stamp
+        ],
+      },
+      2: {
+        id: 2, name: "Grand Port",
+        tasks: [
+          { id: 10, name: "Bulk B", parentId: null, needsAttentionSince: sharedStamp },
+        ],
+      },
+    };
+    // Force the "Genuinely new" task onto its OWN unique millisecond so it cannot accidentally
+    // collide with `sharedStamp` (both were built from whole-day offsets and would otherwise tie).
+    projects[1].tasks[1].needsAttentionSince = new Date(Date.parse(sharedStamp) + 1000).toISOString();
+
+    const rows = needsAttentionList(projects, NOW);
+    const byName = Object.fromEntries(rows.map((r) => [r.taskName, r]));
+    expect(byName["Bulk A"].bulkStamped).toBe(true);
+    expect(byName["Bulk B"].bulkStamped).toBe(true);
+    expect(byName["Genuinely new"].bulkStamped).toBe(false);
+  });
+
+  it("ties on `days` break by `waiting` (more blocked downstream work first), then task name — never insertion order", () => {
+    const sharedStamp = daysAgo(2);
+    const projects = {
+      1: {
+        id: 1, name: "P",
+        tasks: [
+          { id: 1, name: "Zero waiting", parentId: null, needsAttentionSince: sharedStamp },
+          { id: 2, name: "Blocks two", parentId: null, needsAttentionSince: sharedStamp },
+          { id: 3, name: "A downstream of Blocks two", parentId: null, predecessors: [2] },
+          { id: 4, name: "B downstream of Blocks two", parentId: null, predecessors: [2] },
+        ],
+      },
+    };
+    const rows = needsAttentionList(projects, NOW);
+    expect(rows.map((r) => r.taskName)).toEqual(["Blocks two", "Zero waiting"]);
+    expect(rows[0].waiting).toBe(2);
+  });
 });
 
 describe("needsAttentionTotals", () => {

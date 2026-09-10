@@ -78,6 +78,25 @@ deep internals are in `/docs/REFERENCE.md` (Site Model, map-layer system, Supaba
   redundant with `editingId` — one project id addresses two inline editors (its list row and the crumb-level
   rename), and keyed on the id alone BOTH mount with `autoFocus`, the second stealing focus from the first,
   whose `onBlur` commits and closes it in the same frame.
+  **⛔ B1440976 (2026-09-09) — A FOURTH SEAM WAS MISSING: THE PULL-VS-LOCAL CONTENT MERGE, and it is
+  the one that actually bit in production.** `siteModel.mergeSiteContent(local, cloudRow)` — run by
+  `mergePulledSites` on EVERY cloud pull — picked `site`/`siteRenamedAt` as ordinary scalars, from
+  whichever side had the newer-or-tied generic `updatedAt`. But `rename_site_group()` (and its
+  pre-migration fallback in `cloudRename.js`) deliberately stamp `data.siteRenamedAt` WITHOUT
+  bumping `data.updatedAt` — exactly the same shape B1181104 found and fixed for `role`, except
+  role's fix (bump `data.updatedAt` in the RPC) does not apply here, because a rename's whole point
+  is that it has its OWN dedicated stamp instead. The result: any device holding a locally-cached
+  copy of a plan from BEFORE a rename made elsewhere kept the OLD name on every later pull, forever
+  — with no split to catch, because `mergeSiteContent` discarded the losing side's `site` AND its
+  `siteRenamedAt` together, so `reconcileGroupNames` saw unanimous (wrong) agreement and had nothing
+  left to reconcile. `mergeSiteContent` now resolves `site`/`siteRenamedAt` through the same
+  `nameAuthority` the list/read paths already trust, so a stamped rename wins the merge regardless
+  of which side `updatedAt` favors for everything else. Proven against real production shapes the
+  same way B1181104 was — see the repo-root `test/` suite **siteModel**'s sibling case — not just
+  reasoned about. Do not
+  "fix" a recurrence by bumping `data.updatedAt` in `rename_site_group.sql` instead — that treats
+  the symptom on one write path and leaves the merge still ignorant of the stamp it was designed to
+  honor.
 - **⛔ `layerZoomGate.js` (B323424/B323425) — THE ONE ANSWER TO "IS THIS ROW ACTUALLY DRAWING RIGHT
   NOW?", and the reason it is shared rather than a note on the contour row.** A checked layer that a
   zoom gate suppresses looked exactly like a broken one: the owner ticked *"Contour lines (1 ft)"*

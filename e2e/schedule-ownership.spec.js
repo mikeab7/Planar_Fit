@@ -1,0 +1,654 @@
+/* EVERY SCHEDULE HAS AN OWNER — the two user-visible halves, driven against the real app.
+ *
+ * The owner's report: he cannot have a Master Schedule and a Land Sale schedule under Goose Creek,
+ * and pressing "New schedule" three times silently produced "Goose Creek (2)", "(3)" and "(4)" —
+ * three empty duplicates that are on production right now. Two things had to change and both are
+ * asserted here against a real browser rather than a source regex:
+ *
+ *   1. NEW SCHEDULE ASKS. It opens a dialog with the name pre-filled and the owner pre-selected to
+ *      the project he is standing on, and it CANNOT create anything without both. The old path
+ *      created a schedule outright with no prompt at any point, which is precisely why nothing on
+ *      screen said it had happened.
+ *   2. A PROJECT'S SCHEDULES ARE LISTED, with the ORGANIZATION as a peer container in the same
+ *      list — never an "unassigned" or "no project" pile (owner rule: everything lives under
+ *      something).
+ *
+ * Runs LOGGED OUT, like e2e/schedule-link-panel.spec.js, whose seeding + bridge-driving pattern
+ * this follows: a Site Planner project in the legacy local store plus a route pointing at it, and
+ * the embedded scheduler's nav-state posted in as the iframe would post it. No cloud, no external
+ * GIS, so it is fully self-verifiable in the sandbox.
+ *
+ * ⛔ THE FIXTURE IS THE OWNER'S OWN SHAPE, NOT A TIDY ONE (WRONG-CASE). Goose Creek carries FIVE
+ * schedules including the three empty duplicates, and two schedules (Pursuits, Operations) belong
+ * to no project at all — that is production at __rev 4232. A one-schedule fixture passes every
+ * assertion below while exercising neither the grouping nor the withheld name suggestion.
+ */
+import { test, expect } from "@playwright/test";
+
+/* The migration block below calls the scheduler page's OWN module-scope declarations from inside
+ * `page.evaluate`, where they are live globals of that document — not imports of this file. Declared
+ * for ESLint only; if a future build ever wrapped that script in a closure these identifiers would
+ * stop resolving and the test would fail LOUDLY, which is exactly the signal wanted (the module
+ * would no longer be reachable in the shipped page). */
+/* global normalizeScheduleOwnership, migrateScheduleOwnership, pruneScheduleRefs, ownerOf, validateNewSchedule */
+
+const GOOSE = "g-goose";
+const GRAND = "g-grand";
+/* A project with no schedule of its own — the empty state, where the list and the dialog live. */
+const ORPHAN = "g-orphan";
+
+/* Seed the logged-out site store. Two real projects so the owner picker has something to change TO. */
+function seed(page) {
+  return page.addInitScript(([goose, grand, orphan]) => {
+    const rec = (id, g, s) => ({ id, groupId: g, site: s, name: "Plan 1", origin: null, updatedAt: Date.now(), parcels: [], els: [], measures: [], settings: {} });
+    localStorage.setItem("planarfit:sites:v1", JSON.stringify({
+      p1: rec("p1", goose, "Goose Creek"),
+      p2: rec("p2", grand, "Grand Port"),
+      // A project with NO schedule of its own — the empty state, which is where the owner list and
+      // the New-schedule dialog both live.
+      p3: rec("p3", orphan, "Bayou Bend"),
+    }));
+    localStorage.setItem("planyr.theme", "light");
+
+    /* Record what the shell POSTS into the iframe, so "did pressing Create actually ask for the
+     * right thing" is observable without the embedded app (whose in-browser Babel is CDN-loaded and
+     * may not run in the sandbox). Same-origin, so wrapping is allowed. */
+    const desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "contentWindow");
+    Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
+      configurable: true,
+      get() {
+        const w = desc.get.call(this);
+        try {
+          if (w && !w.__planyrPosted) {
+            const orig = w.postMessage.bind(w);
+            w.__planyrPosted = true;
+            w.postMessage = (m, o) => { (window.__posted = window.__posted || []).push(m); return orig(m, o); };
+          }
+        } catch (_) {}
+        return w;
+      },
+    });
+  }, [GOOSE, GRAND, ORPHAN]);
+}
+
+/* The production schedule set, as the embedded app bridges it up. */
+const SCHEDULES = [
+  { id: 1,  name: "Goose Creek",      ownerKind: "site", linkedSiteId: GOOSE, linkedSiteName: "Goose Creek", taskCount: 301 },
+  { id: 19, name: "Goose Creek (2)",  ownerKind: "site", linkedSiteId: GOOSE, linkedSiteName: "Goose Creek", taskCount: 0 },
+  { id: 20, name: "Goose Creek (3)",  ownerKind: "site", linkedSiteId: GOOSE, linkedSiteName: "Goose Creek", taskCount: 0 },
+  { id: 21, name: "Goose Creek (4)",  ownerKind: "site", linkedSiteId: GOOSE, linkedSiteName: "Goose Creek", taskCount: 0 },
+  { id: 22, name: "TAS Land Sale",    ownerKind: "site", linkedSiteId: GOOSE, linkedSiteName: "Goose Creek", taskCount: 8 },
+  { id: 2,  name: "Grand Port",       ownerKind: "site", linkedSiteId: GRAND, linkedSiteName: "Grand Port", taskCount: 278 },
+  { id: 5,  name: "Pursuits",         ownerKind: "org", taskCount: 15 },
+  { id: 7,  name: "Operations",       ownerKind: "org", taskCount: 7 },
+];
+
+const postSeq = (page, msg) =>
+  page.evaluate((m) => window.postMessage({ source: "planar-seq", ...m }, window.location.origin), msg);
+
+/* Open a project's Schedule tab carrying `projects` as the bridged schedule list.
+ *
+ * ⛔ THE RE-POST AFTER SETTLE IS LOad-BEARING, and getting it wrong is how this harness first
+ * reported ten false failures against working code. The embedded scheduler BOOTS and posts its own
+ * nav-state (seeded from `__PLANAR_DATA__` when signed out), so a list posted before it settles is
+ * simply overwritten and every assertion below then measures the seed rather than the fixture.
+ * Posting after the app has reported in — and re-asserting on the rows that actually render — is
+ * what makes the reading about this feature rather than about the boot race. */
+async function openSchedule(page, gid, projects) {
+  await seed(page);
+  await page.goto(`/#/project/${gid}/schedule`);
+  // Wait for the tab to resolve (the empty state appears once the iframe reports in, or on its
+  // reveal fallback) BEFORE posting, or the embed's own boot post lands last and wins.
+  await expect(page.getByTestId("schedule-owner-list")).toBeVisible({ timeout: 25_000 });
+  await postSeq(page, { type: "planar:nav-state", section: "projects", activeId: null, projects });
+  await expect(page.getByTestId("schedule-owner-row").first()).toBeVisible({ timeout: 10_000 });
+}
+
+/* B1435888 — "+ New schedule in <project>" lives in the SCHEDULE crumb's own dropdown (the
+ * breadcrumb's second, independent level), not on the page surface and not in the PROJECT
+ * crumb's "+ New project" row any more — that row now creates a genuine new SITE project, since
+ * the project crumb became an uncontrolled site-project switcher. This is what opens the dialog
+ * under test. */
+async function pressNew(page) {
+  await page.locator('[data-testid="new-schedule-modal"]').waitFor({ state: "detached" }).catch(() => {});
+  await page.getByTestId("schedule-crumb").click();
+  await page.getByTestId("schedule-owner-create").click();
+}
+
+test.describe("a project's schedules are listed, with the organization as a peer container", () => {
+  test("groups into this project / Organization / other projects — and never an 'unassigned' pile", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    const list = page.getByTestId("schedule-owner-list");
+
+    // The organization is a real heading in the same list, holding the two cross-project schedules.
+    await expect(list).toContainText("Organization");
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "Pursuits" })).toHaveCount(1);
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "Operations" })).toHaveCount(1);
+
+    // ⛔ The words the owner explicitly rejected must appear nowhere.
+    await expect(list).not.toContainText(/unassigned/i);
+    await expect(list).not.toContainText(/no project/i);
+
+    // This project owns none yet — said plainly, still under its own heading, never dropped.
+    await expect(list).toContainText("Bayou Bend");
+    await expect(list).toContainText("No schedules here yet.");
+
+    // Every one of the eight schedules is reachable — nothing is hidden by grouping.
+    await expect(list.getByTestId("schedule-owner-row")).toHaveCount(SCHEDULES.length);
+  });
+
+  test("all five of Goose Creek's schedules sit together under one heading, contiguously", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    // B1435888 — each row's innerText now carries the task count on a second line (right-aligned
+    // beside the name); take just the name's own line so this stays a check on ORDER/GROUPING,
+    // not on the count's exact rendered text.
+    const rowTexts = await page.getByTestId("schedule-owner-row").allInnerTexts();
+    const names = rowTexts.map((t) => t.split("\n")[0]);
+    const goose = ["Goose Creek", "Goose Creek (2)", "Goose Creek (3)", "Goose Creek (4)", "TAS Land Sale"];
+    for (const n of goose) expect(names).toContain(n);
+    // One group, not scattered through the account-wide run — which is what the flat switcher did.
+    const idx = goose.map((n) => names.indexOf(n));
+    expect(Math.max(...idx) - Math.min(...idx)).toBe(goose.length - 1);
+  });
+});
+
+test.describe("New schedule ASKS — it can never silently mint another 'Goose Creek (5)'", () => {
+  async function openDialog(page, gid = ORPHAN) {
+    await openSchedule(page, gid, SCHEDULES);
+    await pressNew(page);
+    await expect(page.getByTestId("new-schedule-modal")).toBeVisible();
+  }
+
+  test("pressing it opens a dialog and creates NOTHING on its own", async ({ page }) => {
+    await openDialog(page);
+    // The whole defect in one assertion: no create was posted by the press itself.
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-create-linked"));
+    expect(posted).toEqual([]);
+  });
+
+  test("the owner is PRE-SELECTED to the project he is standing on, and is changeable", async ({ page }) => {
+    await openDialog(page);
+    const owner = page.getByTestId("new-schedule-owner");
+    await expect(owner).toHaveValue(ORPHAN);
+    // Every real owner is offered, the organization included — and no "none" option exists.
+    const options = await owner.locator("option").allInnerTexts();
+    expect(options).toContain("Organization");
+    expect(options).toContain("Goose Creek");
+    expect(options.join("|")).not.toMatch(/unassigned|no project|none/i);
+    await owner.selectOption({ label: "Organization" });
+    await expect(owner).toHaveValue("__org__");
+  });
+
+  test("a project with no schedule yet has its name PRE-FILLED — editable, not committed", async ({ page }) => {
+    await openDialog(page);
+    await expect(page.getByTestId("new-schedule-name")).toHaveValue("Bayou Bend");
+  });
+
+  test("⛔ a project that ALREADY has schedules gets an EMPTY name, never 'Goose Creek (5)'", async ({ page }) => {
+    await openDialog(page);
+    await page.getByTestId("new-schedule-owner").selectOption({ label: "Goose Creek" });
+    const name = page.getByTestId("new-schedule-name");
+    await expect(name).toHaveValue("");
+    await expect(name).not.toHaveValue(/\(\d+\)/);
+    // ...and with nothing typed, it CANNOT be created. This is the three duplicates' root cause,
+    // closed: the old path needed no name at all.
+    await expect(page.getByTestId("new-schedule-create")).toBeDisabled();
+  });
+
+  test("it warns about a same-owner name collision without blocking a deliberate one", async ({ page }) => {
+    await openDialog(page);
+    await page.getByTestId("new-schedule-owner").selectOption({ label: "Goose Creek" });
+    await page.getByTestId("new-schedule-name").fill("Goose Creek");
+    await expect(page.getByTestId("new-schedule-warning")).toBeVisible();
+    await expect(page.getByTestId("new-schedule-create")).toBeEnabled();
+  });
+
+  test("creating posts ONE create carrying the chosen name AND an explicit owner", async ({ page }) => {
+    await openDialog(page);
+    await page.getByTestId("new-schedule-owner").selectOption({ label: "Goose Creek" });
+    await page.getByTestId("new-schedule-name").fill("Land Sale");
+    await page.getByTestId("new-schedule-create").click();
+    await expect(page.getByTestId("new-schedule-modal")).toHaveCount(0);
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-create-linked"));
+    expect(posted.length).toBe(1);
+    expect(posted[0].name).toBe("Land Sale");
+    expect(posted[0].ownerKind).toBe("site");
+    expect(posted[0].siteId).toBe(GOOSE);
+  });
+
+  test("an ORG-owned schedule is created with no site at all, and that is a real owner", async ({ page }) => {
+    await openDialog(page);
+    await page.getByTestId("new-schedule-owner").selectOption({ label: "Organization" });
+    await page.getByTestId("new-schedule-name").fill("2027 Pursuits");
+    await page.getByTestId("new-schedule-create").click();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-create-linked"));
+    expect(posted.length).toBe(1);
+    expect(posted[0].ownerKind).toBe("org");
+    expect(posted[0].siteId).toBeNull();
+  });
+
+  test("Cancel and Escape both leave without creating anything", async ({ page }) => {
+    await openDialog(page);
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByTestId("new-schedule-modal")).toHaveCount(0);
+    expect(await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-create-linked").length)).toBe(0);
+  });
+
+  /* The phone layout is one of the adjacent cases the brief called out: the dialog must stay
+   * usable and must not overflow the viewport at phone width. */
+  test("phone width: the dialog fits and both decisions stay reachable", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 780 });
+    await openDialog(page);
+    const card = page.getByTestId("new-schedule-modal");
+    await expect(page.getByTestId("new-schedule-name")).toBeVisible();
+    await expect(page.getByTestId("new-schedule-owner")).toBeVisible();
+    await expect(page.getByTestId("new-schedule-create")).toBeVisible();
+    const box = await card.boundingBox();
+    expect(box.width).toBeLessThanOrEqual(390);
+    // The page itself must not scroll sideways.
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
+});
+
+/* ── B1435888 — the breadcrumb is TWO INDEPENDENT LEVELS: project, then schedule ────────────────
+ *
+ * Supersedes B1404352's fix, which merged the active schedule's name INTO the single project
+ * crumb ("Goose Creek / TAS Land Sale") so the project would never disappear from a click-test
+ * that found the header reading "planyr / Dashboard / TAS Land Sale" with Goose Creek gone
+ * entirely. The owner picked a different shape from three mockups ("Option A"): the breadcrumb
+ * ALWAYS shows Dashboard / <Project> ▾ / <Schedule> ▾ — two independent switchers, mirroring the
+ * Site tab's own Project/Plan pair — never one crumb carrying both names, and never collapsed
+ * even when the schedule happens to share its project's name.
+ */
+async function openScheduleActive(page, gid, projects, activeId) {
+  await seed(page);
+  await page.goto(`/#/project/${gid}/schedule`);
+  // Same settle concern as openSchedule (see that function's own comment): wait for the real
+  // embedded app to report its OWN boot state (its default local doc has no schedule linked to
+  // this fake test group id, so the empty state — the same readiness proxy openSchedule uses —
+  // appears first) before posting the fixture that actually carries a link.
+  await expect(page.getByTestId("schedule-owner-list")).toBeVisible({ timeout: 25_000 });
+  await postSeq(page, { type: "planar:nav-state", section: "projects", activeId, projects });
+}
+
+test.describe("B1435888 — the breadcrumb is two independent levels, project then schedule", () => {
+  test("standing on Goose Creek's 'TAS Land Sale' schedule, the PROJECT crumb names only the project", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 22);
+    const crumb = page.getByTestId("project-crumb");
+    await expect(crumb).toContainText("Goose Creek", { timeout: 10_000 });
+    await expect(crumb).not.toContainText("TAS Land Sale");
+  });
+
+  test("…and the SCHEDULE crumb, right beside it, names only the active schedule", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 22);
+    const crumb = page.getByTestId("schedule-crumb");
+    await expect(crumb).toContainText("TAS Land Sale", { timeout: 10_000 });
+    await expect(crumb).not.toContainText("Goose Creek");
+  });
+
+  test("⛔ the two levels are NEVER collapsed, even when the schedule shares its project's name", async ({ page }) => {
+    // Schedule id 1 is named "Goose Creek" inside project "Goose Creek" — both crumbs must still
+    // render as two distinct segments, never merged into one.
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await expect(page.getByTestId("project-crumb")).toContainText("Goose Creek", { timeout: 10_000 });
+    await expect(page.getByTestId("schedule-crumb")).toContainText("Goose Creek", { timeout: 10_000 });
+    await expect(page.getByTestId("project-crumb")).toHaveCount(1);
+    await expect(page.getByTestId("schedule-crumb")).toHaveCount(1);
+  });
+
+  test("a project with only ONE linked schedule still reads plainly on each crumb", async ({ page }) => {
+    await openScheduleActive(page, GRAND, SCHEDULES, 2);
+    await expect(page.getByTestId("project-crumb")).toContainText("Grand Port", { timeout: 10_000 });
+    await expect(page.getByTestId("schedule-crumb")).toContainText("Grand Port", { timeout: 10_000 });
+  });
+
+  test("the PROJECT crumb's dropdown lists projects only — no schedule rows mixed in", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("project-crumb").click();
+    const dropdown = page.getByTestId("project-row-" + GOOSE);
+    await expect(dropdown).toBeVisible({ timeout: 10_000 });
+    // None of the schedule-only names (Pursuits/Operations/TAS Land Sale) appear as a project row.
+    await expect(page.getByTestId("project-row-1")).toHaveCount(0);
+    await expect(page.getByTestId("project-row-22")).toHaveCount(0);
+  });
+
+  test("the SCHEDULE crumb's dropdown groups this project's schedules, then the Organization, then '+ New schedule in <project>'", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("schedule-crumb").click();
+    const list = page.getByTestId("schedule-owner-list");
+    await expect(list).toBeVisible({ timeout: 10_000 });
+
+    // Goose Creek's own schedules — all five (the fixture's real shape, incl. its three empty
+    // duplicates, see this file's own WRONG-CASE note) — never another project's (Grand Port).
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "Goose Creek" })).toHaveCount(4); // Goose Creek + (2)/(3)/(4)
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" })).toHaveCount(1);
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "Grand Port" })).toHaveCount(0);
+
+    // The Organization group, still reachable from inside this project.
+    await expect(list).toContainText("Organization");
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "Pursuits" })).toHaveCount(1);
+    await expect(list.getByTestId("schedule-owner-row").filter({ hasText: "Operations" })).toHaveCount(1);
+
+    // The create row names the project.
+    await expect(list.getByTestId("schedule-owner-create")).toContainText("New schedule in Goose Creek");
+  });
+
+  test("switching from Goose Creek's own schedule to its 'TAS Land Sale' schedule actually changes what's open", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("schedule-crumb").click();
+    await page.getByTestId("schedule-owner-list").getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).click();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-select"));
+    expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-select", id: 22 }]);
+  });
+});
+
+/* ── B1341184 — switching the PROJECT crumb must re-drive the SCHEDULE crumb ────────────────────
+ *
+ * Owner report: picking a project from LEVEL 1 (the plain project switcher) never changed which
+ * schedule was open — LEVEL 2 kept naming whatever schedule was last active, regardless of which
+ * project the breadcrumb now named. Root cause (navState.js's isPickShowing, see its own header):
+ * once a schedule was explicitly picked from the SCHEDULE crumb, the "deliberate pick" flag latched
+ * TRUE forever — it never checked whether the ROUTED PROJECT itself had since changed — and that
+ * flag gates the self-healing carry-in effect that is supposed to re-drive the embed toward the
+ * newly routed project's own schedule. So the very first deliberate schedule pick in a session
+ * permanently defeated the "switching projects follows a project's own schedule" mechanism.
+ *
+ * These tests exercise the SHELL side only (same idiom as the rest of this file — the embedded
+ * app's own CDN-loaded Babel doesn't run in this sandbox): assert the shell actually POSTS
+ * `planar:nav-select-by-site` for the newly routed project once the PROJECT crumb is switched, and
+ * that the SCHEDULE crumb never keeps naming a foreign project's schedule.
+ */
+test.describe("B1341184 — switching PROJECTS re-drives the SCHEDULE crumb, never leaves it naming a foreign schedule", () => {
+  const postedBySite = (page, siteId) => page.evaluate(
+    (sid) => (window.__posted || []).some((m) => m && m.type === "planar:nav-select-by-site" && m.siteId === sid),
+    siteId,
+  );
+
+  test("picking 'TAS Land Sale' under Goose Creek, then switching to Grand Port, re-posts nav-select-by-site for Grand Port", async ({ page }) => {
+    // ⛔ THE DEADLOCK ONLY ENGAGES ON A REAL, UI-DRIVEN PICK — seeding activeId directly (as
+    // openScheduleActive's other callers do) never sets `explicitPickRef`, so it can't reproduce
+    // this. Drive the actual schedule-crumb dropdown, exactly as the owner's own repro did.
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("schedule-crumb").click();
+    await page.getByTestId("schedule-owner-list").getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).click();
+    // Simulate the embed confirming the switch — this is what actually arms `pickShowing`.
+    await postSeq(page, { type: "planar:nav-state", section: "projects", activeId: 22, projects: SCHEDULES });
+    await expect(page.getByTestId("schedule-crumb")).toContainText("TAS Land Sale", { timeout: 10_000 });
+
+    await page.getByTestId("project-crumb").click();
+    await page.getByTestId(`project-row-${GRAND}`).click();
+    await expect.poll(() => page.url()).toContain(GRAND);
+
+    // ⛔ THE REGRESSION: before the fix, this never posted — `pickShowing` stayed latched true
+    // forever once TAS Land Sale was explicitly picked, permanently gating off the carry-in effect
+    // regardless of which project the breadcrumb was switched to afterward.
+    await expect.poll(() => postedBySite(page, GRAND), { timeout: 10_000 }).toBe(true);
+
+    // Once the embed reports back that it actually switched, the SCHEDULE crumb must read Grand
+    // Port's own schedule — never the one it was stuck on.
+    await postSeq(page, { type: "planar:nav-state", section: "projects", activeId: 2, projects: SCHEDULES });
+    await expect(page.getByTestId("schedule-crumb")).toContainText("Grand Port", { timeout: 10_000 });
+    await expect(page.getByTestId("schedule-crumb")).not.toContainText("TAS Land Sale");
+  });
+
+  test("switching to a project with NO schedule of its own never leaves the crumb naming another project's schedule", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 22);
+    await expect(page.getByTestId("schedule-crumb")).toContainText("TAS Land Sale", { timeout: 10_000 });
+
+    await page.getByTestId("project-crumb").click();
+    await page.getByTestId(`project-row-${ORPHAN}`).click();
+    await expect.poll(() => page.url()).toContain(ORPHAN);
+
+    // Bayou Bend owns no schedule — the empty state takes over, and the crumb must fall back to
+    // its own "no schedule selected" label rather than keep naming Goose Creek's TAS Land Sale.
+    await expect(page.getByRole("region", { name: /No schedule for/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("schedule-crumb")).not.toContainText("TAS Land Sale");
+  });
+
+  test("a deliberately-picked ORGANIZATION schedule (Pursuits) does not stop a later project switch from re-driving the carry-in", async ({ page }) => {
+    await openScheduleActive(page, GOOSE, SCHEDULES, 1);
+    await page.getByTestId("schedule-crumb").click();
+    await page.getByTestId("schedule-owner-list").getByTestId("schedule-owner-row").filter({ hasText: "Pursuits" }).click();
+    await postSeq(page, { type: "planar:nav-state", section: "projects", activeId: 5, projects: SCHEDULES });
+    await expect(page.getByTestId("schedule-crumb")).toContainText("Pursuits", { timeout: 10_000 });
+
+    // Switching the routed project must not stay blocked by the standing cross-cutting pick.
+    await page.getByTestId("project-crumb").click();
+    await page.getByTestId(`project-row-${GRAND}`).click();
+    await expect.poll(() => page.url()).toContain(GRAND);
+    await expect.poll(() => postedBySite(page, GRAND), { timeout: 10_000 }).toBe(true);
+  });
+});
+
+/* ── B1404352 — a schedule can be RENAMED and DELETED from its own row ───────────────────────────
+ *
+ * Owner's live click-test on planyr.io: he searched every element on the page for an aria-label
+ * or title matching delete/rename/remove and found ZERO. The project breadcrumb's kebab menu
+ * (B439/B1358128) only ever reaches the ONE schedule linked to the CURRENT project — every other
+ * schedule this list shows (a project's second schedule, anything Organization-owned, anything
+ * belonging to another project) had no control at all. These tests drive the real per-row Pencil/
+ * Trash icons ScheduleOwnerList now renders and assert the exact bridge messages they post — the
+ * same `planar:nav-rename`/`planar:nav-delete` messages the breadcrumb's own kebab already used,
+ * so the embedded app's existing rename/delete/prune logic (unchanged by this item) is reused
+ * rather than reimplemented.
+ *
+ * RED-PROOF: every `schedule-owner-rename`/`schedule-owner-delete` testid this file locates is
+ * new in this PR — `git stash` on this branch and any test below fails at its very first locator
+ * (element not found), which is the owner's own repro ("ZERO matches") reproduced mechanically.
+ */
+test.describe("B1404352 — a schedule can be renamed from its own row", () => {
+  test("the pencil opens an inline editor pre-filled with the current name — no dialog box", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    const row = page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" });
+    await row.getByTestId("schedule-owner-rename").click();
+    const input = page.getByTestId("schedule-owner-rename-input");
+    await expect(input).toBeVisible();
+    await expect(input).toHaveValue("TAS Land Sale");
+  });
+
+  test("Enter commits and posts planar:nav-rename with the SCHEDULE's own id, not the project's", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).getByTestId("schedule-owner-rename").click();
+    const input = page.getByTestId("schedule-owner-rename-input");
+    await input.fill("Land Sale — Phase 2");
+    await input.press("Enter");
+    await expect(page.getByTestId("schedule-owner-rename-input")).toHaveCount(0);
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-rename"));
+    expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-rename", id: 22, name: "Land Sale — Phase 2" }]);
+  });
+
+  test("Escape cancels — nothing is posted and the row reverts to its prior name", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).getByTestId("schedule-owner-rename").click();
+    const input = page.getByTestId("schedule-owner-rename-input");
+    await input.fill("Something Else Entirely");
+    await input.press("Escape");
+    await expect(page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" })).toBeVisible();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-rename"));
+    expect(posted).toEqual([]);
+  });
+
+  test("renaming to a name already used by a sibling under the SAME owner WARNS but still commits", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    // Goose Creek (2) → "TAS Land Sale", which Goose Creek already has (id 22).
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "Goose Creek (2)" }).getByTestId("schedule-owner-rename").click();
+    const input = page.getByTestId("schedule-owner-rename-input");
+    await input.fill("TAS Land Sale");
+    await expect(page.getByText(/already a schedule called/i)).toBeVisible();
+    await input.press("Enter");
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-rename"));
+    expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-rename", id: 19, name: "TAS Land Sale" }]);
+  });
+
+  test("an Organization-owned schedule renames the same way as a project's own", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "Pursuits" }).getByTestId("schedule-owner-rename").click();
+    await page.getByTestId("schedule-owner-rename-input").fill("2027 Pursuits");
+    await page.getByTestId("schedule-owner-rename-input").press("Enter");
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-rename"));
+    expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-rename", id: 5, name: "2027 Pursuits" }]);
+  });
+});
+
+test.describe("B1404352 — a schedule can be deleted from its own row", () => {
+  test("the trash opens an inline confirmation that NAMES the schedule and its task count — no dialog box", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).getByTestId("schedule-owner-delete").click();
+    const confirm = page.getByTestId("schedule-owner-row-confirm");
+    await expect(confirm).toBeVisible();
+    await expect(confirm).toContainText("TAS Land Sale");
+    await expect(confirm).toContainText("8 tasks");
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-delete"));
+    expect(posted).toEqual([]); // opening the confirmation deletes nothing by itself
+  });
+
+  test("an EMPTY schedule's confirmation says so, distinctly from a task count of zero", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "Goose Creek (2)" }).getByTestId("schedule-owner-delete").click();
+    await expect(page.getByTestId("schedule-owner-row-confirm")).toContainText(/no tasks/i);
+  });
+
+  test("'Keep it' cancels — nothing is posted and the row is back to normal", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" }).getByTestId("schedule-owner-delete").click();
+    await page.getByTestId("schedule-owner-delete-cancel").click();
+    await expect(page.getByTestId("schedule-owner-row-confirm")).toHaveCount(0);
+    await expect(page.getByTestId("schedule-owner-row").filter({ hasText: "TAS Land Sale" })).toBeVisible();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-delete"));
+    expect(posted).toEqual([]);
+  });
+
+  test("Delete posts planar:nav-delete with the schedule's own id", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "Goose Creek (2)" }).getByTestId("schedule-owner-delete").click();
+    await page.getByTestId("schedule-owner-delete-confirm").click();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-delete"));
+    expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-delete", id: 19 }]);
+  });
+
+  test("deleting an Organization-owned schedule posts the same message shape", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "Operations" }).getByTestId("schedule-owner-delete").click();
+    await page.getByTestId("schedule-owner-delete-confirm").click();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-delete"));
+    expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-delete", id: 7 }]);
+  });
+
+  test("deleting another project's schedule (not the routed one) works the same from 'Other projects'", async ({ page }) => {
+    await openSchedule(page, ORPHAN, SCHEDULES);
+    await page.getByTestId("schedule-owner-row").filter({ hasText: "Grand Port" }).getByTestId("schedule-owner-delete").click();
+    await page.getByTestId("schedule-owner-delete-confirm").click();
+    const posted = await page.evaluate(() => (window.__posted || []).filter((m) => m && m.type === "planar:nav-delete"));
+    expect(posted).toEqual([{ source: "planar-shell", type: "planar:nav-delete", id: 2 }]);
+  });
+});
+
+/* ── The migration, exercised in the SHIPPED bytes ────────────────────────────────────────────────
+ *
+ * ⛔ EVERY OTHER CHECK ON THE MIGRATION READS THE CANONICAL MODULE IN src/. The embedded scheduler
+ * cannot import from src/ — it carries a verbatim INLINED copy — and the production build then
+ * pre-compiles its Babel blocks and strips @babel/standalone (see scripts/build-sequence-compiled).
+ * So "the module is correct" and "the module is alive in the page the owner loads" are two
+ * different claims, and only the second one protects his data. A unit test on src/ would stay green
+ * through a broken inline copy, a marker that drifted, or a build step that scoped the block away.
+ * This drives the real /sequence/ page and calls the functions that are actually in it.
+ *
+ * The document is production's shape at __rev 4232: twelve schedules, 813 tasks, two owned by no
+ * project, and eight orphaned next-task-id counters. The assertions are the two promises the PR
+ * makes about his data — NOTHING LOSES ITS TASKS and NOTHING BECOMES UNREACHABLE. */
+test.describe("the ownership migration is live in the shipped scheduler page", () => {
+  const DOC = {
+    __rev: 4232, nPid: 23, aPid: 1,
+    nTid: { 1: 302, 2: 279, 3: 162, 4: 5, 5: 16, 6: 43, 7: 8, 8: 1, 9: 1, 10: 1, 11: 1, 12: 1,
+            13: 1, 14: 1, 15: 2, 16: 1, 17: 1, 18: 1, 19: 1, 20: 1, 21: 1, 22: 9 },
+    lastActiveBySite: { "smqfy2r7pdec": 2, "smqfy48tlk9j": 22, "smsdrvzr9gzx": 15 },
+    projects: {
+      1:  { id: 1,  name: "Goose Creek",      n: 301, linkedSiteId: "smqfy48tlk9j" },
+      2:  { id: 2,  name: "Grand Port",       n: 278, linkedSiteId: "smqfy2r7pdec" },
+      3:  { id: 3,  name: "8 South",          n: 161, linkedSiteId: "smqiljx5fngg" },
+      5:  { id: 5,  name: "Pursuits",         n: 15 },
+      6:  { id: 6,  name: "Pappadoupolos",    n: 42,  linkedSiteId: "smqgpt12zh5o" },
+      7:  { id: 7,  name: "Operations",       n: 7 },
+      15: { id: 15, name: "Richfield",        n: 1,   linkedSiteId: "smsdrvzr9gzx" },
+      16: { id: 16, name: "ZZ-RENAME-TEST-G", n: 0,   linkedSiteId: "smtjb0lrexb3" },
+      19: { id: 19, name: "Goose Creek (2)",  n: 0,   linkedSiteId: "smqfy48tlk9j" },
+      20: { id: 20, name: "Goose Creek (3)",  n: 0,   linkedSiteId: "smqfy48tlk9j" },
+      21: { id: 21, name: "Goose Creek (4)",  n: 0,   linkedSiteId: "smqfy48tlk9j" },
+      22: { id: 22, name: "TAS Land Sale",    n: 8,   linkedSiteId: "smqfy48tlk9j" },
+    },
+  };
+
+  async function runInPage(page, fnBody) {
+    await page.goto("/sequence/index.html");
+    // The ownership block is a module-scope declaration in the page's own script, so it is reachable
+    // as a bare identifier. Wait for it rather than racing the compiled bundle's evaluation.
+    await page.waitForFunction(() => typeof normalizeScheduleOwnership === "function", null, { timeout: 30_000 });
+    return page.evaluate(fnBody, DOC);
+  }
+
+  test("the inlined module is genuinely present and callable in the built page", async ({ page }) => {
+    const kinds = await runInPage(page, () => [
+      typeof normalizeScheduleOwnership, typeof migrateScheduleOwnership,
+      typeof pruneScheduleRefs, typeof ownerOf, typeof validateNewSchedule,
+    ]);
+    expect(kinds).toEqual(["function", "function", "function", "function", "function"]);
+  });
+
+  test("NOTHING LOSES ITS TASKS and NOTHING BECOMES UNREACHABLE", async ({ page }) => {
+    const out = await runInPage(page, (doc) => {
+      // Rehydrate the task arrays at their real lengths inside the page.
+      const d = { ...doc, projects: {} };
+      for (const [pid, p] of Object.entries(doc.projects)) {
+        d.projects[pid] = { ...p, tasks: Array.from({ length: p.n }, (_, i) => ({ id: i + 1 })) };
+      }
+      const before = Object.values(d.projects).reduce((n, p) => n + p.tasks.length, 0);
+      const after = normalizeScheduleOwnership(d);
+      return {
+        before,
+        afterTasks: Object.values(after.projects).reduce((n, p) => n + p.tasks.length, 0),
+        ids: Object.keys(after.projects).map(Number).sort((a, b) => a - b),
+        owners: Object.fromEntries(Object.values(after.projects).map((p) => [p.name, ownerOf(p).kind])),
+        nTidKeys: Object.keys(after.nTid).map(Number).sort((a, b) => a - b),
+        lastActive: after.lastActiveBySite,
+        idempotent: normalizeScheduleOwnership(after) === after,
+      };
+    });
+
+    expect(out.before).toBe(813);
+    expect(out.afterTasks).toBe(813);                       // not one task lost
+    expect(out.ids).toEqual([1, 2, 3, 5, 6, 7, 15, 16, 19, 20, 21, 22]); // not one schedule dropped
+
+    // Every schedule now has an explicit owner; only the two genuinely cross-project ones are the
+    // organization's. NOT ONE was guessed from a name — see the module header.
+    expect(out.owners).toEqual({
+      "Goose Creek": "site", "Goose Creek (2)": "site", "Goose Creek (3)": "site",
+      "Goose Creek (4)": "site", "TAS Land Sale": "site", "Grand Port": "site",
+      "8 South": "site", "Pappadoupolos": "site", "Richfield": "site",
+      "ZZ-RENAME-TEST-G": "site", "Pursuits": "org", "Operations": "org",
+    });
+
+    // The eight orphaned counters (4, 8–14, 17, 18) are swept; every live one survives.
+    expect(out.nTidKeys).toEqual([1, 2, 3, 5, 6, 7, 15, 16, 19, 20, 21, 22]);
+    // The last-active pointers all name live schedules, so none is touched.
+    expect(out.lastActive).toEqual({ "smqfy2r7pdec": 2, "smqfy48tlk9j": 22, "smsdrvzr9gzx": 15 });
+    // A second boot changes nothing — so this never bumps __rev on every tab that opens.
+    expect(out.idempotent).toBe(true);
+  });
+
+  test("deleting a schedule takes its counter and its pointer with it", async ({ page }) => {
+    const out = await runInPage(page, (doc) => {
+      const d = { ...doc, projects: {} };
+      for (const [pid, p] of Object.entries(doc.projects)) d.projects[pid] = { ...p, tasks: [] };
+      const seeded = normalizeScheduleOwnership(d);
+      const projects = { ...seeded.projects };
+      delete projects[22];                                  // he deletes "TAS Land Sale"
+      const after = pruneScheduleRefs({ ...seeded, projects });
+      return { nTid22: after.nTid[22] ?? null, goose: after.lastActiveBySite["smqfy48tlk9j"] ?? null,
+               grand: after.lastActiveBySite["smqfy2r7pdec"] ?? null };
+    });
+    expect(out.nTid22).toBeNull();
+    expect(out.goose).toBeNull();     // no pointer left aimed at a schedule that is gone
+    expect(out.grand).toBe(2);        // live pointers untouched
+  });
+});

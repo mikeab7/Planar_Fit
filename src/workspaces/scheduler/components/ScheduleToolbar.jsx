@@ -112,7 +112,14 @@ function ExportMenu({ post }) {
 
 /* Center slot — the Grid/Split/Gantt view toggle + the review inbox (with its unread badge).
  * Always returns an element (never null) so AppHeader keeps its stable 3-zone Row-2 layout;
- * renders empty until the iframe reports state, or when not in Projects mode. */
+ * renders empty until the iframe reports state, or when not in Projects mode.
+ *
+ * NEW-1 — the "Schedules" switcher button that used to open here (ScheduleSwitcher, B1396192) was
+ * REMOVED: the Row-1 breadcrumb's second level (ScheduleCrumb, B1435888) now does that job in the
+ * place the user already looks to see where they are — two controls for one job was the defect.
+ * The old switcher could jump straight to another project's schedule in one step; the breadcrumb
+ * takes two (pick the project, then the schedule) — an accepted trade-off, not something to solve
+ * here. See NEW-1's own item for the full removal record. */
 export function ScheduleCenter({ toolbar, post }) {
   if (!toolbar.ready || toolbar.section !== "projects") return <></>;
   return (

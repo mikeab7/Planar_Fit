@@ -16,20 +16,35 @@
  * already promises to be — it only ever compares two dashboard visits, never claims to reconstruct
  * history from before this feature shipped.
  *
- * WHAT THIS DELIBERATELY DOES NOT COVER, and why: Gantt tasks carry no reliable per-task owner
- * (root CLAUDE.md's owner constraint #1 — tasks don't need one), so "tasks completed" is read off
- * the health field flipping to "green" for ANY task in this account's own schedule data (which is
- * already scoped to this account by RLS — there is no cross-account visibility here to filter).
- * ⛔ HOW SCHEDULE EVENTS ARE TIMESTAMPED, and why it is not `windowStartMs` (B<PENDING>, 2026-09-08).
- * The two snapshot-diffed kinds (`schedule-slip`, `tasks-completed`) have no exact occurrence time
- * — re-confirmed against production before this fix, not assumed: `public.planar_data` carries NO
- * `updated_at` column, and no task object in the live document carries a temporal field of any
- * kind (32 distinct task keys; none records when a field last changed). The first cut stamped them
- * at `windowStartMs` — the OLDEST instant the change could possibly have happened. That is a valid
- * lower bound and a catastrophic sort key: with the rows sorted newest-first and capped, an event
- * stamped at the floor of the window sorts BELOW every real-stamped event in it, so a returning
- * user who has been away long enough to overflow the cap loses 100% of their schedule rows, every
- * time — measured at 3 of 3 on a one-month absence.
+ * ⛔ THERE IS NO "TASKS COMPLETED" ROW — REMOVED, NOT MERELY UNBUILT (B1405456, 2026-09-08 review
+ * FEED-2). An earlier version of this file reported a batch of tasks "closed" by watching a leaf
+ * task's raw `.health` field flip to `"green"` between two visits. That is a status LABEL a person
+ * sets by clicking a color picker (`HealthPicker`, public/sequence/index.html) — it carries no
+ * completion event, no timestamp, and no guarantee the word "green" even MEANS finished on this
+ * account: `healthLabelOverrides` lets an account relabel it to anything, and nothing here reads
+ * that label back. `percentComplete` is no better a signal — B785744's own history is that marking
+ * a task Complete never touches it, so it drifts from the true status on real data (212 of 557 leaf
+ * tasks, measured live). There is no field anywhere in this document, and no timestamp anywhere in
+ * `public.planar_data`/`public.planar_history`, that records a genuine per-task completion EVENT —
+ * only a mutable status a person can set, unset, and reset for reasons that have nothing to do with
+ * finishing the work. Reporting "Closed N tasks" off that is worse than not reporting it at all: it
+ * can announce a batch closed when nobody finished anything. Per this same review's own stated
+ * remedy — derive a row from real completions with real timestamps, or drop it rather than infer
+ * one — deriving is not honestly possible here, so the row is dropped. `schedule-slip` below is not
+ * the same class: an `end` date changing is an objective, unambiguous fact recorded directly in the
+ * document (never a status label), and its only honesty gap was the earlier TIMING defect fixed by
+ * B1373536 below — which is why it keeps its `tsApprox` treatment and this one does not exist to
+ * need it.
+ * ⛔ HOW THE REMAINING SNAPSHOT-DIFFED KIND IS TIMESTAMPED, and why it is not `windowStartMs`
+ * (B1373536, 2026-09-08). `schedule-slip` has no exact occurrence time — re-confirmed against
+ * production before that fix, not assumed: `public.planar_data` carries NO `updated_at` column, and
+ * no task object in the live document carries a temporal field of any kind (32 distinct task keys;
+ * none records when a field last changed). The first cut stamped it at `windowStartMs` — the OLDEST
+ * instant the change could possibly have happened. That is a valid lower bound and a catastrophic
+ * sort key: with the rows sorted newest-first and capped, an event stamped at the floor of the
+ * window sorts BELOW every real-stamped event in it, so a returning user who has been away long
+ * enough to overflow the cap loses 100% of their schedule rows, every time — measured at 3 of 3 on
+ * a one-month absence (back when a second snapshot-diffed kind, `tasks-completed`, still existed).
  * The honest fix has two independent halves, because either alone still fails:
  *   (a) STAMP AT A MEASURED UPPER BOUND, not the floor. `public.planar_history` is an append-only
  *       ring of dated writes of this same document, so its newest `created_at` is a real, observed
@@ -47,6 +62,20 @@
  * every one reads a real recorded stamp off the record itself (`created_at`, `siteRenamedAt`,
  * `updated_at`, `createdAt`) and is exact.
  *
+ * ⛔ THE "NEW COMP" ROW'S RATE READS THROUGH THE SAME MODEL THE COMPS CARD USES, NOT ITS OWN COPY
+ * (B1405457, 2026-09-08 review FEED-3). This file used to carry a local re-implementation of the
+ * comp headline-rate math, including a lease rate rendered in the comp's OWN entered period (its
+ * `leaseRatePeriod`) rather than the account's chosen display period. The Dashboard's Comps card
+ * (`dashboard/lib/compsCardModel.js`) normalizes every lease rate it shows to ONE period — Michael's
+ * own "per year / per month" toggle, `compsRatePeriodPrefs.js` — so the same comp could read, say,
+ * "$0.65/SF/mo" in this feed and "$7.80/SF/yr" on the card two inches away, on the same screen, for
+ * the exact same lease. `compAddedSubline` below calls `compHeadlineRate`/`formatRateValue` from
+ * `compsCardModel.js` directly — the SAME functions the card calls, given the SAME `compsRatePeriod`
+ * the card is currently showing — so the two can never disagree again. It is recomputed at RENDER
+ * time (`SinceLastHereCard.jsx`'s `FeedRow`), not baked in once at feed-build time, so flipping the
+ * toggle updates both cards together rather than leaving this one on whatever period was current
+ * when the dashboard first loaded.
+ *
  * "Plans meaningfully edited" is scoped to whichever plans the Pursuits card already fetched
  * building geometry for (the touched-pursuit set) — reusing an existing, already-paid-for fetch
  * rather than adding a new account-wide element scan. A plan outside that set (tracked/complete/
@@ -54,18 +83,25 @@
  * being created or renamed, which read off real stamps with no such limit.
  */
 
+import { compHeadlineRate, formatRateValue, DEFAULT_LEASE_PERIOD, countyNameWords } from "./compsCardModel.js";
+import { shortenDisplayName } from "../../../shared/projects/projectModel.js";
+
+// B1407824 — how far a name in this feed's own sentence/subline can run before it's shortened
+// (shortenDisplayName's contract: a name at or under this stays untouched; a longer one is cut
+// cleanly, never on a dangling comma/period/hyphen/space). The feed row sits beside an icon tile
+// and a right-aligned age chip, so it has real but not unlimited width.
+const FEED_NAME_MAX_CHARS = 36;
+
 const MS_PER_DAY = 86400000;
 const OWN_ACTION_DEBOUNCE_MS = 30000; // "his own actions from thirty seconds ago" — never shown
 const FIRST_VISIT_FALLBACK_MS = 24 * 60 * 60 * 1000; // no prior mark at all: look back one day
 const CAP_ROWS = 12;
-const MAX_TASK_NAMES_SHOWN = 4;
 
 export const KIND_META = {
   "plan-created": { glyph: "+", accent: "site" },
   "plan-renamed": { glyph: "✎", accent: "site" }, // ✎
   "plan-edited": { glyph: "▦", accent: "site" }, // ▦
   "schedule-slip": { glyph: "↷", accent: "schedule" }, // ↷
-  "tasks-completed": { glyph: "✓", accent: "schedule" }, // ✓
   "comp-added": { glyph: "$", accent: "site" },
   "note-written": { glyph: "▤", accent: "notes" }, // ▤
 };
@@ -98,10 +134,18 @@ function planIdentity(site) {
 
 /** "Harris County · Pursuit" — real, already-fetched facts, used as the sub-line's fallback
  * substance whenever a plan's building geometry isn't in the touched set (a freshly created plan
- * that isn't a pursuit, or one nobody opened this session). */
+ * that isn't a pursuit, or one nobody opened this session).
+ *
+ * B1407824 — `site.county` is a lower-case ROUTING KEY ("harris", "fort_bend" — see
+ * shared/CLAUDE.md's County ROUTING KEYS note), never a display string, so building the sentence
+ * with it verbatim printed "harris County" / "bowie County". `countyNameWords` (compsCardModel.js
+ * — the SAME title-casing the Comps card already shows) is the one place this repo turns that key
+ * into "Harris" / "Fort Bend"; this composes it into "County" exactly like that module's own
+ * `countyLabel` composes it into "County, TX/CO" — one capitalization rule, two sentences. */
 function planContextLine(site) {
   const bits = [];
-  if (site.county) bits.push(`${site.county} County`);
+  const { words } = countyNameWords(site.county);
+  if (words) bits.push(`${words.join(" ")} County`);
   const label = statusLabel(site.status);
   if (label) bits.push(label);
   return bits.join(" · ");
@@ -128,6 +172,9 @@ function buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnaps
     const renamedMs = site.siteRenamedAt != null ? Number(site.siteRenamedAt) : NaN;
     const hasBuildingData = Object.prototype.hasOwnProperty.call(buildingCountBySite || {}, siteId);
     const name = (site.site || site.name || "Untitled site").trim() || "Untitled site";
+    // B1407824 — the FULL name is what's kept in the snapshot and what `open` resolves against;
+    // only the SENTENCE gets shortened, so a long name never breaks this row's own layout.
+    const displayName = shortenDisplayName(name, FEED_NAME_MAX_CHARS);
 
     let fired = false;
 
@@ -139,7 +186,7 @@ function buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnaps
         id: `plan-created:${siteId}`,
         kind: "plan-created",
         ts: createdMs,
-        parts: [{ text: "New plan " }, { text: name, bold: true }],
+        parts: [{ text: "New plan " }, { text: displayName, bold: true }],
         subline: line || "New plan",
         open: { kind: "project", groupId },
       });
@@ -151,7 +198,7 @@ function buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnaps
         id: `plan-renamed:${siteId}`,
         kind: "plan-renamed",
         ts: renamedMs,
-        parts: [{ text: "Renamed to " }, { text: name, bold: true }],
+        parts: [{ text: "Renamed to " }, { text: displayName, bold: true }],
         subline: planContextLine(site) || "Renamed",
         open: { kind: "project", groupId },
       });
@@ -167,7 +214,7 @@ function buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnaps
           id: `plan-edited:${siteId}:${updatedMs}`,
           kind: "plan-edited",
           ts: updatedMs,
-          parts: [{ text: name, bold: true }, { text: " updated" }],
+          parts: [{ text: displayName, bold: true }, { text: " updated" }],
           subline: buildingsLine(nowCount, nowSqft),
           open: { kind: "project", groupId },
         });
@@ -181,13 +228,18 @@ function buildPlanEvents({ sites, buildingCountBySite, sqftBySite, prevPlanSnaps
   return { rows, nextPlans };
 }
 
-/** Schedule events (a milestone's date moving, and bulk task completion) — diffed against the
- * per-task snapshot from the last visit, since nothing in the schedule data itself records when a
- * field last changed. See this module's header for how these are timestamped and why it is NOT
- * `windowStartMs`: they carry the tightest MEASURED upper bound available (`scheduleLastWriteAt`,
- * the newest `planar_history` write of this document; `now` when that is unavailable), clamped so
- * an approximate row can never suppress itself against the own-action debounce, and marked
- * `tsApprox` with the real `[tsEarliest, tsLatest]` interval they are known to lie in. */
+/** Schedule events (a milestone's date moving) — diffed against the per-task snapshot from the
+ * last visit, since nothing in the schedule data itself records when a field last changed. See
+ * this module's header for how this is timestamped and why it is NOT `windowStartMs`: it carries
+ * the tightest MEASURED upper bound available (`scheduleLastWriteAt`, the newest `planar_history`
+ * write of this document; `now` when that is unavailable), clamped so an approximate row can never
+ * suppress itself against the own-action debounce, and marked `tsApprox` with the real
+ * `[tsEarliest, tsLatest]` interval it is known to lie in.
+ *
+ * ⛔ Deliberately does NOT also report a task's `.health` flipping to `"green"` as "completed" —
+ * see this module's header (FEED-2, 2026-09-08 review): that field is a user-set status label with
+ * no completion timestamp behind it, not a recorded event, and reporting it as one can announce a
+ * batch of tasks "closed" when nobody finished anything. */
 function buildScheduleEvents({ scheduleProjects, prevTaskSnapshot, windowStartMs, approxTs, tsLatest }) {
   const rows = [];
   const nextTasks = {};
@@ -199,11 +251,10 @@ function buildScheduleEvents({ scheduleProjects, prevTaskSnapshot, windowStartMs
     const prevProject = (prevTaskSnapshot && prevTaskSnapshot[p.id]) || {};
     const nextProject = {};
     const projectName = (p.name && String(p.name).trim()) || "Untitled schedule";
-    const completedNames = [];
 
     for (const t of leaves) {
       if (!t || t.id == null) continue;
-      nextProject[t.id] = { end: t.end || null, health: t.health || null, name: (t.name && String(t.name).trim()) || "" };
+      nextProject[t.id] = { end: t.end || null, name: (t.name && String(t.name).trim()) || "" };
       const prev = prevProject[t.id];
       if (!prev) continue;
 
@@ -232,56 +283,11 @@ function buildScheduleEvents({ scheduleProjects, prevTaskSnapshot, windowStartMs
           }
         }
       }
-
-      if (prev.health !== "green" && t.health === "green") {
-        completedNames.push(nextProject[t.id].name || `Task #${t.id}`);
-      }
-    }
-
-    if (completedNames.length) {
-      const shown = completedNames.slice(0, MAX_TASK_NAMES_SHOWN);
-      const more = completedNames.length - shown.length;
-      rows.push({
-        id: `tasks-completed:${p.id}:${windowStartMs}`,
-        kind: "tasks-completed",
-        ts: approxTs,
-        tsApprox: true,
-        tsEarliest: windowStartMs,
-        tsLatest,
-        parts: [
-          { text: `Closed ${completedNames.length} task${completedNames.length === 1 ? "" : "s"} on ` },
-          { text: projectName, bold: true },
-        ],
-        subline: `${shown.join(", ")}${more > 0 ? `, +${more} more` : ""}`,
-        open: { kind: "schedule", linkedSiteId: p.linkedSiteId || null },
-      });
     }
 
     nextTasks[p.id] = nextProject;
   }
   return { rows, nextTasks };
-}
-
-// A small, local re-implementation of `shared/comps/lib/comps.js`'s `compHeadline` — see
-// dashboardCompsRecentFetch.js's header for why this file never imports that module.
-function compRateLine(comp) {
-  if (comp.compType === "land") {
-    const price = comp.landPrice, sizeValue = comp.landSizeValue;
-    if (!price || !sizeValue) return "Land comp";
-    const unit = comp.landSizeUnit === "ac" ? "ac" : "sf";
-    return `$${fmtInt(price / sizeValue)}/${unit === "ac" ? "AC" : "SF"} land`;
-  }
-  if (comp.compType === "building_sale") {
-    if (!comp.bldgPrice || !comp.bldgSizeSf) return "Building sale";
-    return `$${fmtInt(comp.bldgPrice / comp.bldgSizeSf)}/SF sale`;
-  }
-  if (comp.compType === "lease") {
-    if (comp.leaseRate == null) return "Lease comp";
-    const period = comp.leaseRatePeriod === "monthly" ? "/mo" : "/yr";
-    const basis = comp.leaseRateExpense ? ` ${String(comp.leaseRateExpense).toUpperCase()}` : "";
-    return `$${comp.leaseRate}/SF${period}${basis}`;
-  }
-  return "Comp";
 }
 
 function compSizeText(comp) {
@@ -298,20 +304,42 @@ function compSizeText(comp) {
   return "";
 }
 
-/** Comp events — `compRateLine` above states the rate; this adds its size alongside, since a rate
- * with no size is half the deal. */
-function buildCompEvents({ comps }) {
+const COMP_TYPE_FALLBACK = { land: "Land comp", building_sale: "Building sale", lease: "Lease comp" };
+
+/** The "New comp" row's rate + size line, e.g. "$7.80/SF/yr NNN · 600,000 SF" — the rate through
+ * `compHeadlineRate`/`formatRateValue` (`compsCardModel.js`), the SAME functions and the SAME
+ * `compsRatePeriod` the Comps card uses, so this can never disagree with what the card shows for
+ * the same comp (see this module's header, FEED-3). Exported so `SinceLastHereCard.jsx` can
+ * recompute it at render time against the CURRENT period, rather than freezing whichever one was
+ * current when the feed was built. `land`/`building_sale` keep their old " land"/" sale" suffix
+ * (the only place a comp-added row states its type at all); a lease needs none — its `/mo`/`/yr`
+ * already says so. */
+export function compAddedSubline(comp, compsRatePeriod = DEFAULT_LEASE_PERIOD) {
+  const rate = compHeadlineRate(comp, compsRatePeriod);
+  let rateText;
+  if (rate == null) {
+    rateText = COMP_TYPE_FALLBACK[comp.compType] || "Comp";
+  } else {
+    const unit = rate.unit.replace(/^\$/, "");
+    const basis = rate.basis ? ` ${rate.basis.toUpperCase()}` : "";
+    const suffix = comp.compType === "land" ? " land" : comp.compType === "building_sale" ? " sale" : "";
+    rateText = `${formatRateValue(rate.value)}${unit}${basis}${suffix}`;
+  }
+  const size = compSizeText(comp);
+  return [rateText, size].filter(Boolean).join(" · ") || "New comp";
+}
+
+/** Comp events — `compAddedSubline` above states the rate + size in one line. */
+function buildCompEvents({ comps, compsRatePeriod }) {
   return (comps || []).map((comp) => {
     const ts = Date.parse(comp.createdAt || "");
-    const size = compSizeText(comp);
-    const rate = compRateLine(comp);
     const noun = comp.title || "New comp";
     return {
       id: `comp-added:${comp.id}`,
       kind: "comp-added",
       ts: Number.isFinite(ts) ? ts : 0,
       parts: [{ text: "New comp " }, { text: noun, bold: true }],
-      subline: [rate, size].filter(Boolean).join(" · ") || "New comp",
+      subline: compAddedSubline(comp, compsRatePeriod),
       open: { kind: "comp", comp },
     };
   }).filter((r) => r.ts > 0);
@@ -377,6 +405,9 @@ export function capRowsFairlyByKind(rows, cap) {
  * @param {Array}  args.comps — fetchRecentComps() rows (already createdAt-filtered)
  * @param {Array}  args.notePages — fetchRecentNotePages() rows (already createdAt-filtered)
  * @param {object} args.prevSnapshot — the stored { plans, tasks } from the last visit
+ * @param {string} [args.compsRatePeriod] — the Comps card's own "annual"|"monthly" display choice
+ *   (`compsRatePeriodPrefs.js`), so a lease comp's rate here matches the card exactly — see this
+ *   module's header, FEED-3. Defaults to `DEFAULT_LEASE_PERIOD`, same as an untouched card.
  */
 export function buildSinceLastHereFeed({
   now,
@@ -389,6 +420,7 @@ export function buildSinceLastHereFeed({
   notePages = [],
   prevSnapshot = { plans: {}, tasks: {} },
   scheduleLastWriteAt = null,
+  compsRatePeriod = DEFAULT_LEASE_PERIOD,
 }) {
   const isFirstVisit = lastVisitAt == null;
   const windowStartMs = isFirstVisit ? now - FIRST_VISIT_FALLBACK_MS : lastVisitAt;
@@ -409,7 +441,7 @@ export function buildSinceLastHereFeed({
     scheduleProjects, prevTaskSnapshot: prevSnapshot.tasks, windowStartMs,
     approxTs: scheduleTs, tsLatest,
   });
-  const compRows = buildCompEvents({ comps });
+  const compRows = buildCompEvents({ comps, compsRatePeriod });
   const noteRows = buildNoteEvents({ notePages });
 
   const allRows = [...plan.rows, ...schedule.rows, ...compRows, ...noteRows]

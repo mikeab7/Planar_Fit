@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
-  CARD_KEYS, CARD_DEFS, GRID_COLS, DEFAULT_LAYOUT, normalizeLayout, resetLayout,
+  CARD_KEYS, CARD_DEFS, GRID_COLS, DEFAULT_LAYOUT, DEFAULT_ORDER, normalizeLayout, resetLayout,
   availableToAdd, addCard, removeCard, applyGridChange, narrowOrder, toRglItem,
+  newCatalogCards, appendNewCatalogCards, normalizeDismissed, dismissCard, undismissCard,
 } from "../src/workspaces/dashboard/lib/dashboardLayout.js";
 
 describe("DEFAULT_LAYOUT", () => {
@@ -180,6 +181,87 @@ describe("toRglItem", () => {
     expect(toRglItem(entry)).toEqual({
       i: "needsAttention", x: 0, y: 0, w: 8, h: 9,
       minW: CARD_DEFS.needsAttention.minW, minH: CARD_DEFS.needsAttention.minH,
+    });
+  });
+});
+
+describe("B1422496 — a card added to the catalog after a layout was saved reaches it automatically", () => {
+  it("newCatalogCards/appendNewCatalogCards exist and reconcile a legacy saved layout without disturbing it", () => {
+    // Simulate a layout saved back when the catalog didn't yet include one of today's cards
+    // (Michael's real report: needsAttention/pursuitsTable/recentPlans/sinceLastHere shipped and
+    // never reached his saved six-card layout). `dismissed` models "every other catalog card has
+    // already been decided" so only the one simulated-new card is reachable.
+    const saved = [
+      { key: "jumpBackIn", x: 0, y: 0, w: 8, h: 4 },
+      { key: "goingQuiet", x: 8, y: 0, w: 4, h: 6 },
+    ];
+    const before = saved.map((e) => ({ ...e }));
+    const dismissed = CARD_KEYS.filter((k) => k !== "compsSummary" && !saved.some((e) => e.key === k));
+
+    const reachable = newCatalogCards(saved, dismissed);
+    expect(reachable).toEqual(["compsSummary"]);
+
+    const reconciled = appendNewCatalogCards(saved, dismissed);
+    // Existing cards' own position/size is untouched — same order, same x/y/w/h.
+    expect(reconciled.slice(0, saved.length)).toEqual(before);
+    // The new card reached the layout without the user opening Customize.
+    expect(reconciled.some((e) => e.key === "compsSummary")).toBe(true);
+  });
+
+  it("a card the user deliberately removed does not come back, even though it's just as absent", () => {
+    const layout = [{ key: "jumpBackIn", x: 0, y: 0, w: 8, h: 4 }];
+    const dismissed = CARD_KEYS.filter((k) => k !== "jumpBackIn");
+    expect(newCatalogCards(layout, dismissed)).toEqual([]);
+    expect(appendNewCatalogCards(layout, dismissed)).toBe(layout);
+  });
+
+  it("appends every newly-reachable card, in DEFAULT_ORDER, when more than one is new at once", () => {
+    const layout = [{ key: "compsSummary", x: 0, y: 0, w: 4, h: 8 }];
+    // Nothing else has been decided — a brand-new-to-this-mechanism account with a real save.
+    expect(newCatalogCards(layout, [])).toEqual(DEFAULT_ORDER.filter((k) => k !== "compsSummary"));
+  });
+
+  describe("normalizeDismissed — bootstrap for accounts saved before this reconciliation existed", () => {
+    it("undefined (never recorded) defaults to every catalog card currently missing — a legacy layout is never retroactively changed", () => {
+      const layout = [{ key: "jumpBackIn", x: 0, y: 0, w: 8, h: 4 }];
+      const dismissed = normalizeDismissed(undefined, layout);
+      expect(new Set(dismissed)).toEqual(new Set(CARD_KEYS.filter((k) => k !== "jumpBackIn")));
+      // Reconciling against that bootstrap set is a no-op, by construction.
+      expect(appendNewCatalogCards(layout, dismissed)).toBe(layout);
+    });
+
+    it("null is treated the same as undefined", () => {
+      const layout = [{ key: "jumpBackIn", x: 0, y: 0, w: 8, h: 4 }];
+      expect(new Set(normalizeDismissed(null, layout))).toEqual(new Set(CARD_KEYS.filter((k) => k !== "jumpBackIn")));
+    });
+
+    it("an explicitly-saved empty list means nothing has been dismissed yet — any missing catalog card IS new", () => {
+      expect(normalizeDismissed([], [{ key: "jumpBackIn", x: 0, y: 0, w: 8, h: 4 }])).toEqual([]);
+    });
+
+    it("drops unknown/malformed entries and dedupes an explicitly-saved list", () => {
+      expect(normalizeDismissed(["compsSummary", "notReal", "compsSummary", 5, null], [])).toEqual(["compsSummary"]);
+    });
+  });
+
+  describe("dismissCard / undismissCard", () => {
+    it("dismissCard records a key once, idempotently", () => {
+      expect(dismissCard([], "compsSummary")).toEqual(["compsSummary"]);
+      expect(dismissCard(["compsSummary"], "compsSummary")).toEqual(["compsSummary"]);
+      expect(dismissCard(["goingQuiet"], "compsSummary")).toEqual(["goingQuiet", "compsSummary"]);
+    });
+
+    it("undismissCard clears a key, leaving the rest untouched", () => {
+      expect(undismissCard(["goingQuiet", "compsSummary"], "compsSummary")).toEqual(["goingQuiet"]);
+      expect(undismissCard(["goingQuiet"], "notThere")).toEqual(["goingQuiet"]);
+    });
+
+    it("round-trips through the picker: remove then re-add clears the dismissal, so a later removal is a fresh decision", () => {
+      let dismissed = [];
+      dismissed = dismissCard(dismissed, "compsSummary");
+      expect(newCatalogCards([], dismissed)).not.toContain("compsSummary");
+      dismissed = undismissCard(dismissed, "compsSummary");
+      expect(newCatalogCards([], dismissed)).toContain("compsSummary");
     });
   });
 });

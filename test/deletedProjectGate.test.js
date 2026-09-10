@@ -62,6 +62,11 @@ vi.mock("../src/shared/telemetry/clientErrors.js", () => ({ reportClientEvent: (
 import { cloudCheckDeleted } from "../src/workspaces/site-planner/lib/cloudSync.js";
 import { checkProjectDeletionStatus, setActiveUser, ensureProjectRow, listDeletedProjects } from "../src/workspaces/site-planner/lib/storage.js";
 import { projectGateStatus, markProjectFreshlyMinted, wasProjectFreshlyMinted } from "../src/shared/projects/projectModel.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 // storage.js's saveSite/readSites (and projectModel.js's persisted freshly-minted list) persist
 // through the browser's localStorage; this suite runs in vitest's Node environment (no DOM), so
@@ -481,5 +486,33 @@ describe("B1202176 (extended) — a restored lastRoute pointer to a locally-mint
     expect(() => markProjectFreshlyMinted("x")).not.toThrow();
     expect(wasProjectFreshlyMinted("x")).toBe(false);
     globalThis.localStorage = saved;
+  });
+});
+
+/* The deleted-project screen's sentence — the owner reported it reading
+ * "was moved to Recently deleted ." with a stray space before the period.
+ *
+ * ⛔ THE SPACE WAS A SYMPTOM, NOT THE BUG. It was an empty relative time: `relTime` could not parse
+ * the ISO timestamp `cloudCheckDeleted` hands this screen and silently returned "". Fixed at the
+ * source (see relTime's own header + test/projects.test.js's ISO block); this asserts the SENTENCE,
+ * so the copy can never re-grow the space regardless of what a future timestamp value does. Source
+ * assertion rather than a render: this component is lazy-loaded behind Suspense inside Shell.jsx
+ * and the sentence is what was reported, not the DOM around it. */
+describe("DeletedProjectNotice — no stray space before the period", () => {
+  const NOTICE = readFileSync(resolve(HERE, "../src/shared/ui/DeletedProjectNotice.jsx"), "utf8");
+
+  it("builds the whole fragment in ONE expression, not from JSX whitespace condensing", () => {
+    expect(NOTICE).toMatch(/\{relTime\(deletedAt\)\s*\n\s*\? ` was moved to Recently deleted \$\{relTime\(deletedAt\)\}\. `/);
+    expect(NOTICE).toMatch(/: " was moved to Recently deleted\. "/);
+  });
+
+  it("gates on the RENDERED time, never on `deletedAt` merely being truthy", () => {
+    // `deletedAt ? ...` is the exact shape that produced the stray space: a truthy but unparseable
+    // ISO string took the branch that appends a space and then an empty string.
+    expect(NOTICE).not.toMatch(/\{deletedAt \? ` \$\{relTime\(deletedAt\)\}` : ""\}/);
+  });
+
+  it("leaves no ' .' anywhere in the copy", () => {
+    expect(NOTICE).not.toMatch(/Recently deleted\{[^}]*\}\./);
   });
 });

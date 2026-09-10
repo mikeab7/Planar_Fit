@@ -673,18 +673,25 @@ ok("...but it is still THERE, on the row's own title", /edited/i.test(await tb(`
 /* ⛔ AND THE RECENT VIEW IS GONE (B36050). Owner: *"I don't think I need a recent option."*
    Two segments, not three — and the timestamp DATA is deliberately untouched underneath, so
    this is a component that was removed, not a schema that was migrated. */
-ok("⛔ THE RECENT TAB IS GONE — two segments, Pages and Bin",
+ok("⛔ THE RECENT TAB IS GONE — the segmented control is Pages/Tasks, Bin is in the footer rail",
   await tb("notes-view-recent").count() === 0
   && await tb("notes-view-tree").count() === 1
   && await tb("notes-view-bin").count() === 1);
-/* ⛔ THREE SEGMENTS AGAIN, AND IT IS NOT A REVERSAL OF B36050 (NEW-4). Recent went because
-   it re-sorted the SAME pages by a fact the owner does not navigate by. TASKS shows something
-   no other surface in the module can show at all — every unticked checklist line across every
-   note — so the count assertion moves from "two" to "these three, by name", which is the
-   thing actually worth guarding. RECENT is still asserted gone, one check above. */
-ok("...and the tab strip is exactly Pages, Tasks and Bin",
-  (await page.locator('[role="tablist"][aria-label="Notes view"] button').allInnerTexts()).join("|") === "Pages|Tasks|Bin",
+/* ⛔ TASKS EARNED A SEGMENT (NEW-4, historical) AND IS NOT A REVERSAL OF B36050. Recent went
+   because it re-sorted the SAME pages by a fact the owner does not navigate by. TASKS shows
+   something no other surface in the module can show at all — every unticked checklist line
+   across every note.
+   ⛔ AND BIN LEFT THE SEGMENTED CONTROL ENTIRELY (NEW-3, owner decision 2026-09-09) — it now
+   lives in the sidebar's own footer rail, alongside the new Unfiled row, never squeezing
+   Pages/Tasks into two of three slots for a destination rather than a place you work. */
+ok("...and the tab strip is exactly Pages and Tasks — two segments, not three",
+  (await page.locator('[role="tablist"][aria-label="Notes view"] button').allInnerTexts()).join("|") === "Pages|Tasks",
   (await page.locator('[role="tablist"][aria-label="Notes view"] button').allInnerTexts()).join("|"));
+ok("...and Bin is reachable from the footer rail below the tree, not the segmented control",
+  await page.locator('[data-testid="notes-footer-rail"] [data-testid="notes-view-bin"]').count() === 1);
+ok("...stating its retention period ON THE ROW",
+  /kept \d+ days/.test(await tb("notes-view-bin").innerText()),
+  await tb("notes-view-bin").innerText());
 ok("⛔ ...while the times themselves are STILL IN THE MODEL — nothing was orphaned to remove a view",
   flatPages(await readTree()).map((x) => x.node).filter((p) => Number.isFinite(p.updatedAt)).length >= 3);
 
