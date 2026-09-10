@@ -10,7 +10,7 @@ vi.mock("../src/workspaces/site-planner/lib/vectorOverlay.js", () => ({ cachedVe
 // so an accidental default marker degrades to a real pin instead of a broken image.
 vi.mock("../src/workspaces/site-planner/lib/mapSymbols.js", () => ({ installDefaultMarkerIcon: vi.fn(), pointToLayerFor: vi.fn() }));
 
-import { ALL_LAYERS, MERGE_GROUPS, LAYER_GROUP_ORDER, LAYER_GROUP_LABEL, identifyOverlaysAt } from "../src/workspaces/site-planner/lib/layers.js";
+import { ALL_LAYERS, MERGE_GROUPS, LAYER_GROUP_ORDER, LAYER_GROUP_LABEL, identifyOverlaysAt, rasterIdentifyLayers } from "../src/workspaces/site-planner/lib/layers.js";
 import { buildGroupSlots } from "../src/workspaces/site-planner/lib/layerPanelInfo.js";
 import { JURISDICTION_LAYERS } from "../src/workspaces/site-planner/lib/counties.js";
 
@@ -212,5 +212,43 @@ describe("NEW-7 · coverage-gap opt-in lives on the registry row", () => {
   it("FEMA declares its coverage gap; a universal-coverage layer does not", () => {
     expect(ALL_LAYERS.fema.identifyGap).toBe("flood");
     expect(ALL_LAYERS.wetlands.identifyGap).toBeUndefined();
+  });
+});
+
+/* B1490144 — owner request 2026-09-10, verbatim: "remove the feature where my mouse
+ * tells me the floodplain status when the floodplain layer is on." Scoped to the FEMA flood-zone
+ * row alone (both its raster export ask and its opt-in vector/tiles ask); every other
+ * raster-painted layer named in the request — wetlands, HCFCD, BKDD — keeps answering. The
+ * Layers panel's own FEMA verdict is a separate surface (components/LayerPanel.jsx's
+ * `femaVerdict`, via `floodZoneCopy.femaZoneVerdict`) that reads neither flag and is untouched —
+ * not re-tested here, it never depended on either identify path in the first place. */
+describe("B1490144 · the floodplain layer no longer answers a cursor identify", () => {
+  it("FEMA is opted OUT of both the raster ask and the vector/tiles ask", () => {
+    expect(ALL_LAYERS.fema.identify).toBe(false);
+    expect(ALL_LAYERS.fema.canvasIdentify).toBe(false);
+  });
+
+  it("rasterIdentifyLayers never offers FEMA even when it is ON, while a sibling flood-group raster layer (HCFCD) still is", () => {
+    const overlays = { fema: { on: true }, hcfcd_row: { on: true }, wetlands: { on: true } };
+    const picked = rasterIdentifyLayers(overlays).map((x) => x.id);
+    expect(picked).not.toContain("fema");
+    expect(picked).toContain("hcfcd_row");
+    expect(picked).toContain("wetlands");
+  });
+
+  it("identifyOverlaysAt never offers FEMA even with geometry in hand (the tiles case), while the BKDD vector layers it sits beside still answer", () => {
+    const HIT = { title: "Flood Hazard Zones", rows: [], sourceName: "FEMA" };
+    const layer = (hit) => ({ identifyAt: () => hit });
+    const at = { lat: 29.77938, lng: -95.89503, tolDeg: 0.0001 };
+    const out = identifyOverlaysAt(
+      { fema: layer(HIT), bkdd_easements: layer(HIT) },
+      { fema: { on: true }, bkdd_easements: { on: true } },
+      at
+    );
+    expect(out.map((x) => x.id)).toEqual(["bkdd_easements"]);
+  });
+
+  it("the Layers-panel coverage-gap wording (identifyGap) is untouched — it is generic machinery, not flood-specific code", () => {
+    expect(ALL_LAYERS.fema.identifyGap).toBe("flood");
   });
 });
