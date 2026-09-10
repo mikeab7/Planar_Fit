@@ -46,11 +46,27 @@ create or replace function public.rename_site_group(
   p_renamed_at bigint
 )
 returns table (id text, version integer)
-language sql
+language plpgsql
 volatile
 security invoker
 set search_path = public, pg_temp
 as $$
+begin
+  -- ⛔ NEW-1 — REFUSE AN EMPTY STAMP BY NAME. `jsonb_set` is STRICT, so a NULL `p_renamed_at` makes
+  -- the whole expression NULL and the statement tries to set `data` to NULL. MEASURED, not assumed:
+  -- `public.sites.data` is NOT NULL today, so the attempt aborts the whole group update with
+  -- `23502 null value in column "data"` rather than destroying anything — the outcome is safe but
+  -- the message names a column the caller never touched, and the safety rests entirely on a
+  -- constraint this function does not own. Refusing here says what actually went wrong, and keeps
+  -- saying it if that constraint is ever relaxed. Unreachable from today's client (`cloudRenameGroup`
+  -- coerces with `Number(renamedAt) || Date.now()`) — which is exactly why it belongs here rather
+  -- than being trusted there: this function is granted to `authenticated`, so any caller can reach
+  -- it. LOUD-FAILURE: the client surfaces `error.message` straight onto the rename banner.
+  if p_renamed_at is null or p_renamed_at <= 0 then
+    raise exception 'rename_site_group: p_renamed_at must be a positive epoch-ms timestamp (got %)', p_renamed_at
+      using errcode = '22004';
+  end if;
+  return query
   update public.sites s
      set site       = p_site,
          data       = jsonb_set(
@@ -61,6 +77,7 @@ as $$
    where coalesce(s.data->>'groupId', s.id) = p_group_id
      and s.deleted_at is null
   returning s.id, s.version;
+end;
 $$;
 
 comment on function public.rename_site_group(text, text, bigint) is
