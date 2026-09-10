@@ -15,24 +15,25 @@
  * Ownership itself is read through the shared `partitionSchedules`, never re-derived here — one
  * answer to "who owns this", the whole point of src/shared/schedule/scheduleOwnership.js.
  *
- * ⛔ B1396192 — THIS USED TO RENDER ONLY INSIDE Scheduler.jsx'S EMPTY STATE, so the moment a
- * routed project HAD a schedule (any schedule), every one of its OTHER schedules — and the
- * Organization's — became unreachable from that project's Schedule tab. That was the owner's
- * whole original complaint (B1380336/B1380337) restated one level up: Goose Creek's own "TAS Land
- * Sale" schedule stayed unreachable from Goose Creek's Schedule tab, the instant Goose Creek's
- * FIRST schedule loaded. This component itself was already correct — the bug was purely about
- * WHERE it was mounted. It now renders from TWO call sites: Scheduler.jsx's empty state (a
- * project with no schedule yet — unchanged), and the header's "Schedules" button/dropdown
- * (`ScheduleSwitcher` in ScheduleToolbar.jsx — new, covers every other case, incl. Grid/Split/
- * Gantt and the phone-width header's horizontal-scroll toolbar).
+ * ⛔ B1396192 (SUPERSEDED BY NEW-1) — THIS USED TO RENDER ONLY INSIDE Scheduler.jsx'S EMPTY STATE,
+ * so the moment a routed project HAD a schedule (any schedule), every one of its OTHER schedules
+ * — and the Organization's — became unreachable from that project's Schedule tab. That was the
+ * owner's whole original complaint (B1380336/B1380337) restated one level up: Goose Creek's own
+ * "TAS Land Sale" schedule stayed unreachable from Goose Creek's Schedule tab, the instant Goose
+ * Creek's FIRST schedule loaded. This component itself was already correct — the bug was purely
+ * about WHERE it was mounted. B1396192's fix added a SECOND call site, the header's "Schedules"
+ * button/dropdown (`ScheduleSwitcher` in ScheduleToolbar.jsx). NEW-1 (2026-09-10) removed that
+ * button outright once B1435888's `ScheduleCrumb` (below) took over the same job from the
+ * breadcrumb, which is where the user already looks to see where they are. The two remaining call
+ * sites are Scheduler.jsx's empty state (a project with no schedule yet) and `ScheduleCrumb.jsx`.
  *
  * ⛔ B1435888 — TWO OPTIONAL PROPS FOR THE ROW-1 BREADCRUMB'S OWN SCHEDULE LEVEL (`ScheduleCrumb.jsx`,
  * "Schedule access: project and schedule become two separate breadcrumb levels"). `showOther`
  * (default true) hides the "Other projects" group when false — the breadcrumb's own dropdown is
- * scoped to THIS project + the Organization only, per the owner-picked mockup; the header's
- * "Schedules" panel (ScheduleSwitcher, unchanged) keeps every group. `createLabel` overrides the
- * generic "New schedule" row text (the breadcrumb passes "New schedule in <Project>"). Neither
- * prop changes anything for an existing caller that doesn't pass it.
+ * scoped to THIS project + the Organization only, per the owner-picked mockup; the empty-state's
+ * own inline call site keeps every group. `createLabel` overrides the generic "New schedule" row
+ * text (the breadcrumb passes "New schedule in <Project>"). Neither prop changes anything for an
+ * existing caller that doesn't pass it.
  *
  * ⛔ B1397568 — "＋ New schedule" IS NOW A ROW IN THIS LIST, when `onCreate` is passed in. The
  * create dialog (NewScheduleModal) already worked from a project that already has a schedule —

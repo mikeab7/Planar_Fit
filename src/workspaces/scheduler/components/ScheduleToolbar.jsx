@@ -16,7 +16,6 @@
  */
 import { useState, useRef } from "react";
 import AnchoredMenu from "../../../shared/ui/AnchoredMenu.jsx";
-import ScheduleOwnerList from "./ScheduleOwnerList.jsx";
 
 const ACCENT = "var(--accent-schedule-text)";
 
@@ -102,61 +101,6 @@ function ExportMenu({ post }) {
   );
 }
 
-// B1396192 — "Schedules": the routed project's own schedules, the Organization's, and every
-// other project's, reachable from the header REGARDLESS of whether a schedule is currently
-// loaded. Before this, ScheduleOwnerList (the grouped list built in B1380336/B1380337) rendered
-// ONLY inside Scheduler.jsx's "no schedule yet" empty state — so the instant a project HAD a
-// schedule, every one of that project's OTHER schedules (and the Organization's) became
-// unreachable from here, which was the owner's whole original complaint restated one level up
-// (Goose Creek's four other schedules, "TAS Land Sale" included, stayed unreachable from its own
-// Schedule tab). This is the fix: the same grouped list, same ownership data
-// (src/shared/schedule/scheduleOwnership.js), reachable at any time via one button.
-//
-// ⛔ MUST live in the CENTER zone (ScheduleCenter), never the RIGHT/toolbar zone (ScheduleActions)
-// — measured, not a style choice. Row 2 is 3 zones (tabs | center | toolbar); the tabs and
-// toolbar zones are BOTH `flex:"none"` (content-sized, never grow — B1012560), and the center
-// zone alone is `flex:"1 1 auto"`, absorbing the leftover row width and centering its own content
-// within it. That only reads as "the Grid/Split/Gantt group is centered in the row" when the tabs
-// zone's width and the toolbar zone's width are themselves roughly equal — which they were, by
-// coincidence of content, before this change. Adding this button+divider to the RIGHT zone widens
-// ONLY that zone by ~55px with nothing to balance it on the left, which reproduces — measured live
-// via ui-audit/verify-schedule-header-widths.mjs — EXACTLY the second owner-reported defect this
-// header already shipped a fix for once (B1012560: "the center group sat a CONSTANT ~135px
-// off-center at every width from 1280 to 2560"). The center zone has no such constraint: it
-// centers its OWN children within itself regardless of how many there are or how wide, so adding
-// a sibling here costs nothing but a touch more content width, never the symmetric-centering
-// invariant. (The center zone's own geometry harness hardcodes which elements make up "the center
-// group" for its 2D-overlap math — `centerParts` in verify-schedule-header-widths.mjs — updated in
-// the same commit to include this button, or that check would silently measure a narrower box
-// than what's actually on screen.)
-function ScheduleSwitcher({ schedules, activeId, siteId, siteName, onSelect, onCreate, onRename, onDelete }) {
-  const [open, setOpen] = useState(false);
-  const anchor = useRef(null);
-  return (
-    <>
-      <button ref={anchor} onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
-        data-testid="schedule-switcher-btn"
-        title="Schedules — this project's, the Organization's, or another project's" style={btn(open)}>
-        <Glyph size={13}><polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" /></Glyph>
-        <span style={{ fontSize: 8, opacity: 0.6 }}>▾</span>
-      </button>
-      <AnchoredMenu open={open} onClose={() => setOpen(false)} anchorRef={anchor} placement="below-right" width={260} gap={8}
-        panelStyle={{ padding: 0 }}>
-        <ScheduleOwnerList
-          schedules={schedules}
-          activeId={activeId}
-          siteId={siteId}
-          siteName={siteName}
-          onSelect={(id) => { onSelect?.(id); setOpen(false); }}
-          onCreate={onCreate ? () => { setOpen(false); onCreate(); } : undefined}
-          onRename={onRename}
-          onDelete={onDelete}
-        />
-      </AnchoredMenu>
-    </>
-  );
-}
-
 /* B566 — the floppy-disk SaveButton that used to live here was REMOVED. Save status now rides
  * in the shared, app-wide cloud badge (CloudSyncBadge) in AppHeader's Row-1 top-right zone, the
  * same place + component the Site Planner uses — so the indicator means the same thing across
@@ -166,28 +110,20 @@ function ScheduleSwitcher({ schedules, activeId, siteId, siteName, onSelect, onC
  * also carried moved to the embedded app's Settings panel (reachable via the lifted ⚙), so nothing
  * was lost. The embedded app stays the single source of truth for the actual cloud writes. */
 
-/* Center slot — the "Schedules" switcher + the Grid/Split/Gantt view toggle + the review inbox
- * (with its unread badge). Always returns an element (never null) so AppHeader keeps its stable
- * 3-zone Row-2 layout; renders empty until the iframe reports state, or when not in Projects mode. */
-export function ScheduleCenter({
-  toolbar, post,
-  // B1396192 — the "Schedules" switcher's data: the full bridged schedule list, which one is
-  // active, and the routed project (id + display name). Optional/default-empty so every existing
-  // caller (incl. ui-audit/header-schedule-harness.jsx) keeps rendering unchanged; the button
-  // itself still mounts with empty defaults, just with nothing but the Organization/Other-
-  // projects groups to show until real data is passed.
-  schedules = [], activeId = null, siteId = null, siteName = null, onSelectSchedule,
-  // B1397568 — optional: opens the "New schedule" dialog. When omitted, the switcher's dropdown
-  // shows no create row (matches every existing caller, incl. the ui-audit harness above).
-  onCreateSchedule,
-  // B1404352 — optional: rename (id, name) or delete (id) a schedule directly from this list.
-  onRenameSchedule, onDeleteSchedule,
-}) {
+/* Center slot — the Grid/Split/Gantt view toggle + the review inbox (with its unread badge).
+ * Always returns an element (never null) so AppHeader keeps its stable 3-zone Row-2 layout;
+ * renders empty until the iframe reports state, or when not in Projects mode.
+ *
+ * NEW-1 — the "Schedules" switcher button that used to open here (ScheduleSwitcher, B1396192) was
+ * REMOVED: the Row-1 breadcrumb's second level (ScheduleCrumb, B1435888) now does that job in the
+ * place the user already looks to see where they are — two controls for one job was the defect.
+ * The old switcher could jump straight to another project's schedule in one step; the breadcrumb
+ * takes two (pick the project, then the schedule) — an accepted trade-off, not something to solve
+ * here. See NEW-1's own item for the full removal record. */
+export function ScheduleCenter({ toolbar, post }) {
   if (!toolbar.ready || toolbar.section !== "projects") return <></>;
   return (
     <>
-      <ScheduleSwitcher schedules={schedules} activeId={activeId} siteId={siteId} siteName={siteName} onSelect={onSelectSchedule} onCreate={onCreateSchedule} onRename={onRenameSchedule} onDelete={onDeleteSchedule} />
-      <span style={{ width: 1, height: 20, background: "var(--chrome-divider)", flex: "none", margin: "0 2px" }} />
       {!toolbar.reviewOpen && <ViewToggle view={toolbar.view} onSet={(v) => post({ type: "planar:view-set", view: v })} />}
       <button onClick={() => post({ type: "planar:review-toggle" })} aria-pressed={toolbar.reviewOpen}
         title="Review suggested updates from forwarded emails"
