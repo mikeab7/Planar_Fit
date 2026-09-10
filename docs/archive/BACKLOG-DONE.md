@@ -14041,7 +14041,8 @@ Both rows reuse the exact `data-testid="notes-view-bin"` the old tab carried, so
 - Files: `src/workspaces/site-planner/SitePlanner.jsx`, `src/workspaces/site-planner/lib/deviceShape.js` (new), `test/deviceShape.test.js` (new), `BACKLOG.md`.
 - Base: `origin/main` @ `adbba1a3`.
 
-### B1482096 — The Schedule empty state dumps the schedule list across the bottom of the window as naked text `[Scheduler]` (bug) #scheduler #ui  *(owner-reported 2026-09-10 with a screenshot. Project 1128627, Schedule tab, no schedule yet: the centred empty state ("No schedule for 1128627" / Create schedule / Link an existing schedule) rendered correctly, but underneath it the schedule owner list rendered as loose, unbounded text spanning the FULL window width with no panel around it — the project name and "No schedules here yet." hard against the bottom-LEFT corner, each row's count/pencil/trash hard against the bottom-RIGHT corner. His words: "stuff popping up on the bottom left and right corners that shouldn't." Minted **B1482096** from this branch's reserved block B1482096–B1482111 · V1077504–V1077519 against freshly-fetched `origin/main` eb37d1d. DEDUPE-FIRST — searched Open/⏳Verify/Done for "ScheduleOwnerList", "bottom-left", "bottom corner", "loose text", "corner text": no existing item names this containment/surface defect on the empty-state list specifically. Net-new.)*
+### B1482096 (×2) — The Schedule empty state dumps the schedule list across the bottom of the window as naked text `[Scheduler]` (bug) #scheduler #ui  *(owner-reported 2026-09-10 with a screenshot. Project 1128627, Schedule tab, no schedule yet: the centred empty state ("No schedule for 1128627" / Create schedule / Link an existing schedule) rendered correctly, but underneath it the schedule owner list rendered as loose, unbounded text spanning the FULL window width with no panel around it — the project name and "No schedules here yet." hard against the bottom-LEFT corner, each row's count/pencil/trash hard against the bottom-RIGHT corner. His words: "stuff popping up on the bottom left and right corners that shouldn't." Minted **B1482096** from this branch's reserved block B1482096–B1482111 · V1077504–V1077519 against freshly-fetched `origin/main` eb37d1d. DEDUPE-FIRST — searched Open/⏳Verify/Done for "ScheduleOwnerList", "bottom-left", "bottom corner", "loose text", "corner text": no existing item names this containment/surface defect on the empty-state list specifically. Net-new.)*
+- Recurrence: 2026-09-10 — measured live on planyr.io after #1632 merged, project smtvt0w2r5yv (1128627), Schedule tab, viewport height 465: the corners were genuinely clean (first fix confirmed), but the schedule-owner panel now OVERLAPPED the empty state's own actions — "Create schedule" clipped at its top edge, "Link an existing schedule" fully underneath the panel and NOT clickable (`elementFromPoint` at its centre resolved to the panel div, not the button), and the panel itself ran past the bottom of the window. This is the exact case the first fix's own verify list claimed to have checked ("Create and Link both clickable") but had only checked at a tall viewport — fixed same session, below.
 `[x]` **IMPLEMENTED AND VERIFIED THIS SESSION — root cause fixed at the wrapper the dispatch brief had already localized, headless e2e proof added and passing, full CI-parity gate suite green.**
 - Verify: sandbox — a plain CSS containment/surface defect on a logged-out, no-external-GIS UI surface (ATTEMPT-BEFORE-YOU-PARK): fully Claude-doable and driven headless this session, not one of the mandatory LIVE-VERIFY classes (timing/race, concurrency, GIS endpoint behavior, zoom/density rendering, PDF/export parity, real-project-data repro).
 
@@ -14062,3 +14063,65 @@ Both rows reuse the exact `data-testid="notes-view-bin"` the old tab carried, so
 
 - Files: `src/workspaces/scheduler/Scheduler.jsx`, `e2e/schedule-ownership.spec.js`, `docs/archive/BACKLOG-DONE.md`.
 - Base: `origin/main` @ `eb37d1d`.
+
+---
+
+`[x]` **RECURRENCE FIXED THE SAME SESSION — root cause was two independently-positioned overlays that
+could not see each other's height; fixed by merging them into one normal-flow, scrollable region.
+Teeth-proven: the new short-viewport test fails RED against the just-merged #1632 code and passes
+GREEN against this fix.**
+
+**ROOT CAUSE OF THE REGRESSION.** The first fix (above) gave the owner-list panel its own surface but
+kept it as a SEPARATE `position:"absolute", left:0, right:0, bottom:0` sibling, stacked (via
+`zIndex:7`) over `LinkSchedulePanel`'s own full-bleed `position:"absolute", inset:0` box (`zIndex:6`).
+Two absolutely-positioned overlays sized independently of each other's content can never account for
+each other's height — on a tall window there was room for both and nothing touched; on a short one
+(measured: ~465px) the owner-list panel, anchored to the true bottom of the container, simply painted
+over whatever `LinkSchedulePanel` had rendered above it. The first fix's own "adjacent cases" section
+never tried a short viewport — it verified containment and reachability at the sandbox's default
+(tall) viewport size only, which is exactly the gap the owner's live click-test found.
+
+**FIX.** `LinkSchedulePanel.jsx` no longer owns a full-bleed positioning shell (dropped
+`position/inset/zIndex/background/padding/overflow` from its own `wrap` style — kept only its inner
+flex-centered column, unchanged in appearance). `Scheduler.jsx` now renders ONE full-bleed
+`overflow:"auto"` shell (`data-testid="schedule-empty-shell"`) that owns the background and scrolling,
+containing a plain flex COLUMN (`minHeight:"100%"`, `justifyContent:"center"`) with `LinkSchedulePanel`
+first and the owner-list panel (unchanged: still `menuPanelStyle`, still width-capped) second — true
+document flow, so the two stack instead of overlapping at any height, and the shell's own scroll
+reaches anything a short window can't fit rather than letting it run off the bottom unreachably. This
+is the standard "outer scroll container / inner min-height:100% flex-center" pattern specifically
+because a flex container that is ITSELF both `overflow:auto` and `justify-content:center` clips the
+start of its own overflow in some browsers when content exceeds its height — the split avoids that
+trap. `ScheduleOwnerList.jsx`/`ScheduleCrumb.jsx` are untouched again, so the breadcrumb dropdown case
+is unaffected a second time.
+
+**PROOF, teeth-first.** A new test, "short viewport (~465px): Create and Link are never overlapped by
+the owner-list panel, and both stay clickable," reproduces the owner's exact measurement: 900×465
+viewport, `elementFromPoint` at the centre of both "Create schedule" and "Link an existing schedule"
+must resolve into the button itself, never into `[data-testid="schedule-owner-list"]"`; the owner-list
+panel's bounding box must sit at or below the bottom edge of "Link an existing schedule" (document
+flow, not overlap); "Link an existing schedule" is actually clicked and its picker (`<select
+aria-label="Choose a schedule to link">`) actually appears; and the shell's `scrollHeight >
+clientHeight` at this fixture's content (8 schedules) with the last owner-list row reachable by
+scrolling the shell to its end. **Run against the just-merged `#1632` commit (`8c5d7ad7`) BEFORE
+writing the fix: RED** — `hitsOwnButton(createBtn)` failed outright, reproducing the owner's report
+that even "Create schedule" was compromised at this height, not just "Link." **Run against this fix:
+GREEN**, and the full `e2e/schedule-ownership.spec.js` + `e2e/scheduler-duplicate-menu.spec.js` (48
+tests, 1 setup test skipped — no seeded auth account in this sandbox) pass with every other test
+unchanged, including a same-session concurrent PR (#1633, "collapse row actions into a kebab") that
+also touched `ScheduleOwnerList.jsx` and merged cleanly with no prop-shape conflict. `npm run build`,
+`eslint .`, `node ui-audit/design-drift-audit.mjs` (zero new findings) all clean. Full
+`node scripts/ci-parity.mjs --skip-install` — all 20 CI gates, including visual regression against the
+16 approved baselines — green.
+
+**ADJACENT CASES RE-CHECKED at the short viewport, not just the tall one:** a project with no
+schedules of its own but an Organization list (the fixture used above); the schedule-owner list's own
+scroll reaching every row including the last (verified by scrolling the shell and asserting the last
+row `toBeInViewport()`); the schedule breadcrumb's own dropdown (unchanged, full existing coverage
+still passing); narrow width (390px, existing test, still passing, unaffected by this change since it
+only touches vertical layout).
+
+**No contradiction with `## Owner product constraints`.**
+
+- Files: `src/workspaces/scheduler/Scheduler.jsx`, `src/workspaces/scheduler/components/LinkSchedulePanel.jsx`, `e2e/schedule-ownership.spec.js`, `docs/archive/BACKLOG-DONE.md`.
+- Base: `origin/main` @ `aae83b79` (branch restarted from fresh main per the merged-PR rule, since #1632 had already merged).
