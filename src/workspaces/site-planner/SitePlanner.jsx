@@ -41,12 +41,12 @@ import {
   CLOUD_ARC_PRESETS, CLOUD_ARC_MIN_FT, CLOUD_ARC_MAX_FT, CLOUD_ARC_DEFAULT_FT, CLOUD_STATUS_OPTIONS,
   clampCloudArcFt, cloudScallopPath, simplifyPath, cloudMetaDefaults,
 } from "./lib/cloudGeometry.js";
-import { EMPTY_TAP, tapTime, stepDoubleTap } from "./lib/doubleTap.js";
+import { EMPTY_TAP, tapTime, stepDoubleTap, pairsWithLastTap } from "./lib/doubleTap.js";
 import { DRAG_SLOP_PX, makeDragGate, stepDragGate, dragArmed } from "./lib/dragGate.js";
 import { isDiagArmed, latchDiagArm } from "./lib/diagArm.js";
 import { createViewChangeRecorder, attachTimeline } from "./lib/viewChangeRecorder.js";
 import { createViewFramingGate } from "./lib/viewFramingGate.js";
-import { resolveDoubleClickTarget, gestureAnchorTarget, stackEntries, pressIsOverElementBody, stackHoldsFeature, parseFeatureKey, stackAtPoint, nextPickIndex } from "./lib/featureTarget.js";
+import { resolveDoubleClickTarget, gestureAnchorTarget, stackEntries, pressIsOverElementBody, stackHoldsFeature, parseFeatureKey, stackAtPoint, nextPickIndex, ACTION_ATTR } from "./lib/featureTarget.js";
 import { parkDepthForRows, parkRowsForDepth, explodeParkingBands, edgeAbutsPaving } from "./lib/parking.js";
 import { openOverlayFile, rasterizePage, rasterizePageHiRes, isPdfFile, isDxfFile, rasterizeStoredPdf, rasterizeStoredDxf, baseRasterScale, chooseOverlayRasterScale, overlayRasterKey, HIRES_CACHE_PER_OVERLAY } from "./lib/overlayPdf.js";
 import { isDwgFile, convertDwgToDxf } from "./lib/convertClient.js";
@@ -9588,11 +9588,22 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
    * only a press that is NOT a continuation starts a new anchor. Everything else fails open to the
    * stack: no anchor, or one outside the double-click's own time/distance budget, resolves exactly
    * as it did before. */
-  const lastPressRef = useRef({ t: 0, x: 0, y: 0 });
+  const lastPressRef = useRef({ t: 0, x: 0, y: 0, action: false });
   const gestureAnchorRef = useRef(null);
+  /* ⛔ B1342704 — THE GESTURE-ON-ACTION-CONTROL ANCHOR, same shape as `gestureAnchorRef` one line up
+   * and deliberately SEPARATE from it (see featureTarget.js's `ACTION_ATTR` header for why a
+   * per-node `stopPropagation()` on the glyph cannot survive the re-render its own press causes).
+   * `gestureAnchorRef` requires a live `sel` (it is keyed off what press 1 SELECTED); an add-node
+   * renders on HOVER alone (`featActiveId`), so a double-click on one with nothing selected yet
+   * must still be caught, and this ref carries no such requirement. PRESS 1 KEEPS IT for the whole
+   * gesture, exactly like the selection anchor: a press that pairs with the one already held (same
+   * point, inside the double-click's own budget) is a continuation and leaves it alone; anything
+   * else re-stamps it from the CURRENT press. */
+  const gestureActionRef = useRef(null);
   const notePress = (e) => {
     if (!e) return;
-    lastPressRef.current = { t: tapTime(e), x: e.clientX, y: e.clientY };
+    const action = !!(e.target && typeof e.target.closest === "function" && e.target.closest(`[${ACTION_ATTR}]`));
+    lastPressRef.current = { t: tapTime(e), x: e.clientX, y: e.clientY, action };
   };
   const selFeatureKey = (s) => {
     if (!s || !s.kind) return null;
@@ -9629,12 +9640,29 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     if (held && gestureAnchorTarget(held, p)) return;   // still in flight — press 1 keeps it
     gestureAnchorRef.current = { key, t: p.t, x: p.x, y: p.y };
   });
+  /* B1342704 — same "press 1 keeps it" pairing, unconditional on `sel` (see the ref's own header
+   * above). This calls `pairsWithLastTap` directly rather than `gestureAnchorTarget` — that helper
+   * always runs its result through `parseFeatureKey`, which requires a `"kind:id"` shape and turns
+   * ANY other string into `null`; a dummy key with no colon (there is no feature identity here to
+   * carry) would make it report "not still in flight" on every single press, silently. */
+  useLayoutEffect(() => {
+    const p = lastPressRef.current;
+    const held = gestureActionRef.current;
+    if (held && pairsWithLastTap({ id: "action", t: held.t, x: held.x, y: held.y }, { id: "action", t: p.t, x: p.x, y: p.y })) return; // still in flight
+    gestureActionRef.current = p.action ? { t: p.t, x: p.x, y: p.y } : null;
+  });
   /* The anchor + this press, in the shape lib/featureTarget.js takes. `at.t` falls back to the same
    * monotonic clock `tapTime` uses, so the E2E hook (which has no event) is on one timeline with it. */
   const dblOpts = (e, x, y) => ({ anchor: gestureAnchorRef.current, at: { t: tapTime(e), x, y } });
   const onBgDouble = (e) => {
     if (finishActiveDrawing()) return;
     if (tool !== "select" || !e) return;
+    // B1342704 — this gesture began on an add/remove control (featNode/glyphPlus/glyphMinus); the
+    // control already did its own job on each press, so the double-click is about the control, not
+    // whatever feature is underneath it. Swallow it here — asked BEFORE any resolution, because a
+    // mid-gesture re-render can retarget the native dblclick clean outside the control's own node
+    // (see ACTION_ATTR's header in featureTarget.js), so per-node stopPropagation alone can't do it.
+    if (gestureActionRef.current) return;
     featureDoubleAction(resolveDoubleClickTarget(hitStackAt(e.clientX, e.clientY), dblOpts(e, e.clientX, e.clientY)), e);
   };
   /* ⛔ B233153 — E2E/self-audit hook for the DOUBLE-CLICK RESOLUTION (same `window.__PLANYR_E2E`
@@ -16908,8 +16936,31 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   // decides whether this control may exist is DERIVED from its outer width (the placed feature is
   // never smaller on screen than the control that places it). Hardcoding them here again is what
   // would let the threshold and the real control drift apart.
+  /* NEW-1 (B1342704) — THESE THREE GLYPHS ARE ACTION BUTTONS, NOT DRAG GRIPS, so the handle-layer
+   * transparency rule (CHROME-NEVER-EATS-A-PRESS / featureTarget.js's B233153 rule) is the WRONG
+   * rule for them. A resize/rotate/vertex grip does nothing on its own — it only carries a drag —
+   * so a double-click landing on one is correctly forwarded to the feature underneath, which is
+   * what makes Properties openable at all on a feature whose own body a grip fully covers. These
+   * three glyphs are the opposite: `onPointerDown` ALREADY performs the button's whole action (add
+   * a dock zone / bump-out / employee row / parking row), so a double-click here is two presses of
+   * that SAME button, not an attempt to reach the building or parking field beneath it. Because
+   * they render inside the shared `data-handle-layer` group, `resolveDoubleClickTarget` treats them
+   * as identification-transparent by default and falls through to the underlying `data-feature`,
+   * which is exactly the owner's report: double-clicking the "+" to expand a parking field opened
+   * Properties.
+   *
+   * `data-el-action="1"` (below) plus `gestureActionRef` (declared beside `gestureAnchorRef`, up
+   * near `onBgDouble`) is the REAL fix — the root-level gesture anchor keyed off what press 1 hit,
+   * so it survives the glyph itself moving mid-gesture. The `onDoubleClick={stopPropagation}` here
+   * is a cheap first line of defence for the ordinary case (ships free, breaks nothing) but is NOT
+   * sufficient alone: the glyph's own `onPointerDown` already mutated the model by the time press 2
+   * lands, so a re-render can move (or replace) the glyph under a stationary cursor and the browser
+   * retargets `click#2`/`dblclick` to a common ancestor OUTSIDE this `<g>` — see `ACTION_ATTR`'s
+   * header in featureTarget.js for the measured trace. */
   const featNode = (key, pos, exists, color, addTitle, onAdd, onRemove, r = FEAT_CTRL_R) => (
-    <g key={key} style={{ cursor: "pointer" }} onPointerDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); exists ? onRemove() : onAdd(); }}>
+    <g key={key} data-el-action="1" style={{ cursor: "pointer" }}
+      onPointerDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); exists ? onRemove() : onAdd(); }}
+      onDoubleClick={(e) => e.stopPropagation()}>
       <title>{exists ? "Remove this — click to subtract" : addTitle}</title>
       <circle cx={pos.x} cy={pos.y} r={r} fill={exists ? "#b91c1c" : color} stroke="#ffffff" strokeWidth={FEAT_CTRL_STROKE} />
       <line x1={pos.x - r * 0.5} y1={pos.y} x2={pos.x + r * 0.5} y2={pos.y} stroke="#ffffff" strokeWidth={FEAT_CTRL_STROKE} />
@@ -16921,7 +16972,9 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   // action applies it sits centred. This is what the owner asked for — grow AND shrink right on
   // the building, not a single toggle that hides the "+" once something's there.
   const glyphPlus = (cx, cy, color, r, title, onClick) => (
-    <g style={{ cursor: "pointer" }} onPointerDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); onClick(); }}>
+    <g data-el-action="1" style={{ cursor: "pointer" }}
+      onPointerDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); onClick(); }}
+      onDoubleClick={(e) => e.stopPropagation()}>
       <title>{title}</title>
       <circle cx={cx} cy={cy} r={r} fill={color} stroke="#ffffff" strokeWidth={FEAT_CTRL_STROKE} />
       <line x1={cx - r * 0.5} y1={cy} x2={cx + r * 0.5} y2={cy} stroke="#ffffff" strokeWidth={FEAT_CTRL_STROKE} />
@@ -16929,7 +16982,9 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
     </g>
   );
   const glyphMinus = (cx, cy, r, title, onClick) => (
-    <g style={{ cursor: "pointer" }} onPointerDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); onClick(); }}>
+    <g data-el-action="1" style={{ cursor: "pointer" }}
+      onPointerDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); onClick(); }}
+      onDoubleClick={(e) => e.stopPropagation()}>
       <title>{title}</title>
       <circle cx={cx} cy={cy} r={r} fill="#b91c1c" stroke="#ffffff" strokeWidth={FEAT_CTRL_STROKE} />
       <line x1={cx - r * 0.5} y1={cy} x2={cx + r * 0.5} y2={cy} stroke="#ffffff" strokeWidth={FEAT_CTRL_STROKE} />

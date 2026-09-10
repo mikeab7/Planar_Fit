@@ -9207,6 +9207,19 @@ Proven in `vite preview` AND on the **real Cloudflare branch-preview deploy** (`
 
 **Result:** ⏳ pending — needs a real signed-in browser session with live GIS reachability; not reachable from this sandbox. `Cadence: once`.
 
+### V979424 — B1342704: a double-click on a parking/dock-zone "+"/"−" control on Goose Creek's real trailer-parking strip grows/shrinks it without opening Properties, and the strip's own body still opens Properties `Blocker: auth` `Blocker: real-data`
+
+**Why this needs its own real pass.** The mechanism is proven directly against a synthetic reproduction of the reported shape — a freshly-drawn car-parking field's own row "+" control, and a freshly-drawn building's dock-zone "+" control — in a real headless browser, logged out, this session (`e2e/dblclick-onshape-controls.spec.js`, 4/4 green, mutation-proven: with the fix's gate disabled, the two reported-case tests go red while the two "unaffected control" tests stay green). What cannot be proven here is the OWNER'S OWN case exactly as reported: a trailer-parking strip beside Building 5 on his real, saved Goose Creek plan — the sandbox's egress proxy CORS-blocks the Supabase auth handshake, so there is no way to sign in and open a real project from here.
+
+**Steps, each with a named expected result — on `planyr.io`, signed in, Goose Creek → "Plan II - 220K, 440K, 700K":**
+1. Select the trailer-parking strip beside Building 5, zoom in until its on-shape "+"/"−" row controls (small colored discs, on the strip's depth edge) are visible.
+2. Double-click the "+" control. **Expect:** the strip visibly grows (gains a row/depth) and the Properties panel does **not** open.
+3. Double-click the "−" control (if present). **Expect:** the strip visibly shrinks and the Properties panel does **not** open.
+4. Double-click the strip's own BODY (not a control). **Expect:** the Properties panel **does** open, exactly as before this fix.
+5. Repeat steps 2–4 on one of the plan's buildings, using its dock-zone or employee-side "+"/"−" controls, to confirm the same general fix (same shared control primitive) holds off the specific parking-field case.
+6. As a quick adjacent-case sanity check: double-click a building's resize corner grip (the small square handle at a corner once it's selected). **Expect:** Properties still opens — that control is a drag handle, not an action button, and is deliberately unaffected by this fix.
+
+**Result:** ⏳ pending — needs a real signed-in browser session on the owner's actual Goose Creek project; not reachable from this sandbox. `Cadence: once`.
 ### V1086352 — B1497890: a Dashboard visit fires zero reverse-geocode calls until the Comps card is scrolled into view, and a coordinate already resolved is never re-fetched `Blocker: auth` `Blocker: real-data`
 
 **Why this needs its own real pass.** The mechanism is proven by source and by the wiring-guard suite `test/compsCardAddressCache.test.js` (8 cases, 6 proven red against the pre-fix code): `useCompAddress` now checks the shared disk cache (`shared/comps/lib/pinAddrCache.js`) before ever calling `reverseGeocodeLatLon`, and the call itself is gated behind `useOnScreen`'s `IntersectionObserver`. What cannot be proven here: a real reverse-geocode call succeeding at all (this sandbox's egress to every external GIS host tried comes back connection-reset — the same wall V1085601 names), and there is no signed-in account with real comp data to measure a fetch count against (the same signed-in-account requirement V1085600/V1085601 name). **The owner's own ask for this item was specifically a per-endpoint fetch-count measurement** (the same methodology he used for B1497889/B1497888 — "Opening a project route went from 45 fetch/XHR to 27… reverse-geocodes went from 6 on load to 0 on load"); that number can only be produced on a real signed-in browser.

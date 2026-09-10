@@ -393,7 +393,10 @@ describe("source guard — the render must keep stamping what the resolver reads
    * and a press EATEN BY CHROME is exactly the case the anchor exists for. */
   it("the press is stamped in the capture phase, so chrome that swallows it is still recorded", () => {
     expect(SP).toMatch(/onPointerDownCapture=\{\(e\) => \{ notePress\(e\);/);
-    expect(SP).toMatch(/lastPressRef\.current = \{ t: tapTime\(e\), x: e\.clientX, y: e\.clientY \}/);
+    // B1342704 — extended with `action` (was this press over an add/remove on-shape control?),
+    // stamped in the same capture-phase statement for the same reason: a control's own
+    // `stopPropagation()` must not hide it from the gesture-level swallow check either.
+    expect(SP).toMatch(/lastPressRef\.current = \{ t: tapTime\(e\), x: e\.clientX, y: e\.clientY, action \}/);
     /* …and UNCONDITIONALLY. It shares the capture handler with the vertex-drag hook, which bails
      * during a 2-finger pinch, and (B548822) the stack picker, which bails on anything but a plain
      * Alt+click; a press swallowed by either is still a press, and gating the stamp behind them
