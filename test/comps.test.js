@@ -1187,3 +1187,17 @@ describe("comps: NEW-5 — Executed date optional, Date entered fallback (owner 
     });
   });
 });
+
+describe("comps: NEW-1 — an unknown lease period is never laundered into 'annual' (owner call, 2026-09-10)", () => {
+  it("compToDraft leaves a missing period UNSET rather than defaulting it to annual", () => {
+    // Was `|| "annual"`: opening a comp with no recorded period showed "annual", and the next
+    // save committed that guess. A rate of 0.64 is a twelfth of 7.68 — the exact misstatement
+    // annualLeaseRate's own header warns about, arriving through the edit path.
+    expect(compToDraft({ compType: "lease", leaseRate: 0.64 }).leaseRatePeriod).toBe("");
+    expect(compToDraft({ compType: "lease", leaseRate: 0.64, leaseRatePeriod: null }).leaseRatePeriod).toBe("");
+  });
+  it("KNOWN-GOOD: a period that IS recorded still round-trips both ways", () => {
+    expect(compToDraft({ compType: "lease", leaseRatePeriod: "monthly" }).leaseRatePeriod).toBe("monthly");
+    expect(compToDraft({ compType: "lease", leaseRatePeriod: "annual" }).leaseRatePeriod).toBe("annual");
+  });
+});
