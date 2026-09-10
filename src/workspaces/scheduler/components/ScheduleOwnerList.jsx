@@ -65,11 +65,32 @@
  * second click onto an adjacent control). A same-owner name collision WARNS, exactly like
  * creating a schedule does (`validateNewSchedule`) — he's allowed to name two schedules alike on
  * purpose; what he isn't allowed is to do it without knowing.
+ *
+ * ⛔ NEW-1 — RENAME/DUPLICATE/DELETE COLLAPSED INTO ONE KEBAB PER ROW (owner report, 2026-09-10,
+ * measured live on Goose Creek: every row rendered THREE always-visible icon buttons — Rename,
+ * Duplicate, Delete — twelve buttons on screen for four schedules, four of them a red trash icon
+ * a short distance from the row click that opens a 305-task schedule. Verbatim: "we don't need
+ * these options that visible, this should just be like three dots or something."). Each row now
+ * renders ONE kebab trigger (`schedule-owner-kebab`) opening an `AnchoredMenu` with Rename /
+ * Duplicate / a divider / Delete (styled destructive) — the same portal-menu idiom
+ * `SitePlansSection`'s `OverlayRow` and `ProjectBreadcrumb`'s own per-row kebab already use
+ * elsewhere in this app. The kebab is ALWAYS visible (not hover-revealed): `ProjectBreadcrumb`
+ * already tried hover-reveal for this exact shape (its own NEW-2, B439) and reverted it — "it was
+ * hover-revealed, which left touch and keyboard users with no rename at all" — so this starts from
+ * that lesson rather than re-learning it; it costs nothing on this list, since it is one small
+ * control per row rather than three. The rename/delete inline-edit and inline-confirm subtrees
+ * (`editing`/`confirming` below) are UNCHANGED — only how you REACH Rename/Duplicate/Delete moved,
+ * never what happens once you do. The label + task count are now ONE button spanning the row's
+ * full width (`minWidth:0` flex-grow, same as before) so a click anywhere on the row besides the
+ * kebab still switches schedules; the kebab's own `onClick` stops propagation so opening the menu
+ * can never fire a row select as a side effect.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { RADIUS } from "../../../shared/ui/radius.js";
 import { FONT_SIZE, SPACE } from "../../../shared/ui/designTokens.js";
 import { MODULE_ACCENT } from "../../../shared/ui/moduleAccent.js";
+import { MenuItem } from "../../../shared/ui/controls.jsx";
+import AnchoredMenu from "../../../shared/ui/AnchoredMenu.jsx";
 import {
   ORG_OWNER_LABEL, partitionSchedules, ownerKeyOf, nameCollision, normalizeName, describeScheduleDelete,
 } from "../../../shared/schedule/scheduleOwnership.js";
@@ -136,12 +157,23 @@ const DuplicateIcon = ({ size = 12 }) => (
     <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
   </svg>
 );
+// NEW-1 — the per-row manage affordance, drawn (not a `⋯` text glyph — the platform font's own
+// rendering) in this file's own idiom, same reasoning as ProjectBreadcrumb.jsx's KebabIcon.
+const KebabIcon = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+    style={{ flex: "none", display: "block" }}>
+    <circle cx="12" cy="5" r="1.9" /><circle cx="12" cy="12" r="1.9" /><circle cx="12" cy="19" r="1.9" />
+  </svg>
+);
 
 const iconBtn = {
   display: "flex", alignItems: "center", justifyContent: "center", flex: "none",
   width: 22, height: 22, padding: 0, borderRadius: RADIUS.sm, border: "none",
   background: "none", cursor: "pointer", color: "var(--text-secondary)",
 };
+// NEW-1 — one row inside the kebab's dropdown: icon + label, the same shape SitePlansSection's
+// OverlayRow menu items already use.
+const menuItemRow = { display: "flex", alignItems: "center", gap: 6 };
 const renameInput = {
   flex: "1 1 auto", minWidth: 0, padding: "3px 6px", borderRadius: RADIUS.sm,
   border: `1px solid ${ACCENT}`, outline: "none", background: "var(--surface-raised)",
@@ -211,51 +243,113 @@ function ScheduleRow({
     );
   }
   return (
+    <ScheduleRowResting
+      s={s} active={active} onSelect={onSelect} canManage={canManage} label={label}
+      onStartRename={onStartRename} onDuplicate={onDuplicate} onStartConfirm={onStartConfirm}
+    />
+  );
+}
+
+// NEW-1 — the resting (not editing/confirming) row, split out so its own `menuOpen`/kebab-anchor
+// state (below) doesn't have to be threaded through ScheduleRow's editing/confirming branches,
+// which never need it. Module scope (MODULE-SCOPE-COMPONENTS) — same reasoning as ScheduleRow
+// itself: an inline function here would remount on every parent render.
+function ScheduleRowResting({ s, active, onSelect, canManage, label, onStartRename, onDuplicate, onStartConfirm }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const kebabRef = useRef(null);
+  const hasDivider = !!(onStartConfirm && (onStartRename || onDuplicate));
+  return (
     <div
       data-testid="schedule-owner-row"
       data-schedule-id={String(s.id)}
       style={{ ...rowBase, cursor: "default", padding: `${SPACE.xs}px ${SPACE.sm}px ${SPACE.xs}px ${SPACE.md}px` }}
     >
+      {/* NEW-1 — the label AND the task count are now ONE button spanning the row (flex-grow),
+          so a click anywhere on the row besides the kebab switches schedules — not just a click
+          landing exactly on the name text. */}
       <button
         type="button"
         aria-current={active ? "true" : undefined}
         onClick={() => onSelect?.(s.id)}
         style={{
           all: "unset", boxSizing: "border-box", cursor: "pointer", flex: "1 1 auto", minWidth: 0,
-          fontWeight: active ? 600 : 400, color: active ? ACCENT : "inherit",
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          display: "flex", alignItems: "center", gap: SPACE.xs,
         }}
       >
-        {label}
+        <span style={{
+          fontWeight: active ? 600 : 400, color: active ? ACCENT : "inherit", minWidth: 0, flex: "1 1 auto",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {label}
+        </span>
+        {/* B1435888 — the task count, right-aligned beside the name (the breadcrumb's own
+            dropdown asked for this; shown here for every caller since it's a small, harmless
+            addition and the header's "Schedules" panel benefits from the same at-a-glance
+            count). Absent entirely when the embedded app hasn't reported a count for this row
+            (sanitizeProjects only carries `taskCount` when the bridge sent one) — never a
+            fabricated 0. */}
+        {s.taskCount != null && (
+          <span style={{ flex: "none", fontSize: FONT_SIZE.micro, color: "var(--text-tertiary)" }}>
+            {s.taskCount}
+          </span>
+        )}
       </button>
-      {/* B1435888 — the task count, right-aligned beside the name (the breadcrumb's own dropdown
-          asked for this; shown here for every caller since it's a small, harmless addition and the
-          header's "Schedules" panel benefits from the same at-a-glance count). Absent entirely when
-          the embedded app hasn't reported a count for this row (sanitizeProjects only carries
-          `taskCount` when the bridge sent one) — never a fabricated 0. */}
-      {s.taskCount != null && (
-        <span style={{ flex: "none", fontSize: FONT_SIZE.micro, color: "var(--text-tertiary)" }}>
-          {s.taskCount}
-        </span>
-      )}
+      {/* NEW-1 — ONE kebab per row, replacing the three always-visible Rename/Duplicate/Delete
+          icon buttons (owner report: "twelve buttons on screen at once, four of them
+          destructive"). ALWAYS visible (never hover-revealed — see this file's header note on
+          why) so it works identically on a mouse, a touchscreen laptop, and via keyboard focus.
+          `stopPropagation` on the trigger's own click keeps opening the menu from ever also
+          firing the row's onSelect. */}
       {canManage && (
-        <span style={{ display: "flex", gap: 1, flex: "none" }}>
-          {onStartRename && (
-            <button type="button" data-testid="schedule-owner-rename" title={`Rename “${label}”`} aria-label={`Rename “${label}”`} onClick={() => onStartRename(s)} style={iconBtn}>
-              <PencilIcon />
-            </button>
-          )}
-          {onDuplicate && (
-            <button type="button" data-testid="schedule-owner-duplicate" title={`Duplicate “${label}”`} aria-label={`Duplicate “${label}”`} onClick={() => onDuplicate(s.id)} style={iconBtn}>
-              <DuplicateIcon />
-            </button>
-          )}
-          {onStartConfirm && (
-            <button type="button" data-testid="schedule-owner-delete" title={`Delete “${label}”`} aria-label={`Delete “${label}”`} onClick={() => onStartConfirm(s)} style={{ ...iconBtn, color: "var(--danger)" }}>
-              <TrashIcon />
-            </button>
-          )}
-        </span>
+        <div style={{ position: "relative", flex: "none" }}>
+          <button
+            type="button"
+            ref={kebabRef}
+            data-testid="schedule-owner-kebab"
+            title={`More actions for “${label}”`}
+            aria-label={`More actions for “${label}”`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
+            style={{
+              ...iconBtn,
+              background: menuOpen ? "var(--hover-ghost)" : "transparent",
+              color: menuOpen ? "var(--text-primary)" : "var(--text-secondary)",
+            }}
+          >
+            <KebabIcon />
+          </button>
+          {/* ⛔ B1358128/B735 — a SECOND portal layer, stacked ABOVE this list's own host menu
+              (`ScheduleCrumb`'s dropdown, zIndex 4000 default) when this list is nested inside
+              one: without a HIGHER declared zIndex, AnchoredMenu's own document-level dismiss
+              listener (menuLayers.js's `pressBelongsToHigherMenu`) cannot tell this menu apart
+              from "a press outside" and closes the PARENT dropdown mid-click — which unmounts
+              this whole subtree before the click finishes, silently swallowing Rename/Duplicate/
+              Delete. Same fix, same reasoning as ProjectBreadcrumb.jsx's own per-row kebab
+              (zIndex 5000 against its dropdown's 4000) — matched here so the two nest the same
+              way regardless of which menu wraps this list. */}
+          <AnchoredMenu open={menuOpen} onClose={() => setMenuOpen(false)} anchorRef={kebabRef} placement="below-right" width={168} zIndex={5000}>
+            {onStartRename && (
+              <MenuItem data-testid="schedule-owner-rename" title={`Rename “${label}”`} aria-label={`Rename “${label}”`}
+                onClick={() => { setMenuOpen(false); onStartRename(s); }} style={menuItemRow}>
+                <PencilIcon />Rename
+              </MenuItem>
+            )}
+            {onDuplicate && (
+              <MenuItem data-testid="schedule-owner-duplicate" title={`Duplicate “${label}”`} aria-label={`Duplicate “${label}”`}
+                onClick={() => { setMenuOpen(false); onDuplicate(s.id); }} style={menuItemRow}>
+                <DuplicateIcon />Duplicate
+              </MenuItem>
+            )}
+            {hasDivider && <div style={divider} />}
+            {onStartConfirm && (
+              <MenuItem data-testid="schedule-owner-delete" title={`Delete “${label}”`} aria-label={`Delete “${label}”`}
+                onClick={() => { setMenuOpen(false); onStartConfirm(s); }} style={{ ...menuItemRow, color: "var(--danger-text)" }}>
+                <TrashIcon />Delete
+              </MenuItem>
+            )}
+          </AnchoredMenu>
+        </div>
       )}
     </div>
   );
