@@ -834,7 +834,13 @@ export function compToDraft(c) {
     bldgPrice: str(c.bldgPrice), bldgSizeSf: str(c.bldgSizeSf),
     clearHeightFt: str(c.clearHeightFt), yearBuilt: str(c.yearBuilt),
     bldgNoi: str(c.bldgNoi), bldgCapRate: str(c.bldgCapRate),
-    leaseRate: str(c.leaseRate), leaseRatePeriod: c.leaseRatePeriod || "annual",
+    // ⛔ NEW-1 (owner call, 2026-09-10) — was `|| "annual"`. A comp whose period is genuinely
+    // unknown (a legacy row, or one saved before comps_value_constraints.sql required a period
+    // alongside a rate) opened for edit as "annual" and, on the next save, that guess was
+    // committed as fact — the same 12x misstatement `annualLeaseRate`'s own header warns about,
+    // arriving through the edit path instead of the parser. An unknown period now stays unknown
+    // and renders as the "?" option, so the person editing chooses it.
+    leaseRate: str(c.leaseRate), leaseRatePeriod: c.leaseRatePeriod || "",
     leaseRateExpense: c.leaseRateExpense || "nnn", leaseTi: str(c.leaseTi), leaseTerm: c.leaseTerm || "",
     leaseSizeSf: str(c.leaseSizeSf), leaseFreeRentMonths: str(c.leaseFreeRentMonths),
     leaseEscalationPct: str(c.leaseEscalationPct), leaseOpex: str(c.leaseOpex),

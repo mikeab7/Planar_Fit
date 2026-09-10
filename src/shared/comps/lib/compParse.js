@@ -94,7 +94,11 @@ const BASIS_RE = new RegExp(`(?:${BASIS_NNN_RE.source})|(?:${BASIS_GROSS_RE.sour
 const SALE_WORDS = /\b(sold|sale|purchased?|closed|buyer|seller|purchaser|grantor|grantee)\b/i;
 const BUILDING_WORDS = /\b(building|warehouse|industrial|office|flex|shell|facility)\b/i;
 const LAND_WORDS = /\b(land|acres?|\bac\b|\blot\b|tract|pad\s*site|raw\s*land|dirt|unimproved)\b/i;
-const PERIOD_RE = /(\/\s*mo\b|\/\s*month\b|per\s+month\b|\bmonthly\b|\/\s*yr\b|\/\s*year\b|per\s+year\b|per\s+annum\b|\bannual(?:ly)?\b|\byearly\b|\bpa\b)/i;
+// NEW-1 (owner call, 2026-09-10) — the bare alternative `\bpa\b` is GONE. It was meant as "per
+// annum", but "PA" is Pennsylvania, and this app now resolves parcels nationwide (VA/WV/CA/RI
+// wired 2026-09-08/09), so an out-of-state address line reads as an annual rate. `per annum`
+// spelled out, and the dotted `p.a.`, both still match — neither collides with a state code.
+const PERIOD_RE = /(\/\s*mo\b|\/\s*month\b|per\s+month\b|\bmonthly\b|\/\s*yr\b|\/\s*year\b|per\s+year\b|per\s+annum\b|\bp\.\s?a\.|\bannual(?:ly)?\b|\byearly\b)/i;
 const STREET_SUFFIX_RE = /\b(road|rd|street|st|avenue|ave|drive|dr|boulevard|blvd|lane|ln|way|highway|hwy|parkway|pkwy|court|ct|circle|cir|place|pl)\b/i;
 // A bare "$X/SF" or "X/SF" (no $ required — DEFECT C) and a bare TI mention are both lease-only
 // vocabulary — neither needs an accompanying /mo or /yr, and neither needs a dollar sign.
@@ -208,10 +212,26 @@ export function findDateToken(text) {
   return rest;
 }
 
+// NEW-1 (owner call, 2026-09-10) — an escalation clause with NO percentage in it
+// ("with annual escalation", "escalating annually") is never claimed by `findEscalationPct`
+// (which needs a number), so its period word survives in `working` and would otherwise be read
+// as the RATE's period. A bare period WORD sitting either side of an escalation noun belongs to
+// that clause, not to the rate. A SLASHED form ("/mo", "/yr") is exempt — that shape only ever
+// attaches to a rate, and "$0.02/yr bumps" must still read as annual where it is the rate.
+const ESCAL_NOUN_AFTER_RE = /^\s*(?:of\s+)?(?:escalat[a-z]*|increase[a-z]*|bumps?|steps?)/i;
+const ESCAL_NOUN_BEFORE_RE = /(?:escalat[a-z]*|increase[a-z]*|bumps?|steps?)[^.\n]{0,12}$/i;
+
 function detectPeriod(text) {
-  const m = String(text || "").match(PERIOD_RE);
+  const src = String(text || "");
+  const m = src.match(PERIOD_RE);
   if (!m) return null;
   const t = m[1].toLowerCase();
+  const slashed = t.includes("/");
+  if (!slashed) {
+    const before = src.slice(0, m.index);
+    const after = src.slice(m.index + m[0].length);
+    if (ESCAL_NOUN_AFTER_RE.test(after) || ESCAL_NOUN_BEFORE_RE.test(before)) return null;
+  }
   return t.includes("mo") ? "monthly" : "annual";
 }
 
@@ -425,7 +445,15 @@ const ESCAL_PCT_LABEL_THEN_VALUE_RE = new RegExp(`(?:${ESCAL_WORD_RUN.source})[^
 // escalation — the residual default per the DISAMBIGUATION rule (0–20% -> escalation or cap;
 // "cap" is the more specific, narrower claim, so it wins when both are absent this is what's left).
 const BARE_PCT_RE = /(\d+(?:\.\d+)?)\s*%/;
-const DOLLAR_ESCAL_RE = /\$\s*([\d,]*\.?\d+)\s*(?:\/\s*sf)?\s*\/\s*(mo|month|yr|year)\b[^.\n]{0,20}?(?:bumps?|escalat[a-z]*|increase[a-z]*|steps?)/i;
+// NEW-1 (owner call, 2026-09-10) — the gap between the dollar amount and its escalation word may
+// no longer cross a COMMA or a PERCENT SIGN, and is shorter (12, was 20). The old `[^.\n]{0,20}?`
+// let an escalation word up to 20 characters away claim a genuine RATE token: on
+// "$0.64/SF/mo NNN, 3% escalations" it swallowed the whole span as a dollar step, so the comp
+// saved with NO RATE AT ALL and the rate text landed in Notes. A `%` in the gap is the tell that
+// the escalation is a PERCENTAGE and this `$x/period` is the rate; a comma means a separate
+// clause. The genuine form this exists for ("$0.02/yr bumps", "$0.02/SF/yr annual increases")
+// keeps its escalation word adjacent and is unaffected — see test/compParse.test.js.
+const DOLLAR_ESCAL_RE = /\$\s*([\d,]*\.?\d+)\s*(?:\/\s*sf)?\s*\/\s*(mo|month|yr|year)\b[^.,%\n]{0,12}?(?:bumps?|escalat[a-z]*|increase[a-z]*|steps?)/i;
 
 /** Percentage escalation, both directions, plus the bare-percentage residual default. Returns
  * `{ value, working }` (value in raw percentage points, e.g. 3.5) or null. */
@@ -919,7 +947,20 @@ function extractUnlabeledLine(generic, flags, rawLine, recordContext) {
       } else {
         generic.rate = rateHit.value;
         if (rateHit.soft) mergeFlag(flags, "rate", "soft", rateHit.reason || "Had a k/m suffix — check the expanded value.");
-        generic.ratePeriod = generic.ratePeriod || detectPeriod(line);
+        // ⛔ NEW-1 (owner call, 2026-09-10) — `working`, NEVER the original `line`. This is the
+        // defect that put an ANNUAL period on a monthly-magnitude rate: `detectPeriod(line)`
+        // scanned the whole raw line, so the "annual" belonging to an ESCALATION clause
+        // ("$0.64/SF NNN, 3% annual escalations") was read as the RATE's period — and because a
+        // period had then been "found", the blocking "no monthly/annual period was given" flag
+        // never fired. The parser had already extracted that same clause as `escalationPct: 3`,
+        // so it knew the word belonged elsewhere. `working` is the line with every
+        // already-claimed token blanked out (escalation, cap, term, TI all run ABOVE this), so
+        // reading it here means a period word can only be claimed if no other field owns it.
+        // The rate's OWN suffix ("$0.64/SF/mo") is still present in `working` at this point —
+        // `working = rateHit.working` runs below — so an explicitly periodised rate is
+        // unaffected. When nothing is left to read, the blocking flag fires, which is correct:
+        // $0.64 means something 12x different either way and the app must ask.
+        generic.ratePeriod = generic.ratePeriod || detectPeriod(working);
         const basisWord = generic.rateBasis ? null : working.match(BASIS_NNN_RE) || working.match(BASIS_GROSS_RE);
         // B986096 (owner report, 2026-09-02) — detectPeriod reads the ORIGINAL `line` to set
         // ratePeriod, but that alone never removes the matched word from `working`. When the period

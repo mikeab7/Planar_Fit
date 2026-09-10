@@ -514,6 +514,11 @@ export function CompForm({ draft, setDraft, teams, projects, trackedSites, party
             <span style={{ display: "flex", gap: 6 }}>
               <input type="number" value={draft.leaseRate} onChange={set("leaseRate")} placeholder="optional" style={{ ...inputStyle, flex: 1 }} />
               <select value={draft.leaseRatePeriod} onChange={set("leaseRatePeriod")} aria-label="Rate period" style={{ ...inputStyle, width: 60, flex: "none" }}>
+                {/* NEW-1 (owner call, 2026-09-10) — the unset option, which CompDraftsPanel.jsx's
+                    identical control already had and this one did not. Without it a blank period
+                    has no option to render, so the control reads as though a period were chosen
+                    when none was. An unset period must LOOK unset. */}
+                <option value="">?</option>
                 {LEASE_PERIODS.map((p) => <option key={p} value={p}>{p === "annual" ? "YR" : "MO"}</option>)}
               </select>
             </span>
