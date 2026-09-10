@@ -29,10 +29,41 @@ export const TOAST_CAP = 2;
 
 let toastSeq = 0;
 
-// Pure: append a toast to a list (newest last). Each entry: { id, text, action?{label}, ttlMs }.
+/* ⛔ ROUND EIGHT (B1482353) — SINGLE-INSTANCE NOTICES. A notice that describes a STATE the app
+ * is in ("this tab is out of date") is not the same kind of thing as a notice that describes an
+ * EVENT that happened ("a building you edited changed"). Two of the second kind are two pieces of
+ * news; two of the first are one fact said twice, and the owner photographed exactly that — two
+ * identical "This tab is out of date" banners plus a "+1 more" pill, over his canvas, on a plan
+ * four minutes old with one tab and one account.
+ *
+ * A toast carrying `dedupeKey` REPLACES any toast already holding that key, IN PLACE, instead of
+ * appending: same slot, same position in the stack, refreshed text/action, and the item's `id` is
+ * preserved so React keeps the same `ToastItem` mounted and its lifetime timer is not restarted by
+ * the repeat (a state that keeps re-asserting itself must not become un-dismissable). Toasts with
+ * no `dedupeKey` behave exactly as before — appended, newest last, nothing about the event-notice
+ * path changes.
+ *
+ * This lives in the SHARED primitive, not in the site planner, because the same class of message
+ * is raised by more than one surface and the next one to grow a copy would otherwise re-inherit
+ * the bug. See the surface table in the PR body / BACKLOG item. */
 export function pushToastPure(list, toast) {
+  const l = list || [];
+  if (toast && toast.dedupeKey != null) {
+    const i = l.findIndex((t) => t && t.dedupeKey === toast.dedupeKey);
+    if (i >= 0) {
+      const next = l.slice();
+      next[i] = { ...l[i], ...toast, id: l[i].id };   // same slot, same id → no remount, no timer restart
+      return next;
+    }
+  }
   const t = { ttlMs: TOAST_TTL_MS, ...toast, id: toast.id != null ? toast.id : "t" + ++toastSeq };
-  return [...(list || []), t];
+  return [...l, t];
+}
+
+// Pure: how many toasts in a list carry a given dedupe key. The invariant this module now
+// guarantees is that this is never more than 1 — asserted directly in test/toastDedupe.test.js.
+export function countByDedupeKey(list, key) {
+  return (list || []).filter((t) => t && t.dedupeKey === key).length;
 }
 
 // Pure: what renders — the first CAP toasts plus how many are hidden behind "+n more".

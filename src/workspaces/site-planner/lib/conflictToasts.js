@@ -92,11 +92,22 @@ export function toastForSyncEvent(ev, { name, label, self = true } = {}) {
         ? { text: `${label} was already restored or edited in another tab of yours — that version is showing.`, action: "zoom" }
         : { text: `${label} was already restored or edited by ${name} — their version is showing.`, action: "zoom" };
     case "client-stale":
-      // NEW-3 — every op in several consecutive batches was rejected on the rev guard: this tab is
-      // running against a plan that has moved on, so it has STOPPED re-committing rather than
-      // hot-looping the RPC. This one is not about a single element and never zooms — it is the one
-      // state the user must act on, so it is always shown, with no `authoredRecently` gate.
-      return { text: "This tab is out of date — your recent changes here can't be saved. Reload the page to catch up.", action: null };
+      /* NEW-3 — every op in several consecutive batches was rejected on the rev guard: this tab is
+       * running against a plan that has moved on, so it has STOPPED re-committing rather than
+       * hot-looping the RPC. This one is not about a single element and never zooms — it is the one
+       * state the user must act on, so it is always shown, with no `authoredRecently` gate.
+       *
+       * ⛔ ROUND EIGHT (B1482353) — TWO CHANGES, both about the fact that this describes a STATE,
+       * not an event.
+       *  (a) `dedupeKey` — a state can only be true once. A repeat REPLACES this notice in place
+       *      rather than stacking beside it (Toast.jsx's `pushToastPure`). The engine also latches
+       *      its own emit (`announceStale`); belt and braces, because these close different holes —
+       *      the latch stops the ENGINE re-announcing, the key stops ANY surface stacking a repeat.
+       *  (b) `action: "reload"` — the sentence has always ended "Reload the page to catch up" while
+       *      offering no way to do it, so the user's only route was the browser's own reload. The
+       *      caller wires a Reload button that PERSISTS THE PENDING EDITS FIRST (the NEW-F4 journal),
+       *      so taking the advice can never be what loses the work. */
+      return { text: "This tab is out of date — your recent changes here can't be saved. Reload the page to catch up.", action: "reload", dedupeKey: "client-stale" };
     case "delete-reapplied":
     default:
       return null; // silent: telemetry-only classes

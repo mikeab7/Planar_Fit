@@ -171,6 +171,68 @@ function pairCommitResults(batch, results, onUnaligned) {
   return out;
 }
 
+/* ⛔ ROUND EIGHT (B1482352) — THE ONE ANSWER TO "CAN THIS OP EVER SUCCEED IF I SEND IT AGAIN
+ * UNCHANGED?", and the reason the false stale-tab banner survived seven rounds of authorship fixes.
+ *
+ * MEASURED, first-hand, on the owner's own production session (site `smtvt0w2r5yv`, tab
+ * `f7c2144b`, account `b147d90d`, build `4e2e164`, 2026-09-10 17:32:20–17:32:33 — read out of
+ * `public.client_errors`, not inferred): a 7-member bonded assembly committed atomically, the
+ * server answered `exists` for ONE member's `create` (a row THIS SAME TAB had already landed at
+ * rev 5), `commit_elements_atomic` aborts the whole call on ANY non-`ok` status, and
+ * `onAtomicRollback` re-queued every op VERBATIM — including that create. Same batch, same
+ * create, same `exists`, same abort, forever: rollback streaks 1,2,3,4,5,6 in thirteen seconds,
+ * with the `client-stale` banner raised on 4, 5 and 6. `site_elements` for that plan holds exactly
+ * ONE distinct `updated_by`. There was no second tab, no second account and no foreign writer —
+ * the tab deadlocked against its own committed row and then told the user their tab was out of
+ * date.
+ *
+ * WHY THE PRIOR ROUNDS COULD NOT HAVE CAUGHT IT. Rounds 1–7 all asked "did this row originate from
+ * my own ACCOUNT?" and that question is now settled and CI-gated (`isOwnWrite` — docs/DATA.md §2
+ * inv. 5, §3). `client-stale` is deliberately EXEMPT from that gate, for a stated reason that this
+ * measurement falsifies: "this tab's own write path has stalled, which is true regardless of who
+ * else is on the plan." It is true that the write path stalled. It is NOT true that the stall was
+ * anyone else's doing, and the sentence the user reads ("your recent changes here can't be saved.
+ * Reload the page to catch up") is a claim about a FOREIGN writer having moved the plan on. The
+ * missing authority was never another authorship oracle — it is a CONVERGENCE oracle, and this is
+ * it.
+ *
+ * FIVE STATUSES, ONLY ONE OF WHICH IS RETRYABLE UNCHANGED:
+ *   ok       — nothing wrong with the op; on a ROLLED-BACK batch nothing landed, so resend as-is.
+ *   conflict — the rev moved. The op is fine; the caller adopts the fresh rev and resends. RETRYABLE.
+ *   exists   — a `create` hit a live row. Re-sending an identical create can never succeed at any
+ *              rev, at any time. It must be RECAST as an `update` or the batch deadlocks.
+ *   missing  — the row is gone. An update/restore must be recast as a `create`; a delete has
+ *              nothing left to delete and is DROPPED.
+ *   deleted  — a tombstone. A create/update is DROPPED here (the non-atomic path additionally
+ *              offers the user Restore via the B673 matrix); a delete has already happened.
+ *
+ * Pure, exported and unit-tested so the table cannot drift from the branches that consume it, and
+ * so a sixth mechanism cannot grow beside it. Every path that decides what to do with a refused op
+ * — `onAtomicRollback`, `onGroupConflict`, and `processResults`' own recast branches — routes
+ * through this one function. `recast` is the load-bearing verdict: it is the ONLY way a batch
+ * carrying a terminal status can ever converge, and its absence is the whole bug. */
+export const RETRYABLE_UNCHANGED = new Set(["ok", "conflict"]);
+
+export function nextOpForStatus(cls, status) {
+  if (status == null || RETRYABLE_UNCHANGED.has(status)) return { action: "resend", cls, reason: status || "no-result" };
+  if (status === "exists") {
+    // A create against a live row. Nothing about waiting or re-reading a rev makes it legal.
+    return cls === "create"
+      ? { action: "recast", cls: "update", reason: "create hit a live row — only an update can land" }
+      : { action: "resend", cls, reason: "exists on a non-create is not a refusal we caused" };
+  }
+  if (status === "missing") {
+    if (cls === "delete") return { action: "drop", cls: null, reason: "the row this delete targets is already gone" };
+    return { action: "recast", cls: "create", reason: "the row is absent — an update cannot land, a create can" };
+  }
+  if (status === "deleted") {
+    return cls === "delete"
+      ? { action: "drop", cls: null, reason: "already tombstoned" }
+      : { action: "drop", cls: null, reason: "the row is tombstoned — re-sending cannot land (Restore is a separate, explicit act)" };
+  }
+  return { action: "resend", cls, reason: "unknown status — fail open, exactly as before" };
+}
+
 export function createElementSync(opts = {}) {
   const {
     siteId,
@@ -457,6 +519,29 @@ export function createElementSync(opts = {}) {
   const pendingCount = () => dirty.size;
   const emitStatus = () => onStatus({ state, pending: pendingCount(), attempt });
   const setState = (s) => { if (s !== state) { state = s; } emitStatus(); };
+
+  /* ⛔ ROUND EIGHT (B1482352) — ONE BANNER PER STALL, NOT ONE PER ROUND. Every `client-stale` emit site
+   * reached the streak test on EVERY subsequent refusal once the streak had passed the threshold
+   * (4, then 5, then 6 …), and each one pushed a fresh toast: `useToasts` appends unconditionally
+   * and nothing downstream deduped. That is the stacking the owner photographed — two identical
+   * banners plus "+1 more", from a `TOAST_CAP` of 2 and three pushes. Measured on his own session:
+   * `element-assembly-split-unresolved` fired at streaks 4, 5 and 6 inside 3.5 seconds.
+   *
+   * The latch is here, at the source, rather than only in the toast layer, because the two answer
+   * different questions: this one stops the ENGINE claiming a new stall it has not re-established,
+   * and the toast layer's own identity dedupe (Toast.jsx) stops any surface stacking a repeat of
+   * ANY single-instance notice. Either alone leaves the other's case open. Cleared by real
+   * progress — an accepted op, a recast that unblocks the batch, or an explicit `retryNow()` —
+   * so a genuine second stall after a genuine recovery is still announced. */
+  let staleAnnounced = false;
+  const clearStaleLatch = () => { staleAnnounced = false; };
+  function announceStale(ev, telemetryEvent, telemetryMessage) {
+    setState("stale");
+    report(telemetryEvent, telemetryMessage, { siteId, pending: dirty.size, ...ev, repeat: staleAnnounced });
+    if (staleAnnounced) return;                 // already said; saying it again is the stack, not news
+    staleAnnounced = true;
+    onEvent({ type: "client-stale", pending: dirty.size, ...ev });
+  }
 
   // ---- shadow seeding (used by load / the B672 refetch-replace) ---------------
   // Seeds the shadow from the site's current DB rows so the first diff sees NO change for an
@@ -865,9 +950,7 @@ export function createElementSync(opts = {}) {
         rejectStreak += 1;
         if (dirty.size > 0) {
           if (rejectStreak >= maxRejectStreak) {
-            setState("stale");
-            report("element-client-stale", "every op rejected repeatedly — this tab is out of date", { siteId, streak: rejectStreak, pending: dirty.size });
-            onEvent({ type: "client-stale", streak: rejectStreak, pending: dirty.size });
+            announceStale({ streak: rejectStreak }, "element-client-stale", "every op rejected repeatedly — this tab is out of date");
             return;                                    // no further commits until retryNow() / a reload
           }
           const wait = backoff[Math.min(rejectStreak - 1, backoff.length - 1)];
@@ -878,6 +961,7 @@ export function createElementSync(opts = {}) {
         }
       } else if (accepted) {
         rejectStreak = 0;                              // progress — the streak is broken
+        clearStaleLatch();                             // …and the write path is demonstrably alive again
       }
       // Anything re-queued during processing (a LWW re-commit, a re-applied delete, a missing-row
       // re-create) reschedules through the DEBOUNCE timer, never a synchronous immediate flush — a
@@ -1070,15 +1154,19 @@ export function createElementSync(opts = {}) {
           { siteId, id: m.id, kind: m.kind || "el", rev: m.rev });
       }
     }
+    /* ⛔ ROUND EIGHT (B1482352) — this is the ONE re-queue path that legitimately resends VERBATIM, and it is
+     * documented here so a later reader does not "fix" it into consistency with `onAtomicRollback`.
+     * A group-CAS refusal carries no per-op status at all: the server refused the CALL on the
+     * assembly digest, before any op was judged, so there is nothing for `nextOpForStatus` to
+     * classify. Every op is `{status: undefined}` → `resend`, which is exactly what this line does.
+     * The moment this payload starts carrying per-op statuses, route it through the policy. */
     for (const e of batch) { const key = skey(e.kind, e.id); if (!dirty.has(key)) enqueue(key, e); }
     splitStreak += 1;
     report("element-group-conflict", "the assembly moved underneath this batch — nothing written, re-committing at fresh revs",
       { siteId, ops: batch.length, streak: splitStreak, assemblies: conflicts.map((c) => c && c.assembly).filter(Boolean).slice(0, 10) });
     onEvent({ type: "assembly-split", ids: batch.map((e) => e.id), streak: splitStreak, rolledBack: true, groupConflict: true });
     if (splitStreak >= maxRejectStreak) {
-      setState("stale");
-      report("element-group-unresolved", "an assembly would not commit whole against its group revision", { siteId, streak: splitStreak });
-      onEvent({ type: "client-stale", streak: splitStreak, pending: dirty.size, reason: "group-conflict" });
+      announceStale({ streak: splitStreak, reason: "group-conflict" }, "element-group-unresolved", "an assembly would not commit whole against its group revision");
       return;
     }
     const wait = backoff[Math.min(splitStreak - 1, backoff.length - 1)];
@@ -1092,24 +1180,77 @@ export function createElementSync(opts = {}) {
   // rows instead of repeating the same stale expectation. The whole batch is re-queued.
   function onAtomicRollback(batch, results) {
     const byKey = pairResults(batch, results);
+    /* ⛔ ROUND EIGHT (B1482352) — RE-QUEUE THROUGH `nextOpForStatus`, NEVER VERBATIM. This loop used to
+     * `enqueue(key, e)` the op exactly as sent, which is correct for the ONLY status it was
+     * written for (`conflict`: adopt the fresh rev, resend the same bytes) and a permanent
+     * deadlock for every other one. `commit_elements_atomic` aborts the whole call on ANY non-`ok`
+     * status, so a single `exists`/`missing`/`deleted` op in an assembly batch rolled back all of
+     * its siblings — and then came round again unchanged, to be refused for the identical reason.
+     * Measured on the owner's plan: six identical rollbacks in thirteen seconds, three false
+     * "this tab is out of date" banners, one account, one tab. `processResults` has always known
+     * how to recast these ops; the atomic path returns before it is ever reached, so that
+     * knowledge lived in exactly one of the two places that needed it. Now both ask the same
+     * function. */
+    let converged = 0;
     for (const e of batch) {
       const key = skey(e.kind, e.id);
-      const row = (byKey.get(key) || {}).row;
+      const r = byKey.get(key) || {};
+      const row = r.row;
       if (row && typeof row.rev === "number") {
         const cur = shadow.get(key);
         // Keep OUR json as the diff baseline (our data is still what the canvas holds and what we
         // intend to write); adopt only the rev, flagged `stale` because json and rev now disagree.
         if (cur) shadow.set(key, { ...cur, rev: row.rev, stale: true });
+        // A recast create needs a shadow entry to diff against, or the next reconcile re-mints the
+        // very create we just retired. The row's own rev is the honest base for it.
+        else if (r.status === "exists") shadow.set(key, { kind: e.kind, id: e.id, json: "", rev: row.rev, z: e.z, stale: true });
+      }
+      const verdict = nextOpForStatus(e.cls, r.status);
+      if (verdict.action === "drop") {
+        converged += 1;
+        dirty.delete(key);
+        if (r.status === "deleted" || r.status === "missing") shadow.delete(key);
+        report("element-op-unsendable", "an op the server can never accept was retired instead of re-queued", { siteId, id: e.id, kind: e.kind, cls: e.cls, status: r.status || null, reason: verdict.reason });
+        /* ⛔ LOUD-FAILURE — DROPPING AN EDIT IS NOT A QUIET HOUSEKEEPING ACT. An update/create
+         * refused because the row is TOMBSTONED is the user's work being discarded, so it gets the
+         * same treatment `processResults` gives it: a delete floor so a stale echo can never
+         * resurrect the row (B757 / TOMBSTONE-DELETES), and the same `edit-vs-deleted` notice that
+         * offers Restore — under the IDENTICAL authorship gate, so this account's own cascade
+         * catching up with its own delete stays silent (docs/DATA.md §2 inv. 5). This is
+         * bookkeeping mirroring, not a second decision: WHAT to do came from `nextOpForStatus`
+         * above, which is the one place that decides it. A delete answered `deleted` already got
+         * what it wanted and stays silent, exactly as `delete-reapplied` does. */
+        if (r.status === "deleted" && e.cls !== "delete") {
+          recordTombstone(e.kind, e.id, (row && row.rev) || 0);
+          if (e.direct !== false || foreignAuthor(row || {}))
+            onEvent({ type: "edit-vs-deleted", id: e.id, kind: e.kind, local: e.el, remote: row || {} });
+        }
+        continue;
+      }
+      if (verdict.action === "recast") {
+        converged += 1;
+        report("element-op-recast", "an op the server can never accept was recast so the batch can converge", { siteId, id: e.id, kind: e.kind, from: e.cls, to: verdict.cls, status: r.status || null, reason: verdict.reason });
+        enqueue(key, { ...e, cls: verdict.cls });
+        continue;
       }
       if (!dirty.has(key)) enqueue(key, e);
+    }
+    /* ⛔ RECASTING IS PROGRESS, AND PROGRESS BREAKS THE STREAK. The next attempt is a genuinely
+     * DIFFERENT call — a create became an update, an unsendable op left the queue — so counting it
+     * toward "this assembly will not commit" is counting the fix as the failure. Without this the
+     * streak still reaches the banner on the round the deadlock is being broken. */
+    if (converged) {
+      splitStreak = 0;
+      if (backoffHandle != null) { clearTimer(backoffHandle); backoffHandle = null; }
+      setState("retrying");
+      backoffHandle = setTimer(() => { backoffHandle = null; flush(); }, backoff[0]);
+      return;
     }
     splitStreak += 1;
     report("element-atomic-rollback", "the server rolled the whole group back — re-committing at fresh revs", { siteId, ops: batch.length, streak: splitStreak });
     onEvent({ type: "assembly-split", ids: batch.map((e) => e.id), streak: splitStreak, rolledBack: true });
     if (splitStreak >= maxRejectStreak) {
-      setState("stale");
-      report("element-assembly-split-unresolved", "an assembly would not commit whole", { siteId, streak: splitStreak });
-      onEvent({ type: "client-stale", streak: splitStreak, pending: dirty.size, reason: "assembly-split" });
+      announceStale({ streak: splitStreak, reason: "assembly-split" }, "element-assembly-split-unresolved", "an assembly would not commit whole");
       return;
     }
     const wait = backoff[Math.min(splitStreak - 1, backoff.length - 1)];
@@ -1335,15 +1476,20 @@ export function createElementSync(opts = {}) {
         if (e.direct !== false || foreignAuthor(r.row || {}))
           onEvent({ type: "edit-vs-deleted", id: e.id, kind: e.kind, local: e.el, remote: r.row || {} });
       } else if (r.status === "exists") {
-        // create-vs-create — impossible with per-tab salted ids (B591). Assert + adopt as an update.
+        /* create-vs-create — impossible with per-tab salted ids (B591). Assert + adopt as an update.
+         * ⛔ ROUND EIGHT (B1482352) — the recast class comes from `nextOpForStatus`, not from a literal here.
+         * This branch has always been right; the bug was that the ATOMIC path never reached it and
+         * re-sent the create verbatim instead. Both now read the same table, so a future change to
+         * one can no longer leave the other answering differently. */
         const row = r.row || {};
         shadow.set(key, { kind: e.kind, id: e.id, json: "", rev: row.rev, z: e.z, stale: true });
-        enqueue(key, { kind: e.kind, id: e.id, cls: "update", el: e.el, z: e.z, direct: e.direct });
+        enqueue(key, { kind: e.kind, id: e.id, cls: nextOpForStatus(e.cls, "exists").cls, el: e.el, z: e.z, direct: e.direct });
         report("element-create-collision", "create hit a live row (should be impossible)", { siteId, id: e.id, kind: e.kind });
       } else if (r.status === "missing") {
         // server has no such row. An update/delete on a purged row → re-create (update) or drop (delete).
-        if (e.cls === "delete") { shadow.delete(key); }
-        else { shadow.delete(key); enqueue(key, { kind: e.kind, id: e.id, cls: "create", el: e.el, z: e.z, direct: e.direct }); }
+        const v = nextOpForStatus(e.cls, "missing");
+        shadow.delete(key);
+        if (v.action === "recast") enqueue(key, { kind: e.kind, id: e.id, cls: v.cls, el: e.el, z: e.z, direct: e.direct });
         report("element-missing", "op targeted an absent row", { siteId, id: e.id, kind: e.kind, cls: e.cls });
       } else {
         // no result for this op (malformed response) — requeue to try again
@@ -1383,9 +1529,7 @@ export function createElementSync(opts = {}) {
         onEvent({ type: "assembly-split", ids: torn, streak: splitStreak });
         // Not converging after several rounds is a genuine dead end — go loud rather than loop.
         if (splitStreak >= maxRejectStreak) {
-          setState("stale");
-          report("element-assembly-split-unresolved", "an assembly would not commit whole", { siteId, streak: splitStreak });
-          onEvent({ type: "client-stale", streak: splitStreak, pending: dirty.size, reason: "assembly-split" });
+          announceStale({ streak: splitStreak, reason: "assembly-split" }, "element-assembly-split-unresolved", "an assembly would not commit whole");
         }
       }
     } else if (acceptedKeys.size && !refusedKeys.size) {
@@ -1408,7 +1552,7 @@ export function createElementSync(opts = {}) {
   }
 
   // Manual retry (the badge's "Retry now").
-  function retryNow() { attempt = 0; rejectStreak = 0; splitStreak = 0; if (backoffHandle != null) { clearTimer(backoffHandle); backoffHandle = null; } flush(); }
+  function retryNow() { attempt = 0; rejectStreak = 0; splitStreak = 0; clearStaleLatch(); if (backoffHandle != null) { clearTimer(backoffHandle); backoffHandle = null; } flush(); }
 
   // Ops still pending, for the keepalive unload flush (elementApi.keepaliveCommit).
   // NEW-1 — the unload path is a send path too, and an expired delete must not ride out on it

@@ -166,6 +166,31 @@ was never clicked" quietly ships broken.
 
 ## 🔲 Needs verification
 
+### V1077760 — B1482352: a single tab never accuses itself of being out of date `Blocker: auth` `Blocker: real-data`
+
+**Why this needs a real pass.** The defect is a multi-writer/concurrency class (LIVE-VERIFY) and its repro is a signed-in plan writing real `site_elements` rows through `commit_elements_atomic`. This sandbox's proxy CORS-blocks the Supabase auth handshake, so no signed-in write is reachable here. The MECHANISM is fully proven without a browser (see below) — what a live pass adds is confirmation that the owner's own workflow no longer produces the banner.
+- Verified HERE (sandbox): `npx vitest run test/elementSyncConvergence.test.js` — 14 pass, driving the REAL `createElementSync` against a fake server that mirrors `commit_elements` + `commit_elements_atomic` semantics (any non-`ok` status → whole-call rollback). Teeth-proven: on the unfixed engine **11 of 14 fail**, and the stacking arm reports **5 banners vs 1**. Full suite green (16,598), lint clean, build green.
+- Verified HERE (production DB, read-only): the failing session's telemetry and rows were read directly via the Supabase MCP — six `element-atomic-rollback` events, three `element-assembly-split-unresolved`, one `element-create-collision`, and `count(distinct updated_by) = 1` across the whole plan. Nothing was written.
+- **Steps, each with its named expected result:**
+  1. Signed in on planyr.io, create a NEW project and open its Site plan. **Expect:** the plan loads with an empty canvas and a green/idle Cloud-sync badge.
+  2. Place a building, then place a SECOND building, without pausing between them. **Expect:** both render, the save badge settles to synced, and **no banner of any kind appears over the canvas.** This is the owner's exact reported sequence.
+  3. Drag one building so its bonded children (truck court, trailer parking, sidewalks) re-fit, and let it settle. **Expect:** still no banner; the assembly moves as one object.
+  4. In the same session, query `public.client_errors` for that site id. **Expect:** ZERO rows for `event:element-assembly-split-unresolved` and `event:element-client-stale`. A handful of `element-op-recast` rows is a PASS, not a failure — that is the new fix reporting that it converted an unsendable op instead of spinning on it.
+  5. Read the served chunk hash in the SAME observation as steps 2–4 (`document.querySelectorAll('script[src]')`), and confirm it is the post-fix build. **Expect:** a hash from the deploy carrying B1482352 — a pre-fix cached bundle would reproduce the old behaviour and mean nothing.
+- Stopping rule: closes when steps 1–5 are observed on planyr.io, or when any step fails and is filed against B1482352. **Per STANDING RULE #2, a null here is not a disposition** — if the banner cannot be reproduced either way, the honest close is step 4's telemetry query, which is a positive statement about the mechanism rather than an absence of a symptom.
+
+### V1077761 — B1482353: at most one stale-tab banner, and its Reload keeps the unsaved work `Blocker: auth` `Blocker: real-data`
+
+**Why this needs a real pass.** The dedupe and the latch are pure and fully sandbox-proven; what needs a live look is the ROUND TRIP — that taking the banner's own Reload advice returns with the pending edits still on the canvas. That requires a signed-in plan with real rows for the journal to fold back over.
+- Verified HERE (sandbox): `npx vitest run test/staleBannerSingleInstance.test.js test/assemblyTear.test.js test/staleVisible.test.js test/conflictToasts.test.js` — all pass, including the exact "+1 more" screenshot proven unable to re-form, the ordering guard that the journal is written BEFORE the navigation, and the source guard that `"stale"` is a NAMED state in the journal-write condition.
+- **Steps, each with its named expected result:**
+  1. Reach the stale state deliberately (the cheapest route: open the same plan in two tabs of the same account, edit heavily in both until one tab's ops stop landing). **Expect:** ONE banner reading "This tab is out of date…", pinned to the bottom-centre of the window.
+  2. Keep editing in that stale tab for another ten seconds. **Expect:** still exactly ONE banner. **No second copy, and no "+1 more" pill.** This is the whole item.
+  3. Look at what the banner covers. **Expect:** it sits at the bottom edge and does not overlap the drawing or an open tooltip; on a phone it clears an open bottom sheet.
+  4. Note one un-saved change you can recognise (move a specific building), then click the banner's **Reload** button. **Expect:** the page reloads and that change is **still there** — the pending-edit journal is written before the navigation and folded back over the rebuilt canvas. A revert here is a FAIL and is the hazard this item exists to close.
+  5. Dismiss the banner with ✕ while still stale, then make another edit. **Expect:** the banner may return (the state is still true) — but only ever ONE at a time.
+- Stopping rule: closes when steps 1–5 are observed on planyr.io, or when any step fails and is filed against B1482353.
+
 ### V1077856 — B1490144: the floodplain layer no longer follows the cursor, and every other identify-capable layer still does `Blocker: live-GIS`
 
 **Why this needs a real pass.** GIS endpoint behaviour is a mandatory LIVE-VERIFY class, and the honest "removed" claim needs REAL FEMA flood-zone geometry so a hover point can be proven both INSIDE and OUTSIDE a mapped zone — `hazards.fema.gov` is `ERR_CONNECTION_RESET` from this sandbox's egress (the same wall CLAUDE.md's Colorado/MHFD sections already document), so neither case can be produced here with live data.

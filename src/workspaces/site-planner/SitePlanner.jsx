@@ -4614,7 +4614,16 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
           // same-account tab can neither clear this tab's crash protection nor adopt its
           // in-flight edits as its own writes; every write refreshes `at`, which is what
           // marks this journal LIVE to sibling tabs (see elementJournal.js).
-          if (s.pending > 0 || s.state === "committing" || s.state === "retrying" || s.state === "failed")
+          /* ⛔ ROUND EIGHT (B1482353) — `"stale"` JOINED THIS LIST, and its absence was the
+           * sharpest edge in the whole family. `stale` is the ONE state whose banner tells the
+           * user to reload, and it was the one state not named here: journaling depended entirely
+           * on `s.pending > 0` happening to be true at that instant. When it is not — the ops sat
+           * in flight when the stall was declared — a reload re-seeds from the server's rows, and
+           * ROWS-CANONICAL-ON-SEED (docs/DATA.md §2 inv. 3) makes those rows win over the
+           * diverging canvas unless a journal entry explains the difference. The app would have
+           * advised the user into losing exactly the edits the banner was complaining it could not
+           * save. Naming the state removes the coincidence. */
+          if (s.pending > 0 || s.state === "committing" || s.state === "retrying" || s.state === "failed" || s.state === "stale")
             writeJournal(siteId, journalSid, live.dirtyEntries(), Date.now());
           else if (s.state === "idle") clearJournal(siteId, journalSid);
         } catch (_) { /* journaling is belt-and-suspenders — never let it break sync */ }
@@ -9112,6 +9121,33 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
   // itself is the pure toastForSyncEvent (unit-tested); this glue resolves the editor's display
   // name (async, cached roster), labels the element, applies any canvas side-effect, and pushes —
   // coalescing every event from ONE commit batch into at most one notice (NEW-1 round 2, above).
+  /* ⛔ ROUND EIGHT (B1482353) — the action for a PLAN-WIDE notice (one with no element).
+   *
+   * Two things this fixes. The wide branch below used to hard-code `action: null` and drop the
+   * spec's `dedupeKey` — so a state notice could stack, and the one message whose entire text is
+   * "Reload the page to catch up" offered no way to do it.
+   *
+   * The reload is NON-DESTRUCTIVE BY CONSTRUCTION: the pending-edit journal (NEW-F4) is written
+   * SYNCHRONOUSLY first, so every un-committed edit is on disk before the navigation begins, and
+   * `refetchReplace`'s `foldJournal` folds it back over the rebuilt canvas on the way in. Without
+   * that, taking the banner's own advice was actively dangerous — a reload while the engine is
+   * stale re-seeds from the server's rows, and ROWS-CANONICAL-ON-SEED (docs/DATA.md §2 inv. 3)
+   * makes those rows win over a diverging local canvas unless a journal entry explains the
+   * difference. The banner would have talked the user into losing the very edits it was
+   * complaining it could not save. */
+  const wideNoticeAction = (spec) => {
+    if (!spec || spec.action !== "reload") return null;
+    return {
+      label: "Reload",
+      onClick: () => {
+        try {
+          const live = elSyncRef.current;
+          if (live) writeJournal(siteId, journalSid, live.dirtyEntries(), Date.now());
+        } catch (_) { /* journaling is belt-and-suspenders — never block the reload the user asked for */ }
+        try { window.location.reload(); } catch (_) {}
+      },
+    };
+  };
   syncEventRef.current = (ev) => {
     const kind = ev && ev.kind, id = ev && ev.id;
     /* ⛔ NEW-1 — A PLAN-WIDE EVENT HAS NO ELEMENT, AND THIS GUARD WAS EATING THE ONE WARNING THAT
@@ -9131,7 +9167,7 @@ export default function SitePlanner({ active = true, siteId = null, overlays, se
      * nothing for it to share a commit-batch key with. */
     if (!kind || !id) {
       const wide = toastForSyncEvent(ev, { name: "", label: "", self: true });
-      if (wide) pushToast({ text: wide.text, action: null });
+      if (wide) pushToast({ text: wide.text, action: wideNoticeAction(wide), dedupeKey: wide.dedupeKey });
       return;
     }
     const field = KIND_TO_FIELD[kind];
