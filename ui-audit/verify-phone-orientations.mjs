@@ -43,6 +43,7 @@ import pw from "/opt/node22/lib/node_modules/playwright/index.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { buildFixtureState, readFixture } from "./lib/fixtureSeeding.mjs";
+import { assertMeasurable } from "./lib/tabTiming.mjs";
 
 const { webkit, chromium, devices } = pw;
 
@@ -319,6 +320,7 @@ async function run() {
           page.on("pageerror", () => {});
           const path = surface.path(SITE_ID);
           await page.goto(BASE + path, { waitUntil: "domcontentloaded", timeout: 30000 });
+          await assertMeasurable(page, "verify-phone-orientations");
           await page.waitForTimeout(surface.id === "schedule" ? 4500 : 3000);
 
           let extra = {};
