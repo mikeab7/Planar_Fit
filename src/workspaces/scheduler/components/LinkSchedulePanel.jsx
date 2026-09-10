@@ -19,6 +19,19 @@
  * Theme tokens throughout for light/dark parity (owner rule B318); the scheduler accent is spent on
  * the primary action only. B560 defence kept: `label` falls back to a neutral phrase and Create is
  * disabled when the site name hasn't resolved, so a schedule can never be named the raw group_id.
+ *
+ * ⛔ B1482096 (regression correction) — THIS COMPONENT NO LONGER OWNS THE FULL-BLEED SHELL
+ * (position/inset/zIndex/background/padding/overflow). It used to, and Scheduler.jsx rendered the
+ * schedule-owner list as a SEPARATE absolutely-positioned sibling pinned to the bottom — which fixed
+ * that list's own corner-text bug but then overlapped THIS component's Create/Link buttons on any
+ * short viewport (measured live on planyr.io at ~465px of content height: "Link an existing
+ * schedule" sat entirely underneath the owner-list panel and was not clickable). Two independent
+ * absolutely-positioned overlays can never be taught about each other's height, so the fix is that
+ * there is only ONE such overlay now: Scheduler.jsx owns the full-bleed scrollable shell (background,
+ * centering, padding, overflow) and renders this component followed by the owner-list panel as two
+ * ordinary children of ONE flex column — normal document flow, so they stack instead of overlapping,
+ * and the shell's own `overflow:"auto"` reaches anything a short window can't fit rather than letting
+ * it run off the bottom unreachably. This component keeps only its own inner column layout.
  */
 import { useRef, useState } from "react";
 import { MODULE_ACCENT } from "../../../shared/ui/moduleAccent.js";
@@ -36,13 +49,12 @@ const CSS = `
 .sched-empty-text:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 `;
 
+// B1482096 — no more position/inset/zIndex/background/padding/overflow here: Scheduler.jsx's
+// shared shell owns the full-bleed surface + scrolling now (see this file's header). This is
+// just the component's own flex-centered root, unchanged in appearance.
 const wrap = {
-  position: "absolute", inset: 0, zIndex: 6,
-  display: "grid", placeItems: "center",
-  padding: "24px", overflow: "auto",
-  // The page surface itself — deliberately NOT a scrim: the iframe behind is hidden, not dimmed.
-  background: "var(--surface-page)", color: "var(--text-primary)",
-  fontFamily: "system-ui, sans-serif",
+  display: "flex", flexDirection: "column", alignItems: "center",
+  color: "var(--text-primary)", fontFamily: "system-ui, sans-serif",
 };
 const column = {
   width: "min(360px, 100%)", textAlign: "center",
