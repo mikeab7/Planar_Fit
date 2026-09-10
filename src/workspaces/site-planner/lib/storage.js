@@ -1248,10 +1248,27 @@ export { DELETED_RETENTION_DAYS };
  * still live, soft-deleted, or nonexistent — asked BEFORE a workspace mounts for it, never after.
  * Thin wrapper over the single-row cloud check (see its own header for the return contract);
  * signed-out/offline answers `{ ok:false }` so the caller fails OPEN rather than blocking a route
- * on an inconclusive read (there is no soft-delete concept at all for a local-only, signed-out plan). */
+ * on an inconclusive read (there is no soft-delete concept at all for a local-only, signed-out plan).
+ *
+ * ⛔ B1482000 (follow-on to B1469872, owner report 2026-09-10) — a deep link to a soft-deleted PLAN's
+ * own id (not its project's anchor/group id) used to always read as "this project was deleted",
+ * named with the PROJECT's name — even when the plan's real group still has other live plans.
+ * `cloudCheckDeleted(uid, id)` only ever gathers rows named by `id` itself OR whose `group_id`
+ * equals `id`; a non-anchor plan's siblings live under a DIFFERENT group_id, so the query above
+ * genuinely can't see them and correctly-but-incompletely reports "every row found is gone." When
+ * that happens (`res.groupId` disagrees with the `id` we asked about) this asks the real group
+ * whether it's still alive elsewhere — the same `groupStillHasLivePlans` helper the account-wide
+ * bin (`listDeletedProjects`) and the 30-day purge already use, so all three can't disagree on what
+ * "still live" means. If it is, this reports the PLAN as deleted (never the project), using the
+ * plan's own name. */
 export async function checkProjectDeletionStatus(id) {
   if (!activeUid() || !id) return { ok: false, exists: false, deleted: false };
-  return cloudCheckDeleted(activeUid(), id);
+  const res = await cloudCheckDeleted(activeUid(), id);
+  if (res && res.ok && res.deleted && res.groupId && res.groupId !== id) {
+    const projectStillLive = await groupStillHasLivePlans(res.groupId).catch(() => true);
+    if (projectStillLive) return { ...res, scope: "plan", name: res.planName || res.name };
+  }
+  return res;
 }
 
 /* B1160480 — follow-on to B1202176. A project minted with no located origin
@@ -1406,6 +1423,15 @@ export async function listDeletedProjects() {
 // ever having had a chance to say no. Scoped to ONE group (never the whole-account scan a caller
 // doesn't need) because the only place this is rendered — the site-planner workspace's plan menu —
 // is only reachable while a live plan in this exact group is open.
+//
+// ⛔ B1482000 (follow-on to B1469872, owner report 2026-09-10) — every row this returned was named with
+// `row.site` FIRST, which is the PROJECT's name (e.g. "Bain", "Woods Road"), not the PLAN's own
+// name. Every row of a project's plan trash therefore rendered the SAME label — the one thing the
+// list exists to tell apart — and on Woods Road two of three deleted plans additionally share a
+// real plan name ("Concept A PRINT"), so the label alone still can't fully disambiguate; the
+// caller (SitePlanner.jsx's plan menu) renders each row's `deletedAt` alongside the name for that
+// reason. `row.name` is the plan name (the SAME column the live "Plans in this site" rows above
+// this list read); a plan saved with no name of its own still gets a name here, never a blank row.
 export async function listDeletedPlansInGroup(groupId) {
   if (!activeUid() || !groupId) return { ok: true, supported: false, plans: [] };
   let r;
@@ -1413,7 +1439,7 @@ export async function listDeletedPlansInGroup(groupId) {
   if (!r.ok || !r.supported) return { ok: r.ok, supported: !!r.supported, plans: [], error: r.error };
   const plans = (r.rows || [])
     .filter((row) => row && row.id && (row.group_id || row.id) === groupId)
-    .map((row) => ({ id: row.id, name: row.site || row.name || "Untitled plan", deletedAt: toMs(row.deleted_at) }))
+    .map((row) => ({ id: row.id, name: row.name || "Untitled plan", deletedAt: toMs(row.deleted_at) }))
     .sort((a, b) => b.deletedAt - a.deletedAt);
   return { ok: true, supported: true, plans };
 }
