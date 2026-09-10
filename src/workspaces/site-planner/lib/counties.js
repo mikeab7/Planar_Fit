@@ -1429,7 +1429,11 @@ const COUNTIES_MAP_RAW = {
 /* NEW-5 — which state a point is in, for the out-of-every-county-bbox branch below. ONE definition,
  * shared with the Colorado capability guard (`siteRegion.js`) rather than a second copy here: two
  * envelopes that could drift apart would mean click routing and the guard disagreeing about what
- * state a site is in, which is precisely the failure this work exists to prevent. */
+ * state a site is in, which is precisely the failure this work exists to prevent.
+ *
+ * ⛔ TX/CO-ONLY — kept ONLY as the pre-geometry fallback `resolvedState` below uses while the
+ * nationwide county-polygon asset hasn't landed yet. Do not call this directly from click routing
+ * again (B1457152) — see that function's header for why. */
 const stateForPoint = (lat, lng) => siteState({ lat, lng });
 
 /* B209502 — the GEOMETRY answer for a point, or null when the asset is not resident / the point is
@@ -1440,6 +1444,33 @@ function geometryCountyKey(lat, lng) {
   const ans = resolveCounty(lat, lng);
   if (!ans || ans.status !== "ok") return null;
   return countyKeyForName(ans.name, ans.state);
+}
+
+/* ⛔ B1457152 — WHICH STATE A POINT IS IN, ANSWERED BY THE SAME NATIONWIDE GEOMETRY, NOT THE
+ * TX/CO-ONLY ENVELOPE. Read before touching `candidateCountiesForPoint`'s no-bbox-match branch.
+ *
+ * `stateForPoint` above only knows two rectangles (Texas, Colorado) — a relic of the app's first
+ * two states. Every OTHER wired state (Nevada, DC, Maine, California, …) has ONLY a statewide
+ * pseudo-county with no `bbox` at all (see the `_statewide` entries above), so a click there always
+ * missed `within` AND `stateForPoint`, and fell to `candidateCountiesForPoint`'s last-resort branch.
+ * That branch used to return literally EVERY configured source in the country for such a click — a
+ * Las Vegas point fired 67+ `/query` requests, one per county from Harris to Connecticut, because
+ * the routing code could not tell Nevada from nowhere (measured live 2026-09-10, B1457152/B1457153).
+ *
+ * The fix is to ask the SAME nationwide county-polygon asset `geometryCountyKey` already reads
+ * (B209502, `public/geo/county-polygons.json` — every US county, not just TX/CO) for the point's
+ * real state, independent of whether a specific per-county entry is configured for it — a
+ * purely-statewide state like Nevada has no per-county row to hoist, but its `state` field on the
+ * resolved county answer is still real and lets `candidateCountiesForPoint` narrow to just that
+ * state's configured source(s) instead of guessing every state's. Falls back to the coarse TX/CO
+ * envelope only while the asset has not landed yet (`resolveCounty` reports `pending`), so the very
+ * first click after a cold boot still narrows to something real whenever it honestly can — and,
+ * exactly as before, an unresolved point returns no candidates rather than every candidate (see the
+ * call site's own comment for why "no candidates" is the safe answer, never "all of them"). */
+function resolvedState(lat, lng) {
+  const ans = resolveCounty(lat, lng);
+  if (ans && ans.status === "ok" && ans.state) return ans.state;
+  return stateForPoint(lat, lng);
 }
 
 /* NEW-1 — could the map's CURRENT VIEW plausibly reach this county's live parcel source at all?
@@ -1506,11 +1537,24 @@ export function candidateCountiesForPoint(lat, lng) {
     // candidate[0], which the Layers-panel jurisdiction resolver reads. A Colorado site inheriting
     // Harris County is precisely the wrong-but-plausible answer this work exists to prevent.
     // So the fallback is now scoped to the point's STATE, in config order. For a Texas point that
-    // is byte-identical to the old list (the Texas keys are first and unchanged); a point in
-    // neither state's envelope keeps the old all-counties behaviour exactly.
-    const st = stateForPoint(lat, lng);
-    const inState = st ? entries.filter(([, c]) => c.state === st).map(([k]) => k) : [];
-    return inState.length ? inState : entries.map(([k]) => k);
+    // is byte-identical to the old list (the Texas keys are first and unchanged).
+    //
+    // ⛔ B1457152 — THE OLD FINAL FALLBACK ("no state resolved → return every configured county in
+    // the country") IS GONE. With only Texas and Colorado wired it was a two-state guess with a
+    // bounded blast radius; once every other state started carrying its own statewide source (B1332016
+    // onward, now ~30 states and growing — Michael's own 2026-09-10 instruction is to wire every
+    // remaining state county-by-county), "return everyone's" turned into "query the whole country for
+    // one point" — measured at 67+ `/query` requests, most asking outFields=*/returnGeometry=true, for
+    // a single Las Vegas click. `resolvedState` above answers from the SAME nationwide geometry asset
+    // `geometryCountyKey` already reads, so a purely-statewide state (Nevada, DC, Maine, California, …)
+    // — one with no per-county bbox of its own — now narrows to exactly its own configured source(s)
+    // instead of being indistinguishable from "unknown". A point whose state genuinely can't be
+    // resolved (the geometry asset hasn't landed yet, or the point is truly outside every US county)
+    // now returns NO candidates rather than all of them — `resolveCandidates`/`candidatesAtPoint`
+    // already handle an empty list with an honest "still loading, try again" message, and an honest
+    // "nothing to try" is a vastly cheaper failure than silently fanning out to every wired state.
+    const st = resolvedState(lat, lng);
+    return st ? entries.filter(([, c]) => c.state === st).map(([k]) => k) : [];
   }
   // Append the STATEWIDE source(s) of the states already in play — never every state's. A Texas
   // click must not carry Colorado's composite along, and vice versa.

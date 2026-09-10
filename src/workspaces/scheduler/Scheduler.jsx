@@ -662,25 +662,10 @@ export default function Scheduler({
         ) : null}
         // B388 — the embedded app's toolbar, lifted into the unified header (center = view +
         // review; right = zoom/export/save/history/contacts/automation/format/settings).
-        toolbarCenter={(
-          <ScheduleCenter
-            toolbar={toolbar}
-            post={post}
-            schedules={projects}
-            activeId={activeId}
-            siteId={projectId}
-            siteName={routedSiteName}
-            onSelectSchedule={selectSchedule}
-            // B1397568 — the SAME dialog + pre-fill the breadcrumb's "＋ New project" already
-            // opens (newProjectAction pre-selects the routed project as owner, or the
-            // Organization when none is routed), now also reachable from the "Schedules" panel
-            // itself — see ScheduleOwnerList's own header for why that mattered.
-            onCreateSchedule={() => setNewSchedulePrompt(newProjectAction({ projectId, routedSiteName }))}
-            // B1404352 — rename/delete a schedule directly from this panel.
-            onRenameSchedule={renameSchedule}
-            onDeleteSchedule={deleteSchedule}
-          />
-        )}
+        // NEW-1 — the "Schedules" switcher this used to also carry (schedules/activeId/siteId/
+        // siteName/onSelectSchedule/onCreateSchedule/onRenameSchedule/onDeleteSchedule) was
+        // REMOVED: the Row-1 breadcrumb's schedule crumb (ScheduleCrumb, below) now owns that job.
+        toolbarCenter={<ScheduleCenter toolbar={toolbar} post={post} />}
         toolbarContent={<ScheduleActions toolbar={toolbar} post={post} />}
       />
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
@@ -734,12 +719,12 @@ export default function Scheduler({
         )}
         {/* Which schedules this project owns, and which one is open. Rendered beside the empty
             state (a project with none of its own can still reach the Organization's) — see
-            ScheduleOwnerList's header. B1396192 — this inline block is no longer the ONLY place
-            this list renders: once a schedule IS loaded (showEmptyState false), the identical
-            list is reachable from the header's "Schedules" button (ScheduleCenter →
-            ScheduleSwitcher, in ScheduleToolbar.jsx) instead of inline here, since there's no
-            longer a dedicated empty-state surface to render it into. Kept here, unchanged, for
-            the empty-state case — regressing this was explicitly out of scope. */}
+            ScheduleOwnerList's header. Once a schedule IS loaded (showEmptyState false), the
+            identical list is reachable from the Row-1 breadcrumb's schedule crumb (ScheduleCrumb,
+            planSlot above) instead of inline here — NEW-1 removed the header toolbar's own
+            "Schedules" button (ScheduleCenter → ScheduleSwitcher) now that the breadcrumb covers
+            the job. Kept here, unchanged, for the empty-state case — regressing this was
+            explicitly out of scope. */}
         {showEmptyState && (
           <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "40%", overflow: "auto", zIndex: 7 }}>
             <ScheduleOwnerList

@@ -14,10 +14,12 @@
  * The dropdown itself is the EXISTING `ScheduleOwnerList` (B1396192/B1404352), grouped by the
  * already-shipped `partitionSchedules` ownership model (`scheduleOwnership.js`) — this file adds
  * no grouping logic of its own. It renders with `showOther={false}`: the breadcrumb is scoped to
- * THIS project's own schedules + the Organization, never every other project's schedules too (the
- * header's own "Schedules" toolbar panel, unchanged, keeps the full three-group list for anyone
- * who wants it). The create row reads "New schedule in <Project>" via `createLabel`, rather than
- * the panel's generic "New schedule".
+ * THIS project's own schedules + the Organization, never every other project's schedules too.
+ * (NEW-1 — the header's OWN "Schedules" toolbar panel, ScheduleSwitcher in ScheduleToolbar.jsx,
+ * which used to keep the full three-group list including "Other projects", was REMOVED: this
+ * crumb is now the only header entry point, and the full list — including other projects' own
+ * schedules — is reachable by picking a different project crumb first.) The create row reads
+ * "New schedule in <Project>" via `createLabel`, rather than the panel's generic "New schedule".
  *
  * Deliberately NOT rendered for the empty-state case as a separate code path — Scheduler.jsx
  * passes this exact same list whether the project owns zero, one, or many schedules of its own;
