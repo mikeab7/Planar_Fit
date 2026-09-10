@@ -49,6 +49,10 @@ import {
   searchState, makeOrgResolver, classifyPublisher, looksParcelShaped,
   serviceLayerUrl, assessKnownGood,
 } from "./lib/agolParcelSearch.mjs";
+import {
+  STATE_PROBE_POINT, ENVELOPE_QUERY_BUDGET_MS,
+  projectExtentToWgs84, extentCoverageCheck, probeEnvelopeTiming, pointInsideExtent,
+} from "./lib/statewideCoverage.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -178,8 +182,17 @@ export const CANDIDATES = {
     sources: [{ name: "Montana Cadastral Framework (Montana State Library, MSDI)", url: "https://services.arcgis.com/qnjIrwR8z5Izc0ij/ArcGIS/rest/services/Montana_Cadastral_Framework/FeatureServer/1", cite: "arcgis.com item f161a98b347b4cf29d371a6d7697912a" }],
     note: "Full schema (id/owner/situs/area/value) confirmed live, 921,024 parcels. MCA 2-6-1017 restricts using owner names as a mailing list, which does not affect this app's use." },
   NE: { name: "Nebraska", wired: true, verify: "live", blocker: "gis.ne.gov", assessingUnit: "county",
-    sources: [{ name: "Nebraska Tax Parcels (NE OCIO)", url: "https://gis.ne.gov/Agency/rest/services/TaxParcelsDED/MapServer/0", cite: "measured live in the owner's own browser, 2026-09-08 — not this sandbox" }],
-    note: "MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-08), not this sandbox — gis.ne.gov is blocked here. 'Tax Parcels' layer, polygon, 43 fields: PARCELID, OWNERNME1, OWNERNME2, SITEADDRES, ACREAGE, LNDVALUE, IMPVALUE, CNTASSDVAL, CNTTXBLVAL — the OFFICIAL source directly, superseding the earlier unofficial-mirror corroboration." },
+    sources: [{ name: "Nebraska Statewide Parcels External (NE OCIO, Enterprise)", url: "https://gis.ne.gov/Enterprise/rest/services/StatewideParcelsExternal/FeatureServer/0", cite: "measured live in the owner's own browser, 2026-09-09 — not this sandbox" }],
+    // ⛔ RETRACTED OUTRIGHT, 2026-09-09 (NEW-1). This row previously wired
+    // gis.ne.gov/Agency/rest/services/TaxParcelsDED/MapServer/0 as "the OFFICIAL source directly" —
+    // WRONG: it is a real, official NE OCIO layer, but its own extent (measured by the first real
+    // spatial query run against every wired state) converts to roughly 40.98–41.21°N /
+    // -96.34 to -95.84°W — Douglas/Sarpy/Cass/Saunders counties (the Omaha metro) plus
+    // Pottawattamie/Mills counties across the line in Iowa, 75,394 features — and a query at
+    // Omaha's own coordinates (41.2565, -95.9345) returned ZERO, because Omaha sits just north of
+    // that layer's own covered extent. Every prior probe of this row checked METADATA only
+    // (capabilities, field list) and never asked it a question at a real coordinate.
+    note: "MEASURED LIVE FROM THE OWNER'S OWN BROWSER (2026-09-09), not this sandbox — gis.ne.gov is blocked here. \"Nebraska Statewide Parcels External\" (note the path is /Enterprise/, not the old /Agency/), polygon, 1,154,898 features (the retracted TaxParcelsDED layer was 75,394), capabilities Query,Extract, maxRecordCount 2000. Fields: State_PID, Parcel_ID, Situs_Address, Ph_Full_Address, Legal_Description, Twn, Sect, Rng, Acres_Deeded, GIS_Acres, Subdivision, County_ID. Verified GENUINELY statewide by five point probes spread across Nebraska, each returning a real parcel with a DISTINCT county: Omaha 41.2565/-95.9345 → County_ID 055 (Douglas), Scottsbluff 41.8666/-103.6672 in the far western panhandle → 157 (Scotts Bluff), Norfolk 42.0286/-97.4170 in the north → 119 (Madison), McCook 40.2019/-100.6254 in the southwest → 145 (Red Willow), Lincoln 40.8136/-96.7026 → 109 (Lancaster). A whole-layer `returnExtentOnly` request timed out at 12s (this layer is slow at that specific op — see NEW-3's timing-budget note), so the five-point spread is the coverage evidence on record rather than a converted layer extent." },
   NV: { name: "Nevada", assessingUnit: "county", sources: [],
     noSource: "A real statewide mosaic exists (NV DCNR / State Demographer) but its own ArcGIS item description states plainly it is legally restricted under NRS 250 from being downloaded, exported, or shared with the public or another government agency. Disqualified on a legal basis, independent of reachability." },
   NH: { name: "New Hampshire", wired: true, verify: "live", blocker: "nhgeodata.unh.edu", assessingUnit: "town/municipal (RSA 76; NH DRA provides oversight/equalization only)",
@@ -317,7 +330,7 @@ function matchFields(fieldNames) {
   return out;
 }
 
-async function probeSource(src) {
+async function probeSource(src, abbr) {
   const meta = await fetchJson(`${src.url}?f=json`);
   if (!meta.ok || !meta.json) {
     return { ...src, reachable: false, blocked: !!meta.blocked, status: meta.status, ms: meta.ms, error: meta.error };
@@ -327,6 +340,18 @@ async function probeSource(src) {
   let featureCount = null;
   const countRes = await fetchJson(`${src.url}/query?where=1%3D1&returnCountOnly=true&f=json`);
   if (countRes.ok && countRes.json && typeof countRes.json.count === "number") featureCount = countRes.json.count;
+  const extentLatLon = await projectExtentToWgs84(meta.json.extent, { fetchJson });
+  const coverage = extentCoverageCheck(extentLatLon, abbr);
+  const probePoint = STATE_PROBE_POINT[abbr];
+  const centroid = !extentLatLon.failed ? [(extentLatLon.ymin + extentLatLon.ymax) / 2, (extentLatLon.xmin + extentLatLon.xmax) / 2] : null;
+  const [pLat, pLng] = probePoint || centroid || [];
+  const envelopeTimingRaw = await probeEnvelopeTiming(src.url, pLat, pLng, { fetchJson });
+  // NEW-3, second half of the Tennessee finding: an empty answer at a point the layer's OWN
+  // extent claims to reach is a defect independent of timing — Tennessee measured both a slow AND
+  // (separately, on other runs) a fast-but-empty answer at Nashville, which its own extent covers.
+  const insideExtent = pointInsideExtent(pLat, pLng, extentLatLon);
+  const emptyDespiteCoverage = envelopeTimingRaw.featureCountInEnvelope === 0 && insideExtent === true;
+  const envelopeTiming = { ...envelopeTimingRaw, insideExtent, emptyDespiteCoverage };
   return {
     ...src,
     reachable: true,
@@ -336,6 +361,9 @@ async function probeSource(src) {
     featureCount,
     fieldNames,
     fields: matchFields(fieldNames),
+    extentLatLon,
+    coverage,
+    envelopeTiming,
   };
 }
 
@@ -464,7 +492,24 @@ async function probeAll() {
   const out = {};
   for (const [abbr, cfg] of Object.entries(CANDIDATES)) {
     const sources = [];
-    for (const src of cfg.sources || []) sources.push(await probeSource(src));
+    for (const src of cfg.sources || []) {
+      const probed = await probeSource(src, abbr);
+      sources.push(probed);
+      // NEW-1/NEW-2 — loud, live, as the probe runs (an 8-second-budget timing check per state
+      // costs real wall-clock; don't make the operator wait for the whole run to see a hit).
+      if (probed.reachable) {
+        if (probed.coverage && probed.coverage.insufficient) {
+          const pct = (f) => (f == null ? "?" : `${Math.round(f * 100)}%`);
+          console.error(`⛔ [coverage] ${abbr} — extent covers only lat ${pct(probed.coverage.latFrac)} / lon ${pct(probed.coverage.lonFrac)} of the state — ${src.url}`);
+        }
+        if (probed.envelopeTiming && probed.envelopeTiming.overBudget) {
+          console.error(`⛔ [timing] ${abbr} — envelope query took ${probed.envelopeTiming.ms}ms, over the ${ENVELOPE_QUERY_BUDGET_MS}ms budget — ${src.url}`);
+        }
+        if (probed.envelopeTiming && probed.envelopeTiming.emptyDespiteCoverage) {
+          console.error(`⛔ [empty] ${abbr} — a point inside this layer's OWN declared extent returned zero features (${probed.envelopeTiming.ms}ms) — ${src.url}`);
+        }
+      }
+    }
     out[abbr] = { abbr, ...cfg, sources };
     out[abbr].verdict = verdictFor(out[abbr]);
   }
@@ -642,9 +687,27 @@ function buildMarkdown(results, probedAt, agol = null, knownGood = null) {
   lines.push("> Both were found by **pass 2** below — searching states' own official ArcGIS Online ORGANIZATIONS rather than only");
   lines.push("> their `.gov` GIS hosts. The `Found by` column records which pass produced every candidate in the table.");
   lines.push("");
-  lines.push("| State | Assessing unit | Verdict | Candidate | Found by | Reachable here | Feature count | Geometry | Fields | Wired? |");
-  lines.push("|---|---|---|---|---|---|---|---|---|---|");
+  lines.push("> **NEW-1/NEW-2 (2026-09-09) — the `Extent covers state?` and `Envelope query (≤8s)` columns are the first real");
+  lines.push("> SPATIAL checks this probe runs, not just metadata.** Nebraska's `ne_statewide` had a real capabilities list and a");
+  lines.push("> real field set — every check a prior pass ran — while its layer extent covered the Omaha metro plus two Iowa");
+  lines.push("> counties, not Nebraska; a query at Omaha's own coordinates returned zero. `Extent covers state?` projects each");
+  lines.push("> reachable layer's own declared extent to lat/lon (via Esri's public Geometry Service — one extra request, no");
+  lines.push("> guessed reprojection math) and reports what fraction of the claimed state's own lat/lon span it reaches, flagged");
+  lines.push("> ⛔ below a generous floor. `Envelope query (≤8s)` times a real ~7-mile envelope-intersect/attributes-only query —");
+  lines.push("> the shape the app's own viewport draw runs — against the SAME 8-second budget the app's click-lookup path already");
+  lines.push("> enforces (`PARCEL_FETCH_TIMEOUT_MS`), flagged ⛔ when a source can't answer inside it (Florida timed out past 32s;");
+  lines.push("> Tennessee took 25.5s and returned zero; California — MORE features than Florida — answered in under 2s). A second,");
+  lines.push("> INDEPENDENT ⛔ (\"zero at a covered point\") fires whenever a source answers a query centered INSIDE its own declared");
+  lines.push("> extent with zero features — Tennessee's own re-runs varied in TIMING (4.2s–25.5s across repeated probes) but were");
+  lines.push("> CONSISTENTLY empty at Nashville, which its own extent claims to cover, so timing alone would miss it on a fast day.");
+  lines.push("> Both checks are DIAGNOSTIC, not a hard gate: an irregularly-shaped or far-flung state (Alaska, Hawaii, Michigan's two");
+  lines.push("> peninsulas) can legitimately read a lower coverage fraction without that being a defect — read the numbers.");
+  lines.push("");
+  lines.push("| State | Assessing unit | Verdict | Candidate | Found by | Reachable here | Feature count | Geometry | Fields | Extent covers state? | Envelope query (≤8s) | Wired? |");
+  lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|");
   const wired = [];
+  const coverageFlags = [];
+  const timingFlags = [];
   for (const abbr of Object.keys(results).sort()) {
     const s = results[abbr];
     const src = s.sources[0];
@@ -652,6 +715,27 @@ function buildMarkdown(results, probedAt, agol = null, knownGood = null) {
     const fc = src && src.featureCount != null ? src.featureCount.toLocaleString() : "—";
     const geom = src ? src.geometryType || "—" : "—";
     const fields = src ? fmtFields(src.fields) : "—";
+    const pctOf = (f) => (f == null ? "?" : `${Math.round(f * 100)}%`);
+    let coverageCol = "—";
+    if (src && src.reachable) {
+      const c = src.coverage;
+      if (c) {
+        coverageCol = `${c.insufficient ? "⛔ " : ""}lat ${pctOf(c.latFrac)} · lon ${pctOf(c.lonFrac)} of state`;
+        if (c.insufficient && (s.wired || s.alreadyWired)) coverageFlags.push({ abbr, name: s.name, coverageCol, url: src.url });
+      } else if (src.extentLatLon && src.extentLatLon.failed) {
+        coverageCol = `unmeasured (${src.extentLatLon.why})`;
+      } else {
+        coverageCol = "no reference bbox";
+      }
+    }
+    let timingCol = "—";
+    if (src && src.reachable && src.envelopeTiming && !src.envelopeTiming.skipped) {
+      const t = src.envelopeTiming;
+      const fcStr = t.featureCountInEnvelope != null ? `, ${t.featureCountInEnvelope} feat.` : "";
+      const flagged = t.overBudget || t.emptyDespiteCoverage;
+      timingCol = `${flagged ? "⛔ " : ""}${t.ms}ms${fcStr}${t.timedOut ? " (timed out)" : ""}${t.emptyDespiteCoverage ? " — zero at a covered point" : ""}`;
+      if (flagged && (s.wired || s.alreadyWired)) timingFlags.push({ abbr, name: s.name, timingCol, url: src.url });
+    }
     // Owner correction, 2026-09-08: a row with `sources: []` used to print "none found" even when
     // its own note names a real, specific candidate that simply couldn't be queried from here (a
     // blocked host, a third-party-provenance decline) — a silent contradiction between the cell
@@ -671,11 +755,28 @@ function buildMarkdown(results, probedAt, agol = null, knownGood = null) {
      * state ArcGIS Online organizations, which is the one that found California and Rhode Island
      * after both had been recorded as `Candidate: none found`. */
     const foundBy = src ? (src.pass === "agol" ? "agol" : "gov") : "—";
-    lines.push(`| ${s.name} (${abbr}) | ${s.assessingUnit} | ${s.verdict} | ${cand} | ${foundBy} | ${reach} | ${fc} | ${geom} | ${fields} | ${wireCol} |`);
+    lines.push(`| ${s.name} (${abbr}) | ${s.assessingUnit} | ${s.verdict} | ${cand} | ${foundBy} | ${reach} | ${fc} | ${geom} | ${fields} | ${coverageCol} | ${timingCol} | ${wireCol} |`);
   }
   lines.push("");
   lines.push(`**${wired.length} states wired** (incl. TX/CO already live): ${wired.sort().join(", ")}.`);
   lines.push("");
+  if (coverageFlags.length || timingFlags.length) {
+    lines.push("### ⛔ WIRED SOURCES FLAGGED BY THE NEW-1/NEW-2 SPATIAL CHECKS — look at these before trusting the row above");
+    lines.push("");
+    if (coverageFlags.length) {
+      lines.push("**Extent covers materially less than the claimed state:**");
+      for (const f of coverageFlags) lines.push(`- **${f.name} (${f.abbr})** — ${f.coverageCol} — [layer](${f.url})`);
+      lines.push("");
+    }
+    if (timingFlags.length) {
+      lines.push(`**Envelope query exceeded the ${ENVELOPE_QUERY_BUDGET_MS}ms budget (the app's own click-lookup hang-guard), or returned zero features at a point inside the layer's own declared extent:**`);
+      for (const f of timingFlags) lines.push(`- **${f.name} (${f.abbr})** — ${f.timingCol} — [layer](${f.url})`);
+      lines.push("");
+    }
+  } else {
+    lines.push("_No wired source failed either spatial check this run._");
+    lines.push("");
+  }
   lines.push(agolSection(results, agol, knownGood));
   lines.push("## Per-state notes (research context this probe can't measure itself)");
   lines.push("");

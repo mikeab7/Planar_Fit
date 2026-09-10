@@ -240,6 +240,26 @@ export function withCurrentProject(projects = [], currentProject = null) {
   ];
 }
 
+/* B1442592 ("An empty new project is never written to the server") — a project born through the Site
+ * Planner's LAZY "New project" flow (`newBlankSite`/`newSiteFromMap` in SitePlannerApp.jsx) gets
+ * no `public.sites` row, and no local plan record either, until its first real edit — that's the
+ * root CLAUDE.md's "Project creation is deliberately LAZY" owner constraint (2026-09-05), not a
+ * bug. Until that first edit, such a project can appear in the switcher ONLY via
+ * `withCurrentProject`'s synthetic "the project you're standing in" placeholder — it never shows
+ * up in `registryProjects` (the REAL list `listProjects()` reads off the on-device/cloud registry),
+ * because there is nothing saved anywhere for `listProjects()` to find.
+ *
+ * This is the ONE place that answers "does this project id actually have a saved record behind
+ * it" — pure, so the delete confirmation (ProjectBreadcrumb.jsx) can stop promising a "moves to
+ * Recently deleted" trip for a project that has nothing anywhere to move. `registryProjects` must
+ * be the REAL registry list (e.g. `listProjects()`), never a union that already includes the
+ * synthetic placeholder — unioning first would make this always answer true for the one case it
+ * exists to catch. */
+export function hasSavedProjectRecord(id, registryProjects = []) {
+  if (!id) return false;
+  return (registryProjects || []).some((p) => p && p.id === id);
+}
+
 // B854xxx/NEW-2 — Scheduler is the only controlled caller of the breadcrumb (its embedded Gantt
 // app bridges its OWN project list — schedule-only pseudo-projects like Pursuits/Operations that
 // carry no site id at all), and that bridged list was the WHOLE switcher on that route: no
