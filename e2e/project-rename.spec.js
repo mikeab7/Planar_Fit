@@ -216,3 +216,169 @@ test.describe("NEW-1 / NEW-2 — one rename entry point, reachable without a mou
       .toEqual(["Silvestri"]);
   });
 });
+
+/* NEW-2 — the owner's live repro: rename a project inline (the kebab → Rename path, NOT the
+ * multi-plan-single-group SILVESTRI fixture above — this needs several DISTINCT projects so one
+ * can slide past another), press Enter. The name saves correctly and then the app OPENS A
+ * DIFFERENT PROJECT — his case, Ta Chen, the row that was sitting at the top of the list.
+ *
+ * ROOT CAUSE, confirmed live (not just theorized) before this fix: `groupProjects` sorts
+ * most-recently-edited first, a rename bumps `updatedAt`, and `ProjectBreadcrumb.jsx` re-sorted
+ * on every `refresh()` — so the renamed row visibly jumped to #1 and every row above it slid
+ * down ONE, immediately, while the dropdown was still open and the just-closed rename editor's
+ * focus had nowhere correct to land (`document.activeElement` measured as `<body>`). Fix:
+ * `applyFrozenOrder` (projectModel.js) holds the row order steady for as long as the dropdown
+ * stays open once an edit starts, and commit/cancel re-anchor focus to the EDITED row's own
+ * activate button (by id), never to wherever the resort would otherwise have left it.
+ *
+ * Every case below is exercised: Enter vs click-away vs Escape; the row being renamed at the
+ * top of the list vs further down; the project you're renaming being the one you're currently
+ * standing in vs a different one. */
+test.describe("NEW-2 — renaming a project and pressing Enter must never navigate you anywhere else", () => {
+  const THREE_PROJECTS = [
+    { id: "p-tachen", groupId: "grp-tachen", site: "Ta Chen", name: "Concept A", updatedAt: 3_000 },
+    { id: "p-third", groupId: "grp-third", site: "Third Project", name: "Concept A", updatedAt: 2_000 },
+    { id: "p-aldine", groupId: "grp-aldine", site: "Aldine Bender 1", name: "Concept A", updatedAt: 1_000 },
+  ];
+
+  const rowOrder = (page) => page.locator('[data-testid^="project-row-"]')
+    .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
+  const focusedRow = (page) => page.evaluate(() =>
+    document.activeElement?.closest?.('[data-testid^="project-row-"]')?.getAttribute("data-testid") || null);
+
+  // Open the row's kebab → Rename and type the new name — stop short of committing, so the
+  // caller can exercise whichever of Enter / click-away / Escape it's testing.
+  async function startRowRename(page, groupId, next) {
+    await page.getByTestId(`project-row-${groupId}`).hover();
+    await page.getByTestId(`project-kebab-${groupId}`).click();
+    await page.getByTestId("project-rename").click();
+    const input = page.getByRole("textbox", { name: /^Rename / });
+    await expect(input).toBeVisible();
+    await input.fill(next);
+    return input;
+  }
+
+  /* ⛔ `expect.poll` returns the INSTANT its predicate first matches — it does not keep watching
+   * afterward. Checking row order with a bare poll right after Enter can pass on its very first
+   * (immediate) read, before the async rename write — and the `refresh()` it triggers once it
+   * settles — has had any chance to run, which would make the assertion pass "by being too
+   * early" rather than by the order genuinely staying put. So every case below first waits for
+   * the WRITE itself to land in storage (proof the async round trip, and therefore any `refresh()`
+   * chained off it, has had its turn) before checking the row order with a plain, un-retried read. */
+  async function waitForStoreName(page, groupId, name) {
+    await expect.poll(() => readStore(page).then((r) => r.find((s) => s.groupId === groupId)?.site))
+      .toBe(name);
+    await page.waitForTimeout(150); // let the resulting re-render (if any) actually flush
+  }
+
+  test("⛔ THE REPORTED CASE: renaming a row below the top and pressing Enter never displaces or opens the row above it", async ({ page }) => {
+    await seedProject(page, THREE_PROJECTS);
+    await boot(page);
+    await openProjectCrumb(page);
+    // Ta Chen (freshest `updatedAt`) sits first, Aldine Bender 1 is NOT at the top — the exact
+    // shape of the report.
+    const before = await rowOrder(page);
+    expect(before[0]).toBe("project-row-grp-tachen");
+    expect(before).not.toEqual(["project-row-grp-aldine", "project-row-grp-tachen", "project-row-grp-third"]);
+
+    const input = await startRowRename(page, "grp-aldine", "Aldine Bender 1 RENAMED");
+    await input.press("Enter");
+    // The name updates immediately — optimistic, no "re-read from the server" beat — checked
+    // BEFORE waiting for the write round-trip below.
+    await expect(page.getByTestId("project-row-grp-aldine")).toContainText("Aldine Bender 1 RENAMED");
+    await waitForStoreName(page, "grp-aldine", "Aldine Bender 1 RENAMED");
+
+    // The row order is FROZEN for as long as the dropdown stays open — Ta Chen never slides out
+    // of #1, so there is no slot for a stray keystroke to fall through onto.
+    expect(await rowOrder(page)).toEqual(before);
+    // Focus is re-anchored to the RENAMED row's own button, by identity — never lost to <body>,
+    // and never left on whatever slid into its old on-screen slot.
+    expect(await focusedRow(page)).toBe("project-row-grp-aldine");
+    // And the app never navigated: no project was open before the rename, so none is open after.
+    await expect(page.locator('[data-mode-active="true"]').getByTestId("project-crumb").first()).toContainText("Select a project");
+    expect(await page.evaluate(() => location.hash)).toBe("#/site");
+  });
+
+  test("the same holds while a DIFFERENT project is the one currently open", async ({ page }) => {
+    await seedProject(page, THREE_PROJECTS);
+    await boot(page);
+    await openProjectCrumb(page);
+    await page.getByTestId("project-row-grp-third").getByRole("button").first().click();
+    await expect(page.getByTestId("planner-canvas")).toBeVisible({ timeout: 20_000 });
+    const hashBefore = await page.evaluate(() => location.hash);
+
+    await openProjectCrumb(page);
+    const before = await rowOrder(page);
+    const input = await startRowRename(page, "grp-aldine", "Aldine Bender 1 RENAMED");
+    await input.press("Enter");
+    await waitForStoreName(page, "grp-aldine", "Aldine Bender 1 RENAMED");
+
+    expect(await rowOrder(page)).toEqual(before);
+    // Still Third Project — never bounced into whichever row was on top.
+    expect(await page.evaluate(() => location.hash)).toBe(hashBefore);
+    await expect(page.locator('[data-mode-active="true"]').getByTestId("project-crumb").first()).toContainText("Third Project");
+  });
+
+  test("renaming the TOP row itself behaves the same way — no crash, no stray navigation", async ({ page }) => {
+    await seedProject(page, THREE_PROJECTS);
+    await boot(page);
+    await openProjectCrumb(page);
+    const before = await rowOrder(page);
+
+    const input = await startRowRename(page, "grp-tachen", "Ta Chen RENAMED");
+    await input.press("Enter");
+    await waitForStoreName(page, "grp-tachen", "Ta Chen RENAMED");
+
+    expect(await rowOrder(page)).toEqual(before);
+    await expect(page.getByTestId("project-row-grp-tachen")).toContainText("Ta Chen RENAMED");
+    expect(await focusedRow(page)).toBe("project-row-grp-tachen");
+    expect(await page.evaluate(() => location.hash)).toBe("#/site");
+  });
+
+  test("renaming the project you are CURRENTLY standing in never bounces you out of it", async ({ page }) => {
+    await seedProject(page, THREE_PROJECTS);
+    await boot(page);
+    await openProjectCrumb(page);
+    await page.getByTestId("project-row-grp-aldine").getByRole("button").first().click();
+    await expect(page.getByTestId("planner-canvas")).toBeVisible({ timeout: 20_000 });
+
+    await openProjectCrumb(page);
+    const input = await startRowRename(page, "grp-aldine", "Aldine Bender 1 RENAMED");
+    await input.press("Enter");
+
+    expect(await page.evaluate(() => location.hash)).toBe("#/project/grp-aldine/site");
+    await expect(page.locator('[data-mode-active="true"]').getByTestId("project-crumb").first()).toContainText("Aldine Bender 1 RENAMED");
+  });
+
+  test("click-away (blur) commits the same way Enter does — order frozen, no navigation", async ({ page }) => {
+    await seedProject(page, THREE_PROJECTS);
+    await boot(page);
+    await openProjectCrumb(page);
+    const before = await rowOrder(page);
+
+    const input = await startRowRename(page, "grp-aldine", "Aldine Bender 1 RENAMED (blur)");
+    // Click away onto a neutral control (the search field) — never onto another project's own
+    // row, which would be a deliberate, correct navigation, not a click-away.
+    await page.getByPlaceholder("Search projects…").click();
+    await waitForStoreName(page, "grp-aldine", "Aldine Bender 1 RENAMED (blur)");
+
+    expect(await rowOrder(page)).toEqual(before);
+    await expect(page.getByTestId("project-row-grp-aldine")).toContainText("Aldine Bender 1 RENAMED (blur)");
+    expect(await page.evaluate(() => location.hash)).toBe("#/site");
+  });
+
+  test("Escape cancels without renaming, without reordering, and without navigating", async ({ page }) => {
+    await seedProject(page, THREE_PROJECTS);
+    await boot(page);
+    await openProjectCrumb(page);
+    const before = await rowOrder(page);
+
+    const input = await startRowRename(page, "grp-aldine", "Aldine Bender 1 SHOULD NOT STICK");
+    await input.press("Escape");
+
+    await expect.poll(() => rowOrder(page)).toEqual(before);
+    await expect(page.getByTestId("project-row-grp-aldine")).toContainText("Aldine Bender 1");
+    await expect(page.getByTestId("project-row-grp-aldine")).not.toContainText("SHOULD NOT STICK");
+    expect(await page.evaluate(() => location.hash)).toBe("#/site");
+  });
+});

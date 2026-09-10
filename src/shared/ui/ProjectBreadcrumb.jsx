@@ -55,7 +55,7 @@
  * renamed/deleted as one — with the linked schedule carried along; only a schedule-only
  * pseudo-project (Pursuits / Operations, which no `sites` row describes) is bridge-only.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { RADIUS } from "./radius.js";
 import FloatingNotice from "./FloatingNotice.jsx";
 import AnchoredMenu from "./AnchoredMenu.jsx";
@@ -68,7 +68,7 @@ import {
   listDeletedProjects, restoreDeletedProject, purgeDeletedProject, purgeExpiredDeletedProjects,
   DELETED_RETENTION_DAYS, activeUid,
 } from "../projects/projects.js";
-import { resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId as resolveControlledIdPure, hasSavedProjectRecord } from "../projects/projectModel.js";
+import { resolveCurrentName, withCurrentProject, unionProjectLists, resolveControlledId as resolveControlledIdPure, hasSavedProjectRecord, applyFrozenOrder } from "../projects/projectModel.js";
 
 // Crumbs sit on the chrome bar, which now themes WITH the app (B318) — so these are
 // chrome tokens, not the retired warm-dark hexes (white-on-light was the B341 bug).
@@ -323,7 +323,23 @@ export default function ProjectBreadcrumb({
   // "Cannot read properties of undefined" crash in this shared header.
   // B854xxx/NEW-2 — a controlled caller (Scheduler) is UNIONED with the real, reconciled registry
   // list below, never shown its own bridged list alone — see unionProjectLists' header.
-  const projects = (controlled ? unionProjectLists(controlledProjects, internalProjects) : internalProjects).filter(Boolean);
+  /* NEW-2 — a snapshot of row ids taken the moment a rename STARTS, held until the dropdown
+   * CLOSES, so a mid-edit recency resort can't reposition rows out from under an open editor
+   * (see `applyFrozenOrder`'s own header in projectModel.js). `rowButtonRefs` +
+   * `pendingRefocusIdRef` are the other half — after a commit, focus is moved to the RENAMED
+   * row's own activate button (looked up by id, never by index), so a keystroke that lands
+   * after the rename has somewhere correct and predictable to go instead of falling to
+   * `document.body`. Declared before `projects` below, which reads `orderSnapshotRef` on every
+   * render. */
+  const orderSnapshotRef = useRef(null);
+  const rowButtonRefs = useRef(new Map());
+  const pendingRefocusIdRef = useRef(null);
+  // NEW-2 — `applyFrozenOrder` holds the row order steady across an in-progress rename; it is a
+  // pass-through the rest of the time.
+  const projects = applyFrozenOrder(
+    (controlled ? unionProjectLists(controlledProjects, internalProjects) : internalProjects).filter(Boolean),
+    orderSnapshotRef.current,
+  );
   const [hoverRow, setHoverRow] = useState(null);
   const [toast, setToast] = useState(null); // transient "saved on device" notice (B193)
   const [menuFor, setMenuFor] = useState(null); // {id, name, x, y, confirm} — per-row manage menu (B439)
@@ -440,7 +456,7 @@ export default function ProjectBreadcrumb({
   };
   useEffect(() => {
     if (open) { refresh(); warmThenRefresh(); reconcileThenRefresh(); refreshBin(); setQ(""); }
-    else { setMenuFor(null); setEditingId(null); setBinOpen(false); setPurgeFor(null); }
+    else { setMenuFor(null); setEditingId(null); setBinOpen(false); setPurgeFor(null); orderSnapshotRef.current = null; }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
@@ -510,7 +526,15 @@ export default function ProjectBreadcrumb({
    * With the crumb editor removed there is exactly ONE editor per id, so the surface is no longer
    * part of the key and the state was dead weight. ⛔ If a second rename editor is ever reintroduced,
    * the discriminator has to come back WITH it — `editingId` alone cannot address two editors. */
-  const startRename = (p) => { setMenuFor(null); setEditingId(p.id); setEditVal(p.name || ""); };
+  const startRename = (p) => {
+    setMenuFor(null);
+    // NEW-2 — take the order snapshot on the FIRST rename of this dropdown session, not on every
+    // one: a second rename (of a different row) must not re-freeze onto a layout the first rename
+    // has already shuffled away from what's on screen.
+    if (!orderSnapshotRef.current) orderSnapshotRef.current = projects.map((pp) => pp.id);
+    setEditingId(p.id);
+    setEditVal(p.name || "");
+  };
 
   // B1358128 — resolve a switcher row's id to the id a controlled caller's own bridge actually
   // understands, per this file's own top-of-file note. `controlledProjects` is the caller's raw
@@ -527,13 +551,17 @@ export default function ProjectBreadcrumb({
   const commitRename = (id) => {
     const v = (editVal || "").trim();
     setEditingId(null);
-    if (!v) return; // reject empty/whitespace-only — keep the prior name
     // B1358128 — same refusal as doDelete: renaming "no project" is a defect, not a no-op.
     if (!id) {
       reportBreadcrumbDefect("project-rename-no-target", "the project rename editor had no project behind it");
       flashToast("Something went wrong — that menu lost track of which project it was for, so nothing was renamed.");
       return;
     }
+    // NEW-2 — re-anchor keyboard focus to THIS row's own activate button (by id, once the editor
+    // closes below), not to whatever now sits at the row's on-screen position. See the ref's own
+    // comment near its declaration.
+    pendingRefocusIdRef.current = id;
+    if (!v) return; // reject empty/whitespace-only — keep the prior name
     const resolvedId = resolveControlledId(id); // no-ops to `id` unchanged when uncontrolled
     /* B1358128 — SAME RULE AS DELETE (see doDelete): a row that names a REAL project is renamed
      * as a PROJECT, and its linked schedule is renamed alongside it. Bridging alone renamed only
@@ -542,28 +570,42 @@ export default function ProjectBreadcrumb({
      * dead. Only a schedule-only pseudo-project (no registry row) is a bridge-only rename. */
     const isRegistryProject = internalProjects.some((p) => p && p.id === id);
     const bridged = controlled && resolvedId != null && !isRegistryProject;
+    // NEW-2 — patch the name in optimistically, before the write even starts. `storeRename`
+    // (uncontrolled) is a dynamically-imported async call (projects.js's own header — the engine
+    // loads on first use), so a `refresh()` issued right after calling it can still read
+    // PRE-rename data; reading that stale copy back into state is exactly the "the renamed name
+    // doesn't show up for a beat, as if it were re-read from the server" symptom. Fixing the read
+    // path — showing the new name from local state immediately, never waiting on the write to
+    // settle — beats racing it harder. A bridged row is the controlled caller's own state to own.
+    if (!bridged) {
+      setInternalProjects((prev) => prev.map((p) => (p && p.id === id ? { ...p, name: v, updatedAt: Date.now() } : p)));
+    }
     if (controlled && resolvedId != null && isRegistryProject) onRenameProject?.(resolvedId, v);
     // NEW-2 — a rename that didn't reach the cloud must SAY so. Both branches now return the
     // store's promise, so a failure surfaces as a toast here instead of the old silent no-op that
     // only showed up later as the name having reverted. (The Site Planner also raises its own
-    // header banner; a duplicate line in the dropdown is cheap next to a silent revert.)
+    // header banner; a duplicate line in the dropdown is cheap next to a silent revert.) The
+    // reconciling `refresh()` now runs ONLY here, once the write has actually settled — an earlier
+    // synchronous call (removed) raced the same dynamic import above and clobbered the optimistic
+    // patch with the stale pre-rename read.
     const done = bridged ? onRenameProject(resolvedId, v) : storeRename(id, v);
     Promise.resolve(done).then((res) => {
       if (res && res.ok === false) flashToast(res.error || `“${v}” is saved on this device but couldn't be saved to the cloud — it may come back under its old name when you reload.`);
       if (!bridged) { refresh(); notifyStoreChange(); }
     }).catch(() => {});
-    // Reflect the new name immediately. Uncontrolled mode owns the local `internalProjects`
-    // list, and a same-tab store write does NOT fire the native 'storage' event — so without an
-    // explicit refresh the just-edited row (and every other planarfit:sites surface) keeps the
-    // OLD name and the rename reads as if it reverted. This must run for BOTH branches: the Site
-    // Planner supplies onRenameProject yet is still UNcontrolled, and the old code only refreshed
-    // in the bare `else`, so that path never updated. A controlled row that genuinely bridged
-    // (resolved to a schedule) gets its list pushed back through the bridge prop, so skip it
-    // there — but a controlled row that fell back to the site store (no schedule behind it) needs
-    // the SAME refresh as any other store write, which is why this now keys on `bridged`, not on
-    // `controlled` alone (B1358128). (rename-revert)
-    if (!bridged) { refresh(); notifyStoreChange(); }
   };
+  /* NEW-2 — the actual refocus. Runs in a LAYOUT effect (before paint) so it lands in the SAME
+   * frame the rename editor unmounts in, rather than leaving a gap where focus has already
+   * settled on `document.body` with nothing to correct it. Reads `editingId` as its trigger
+   * (it transitions to `null` on both commit and cancel) rather than a dep on the ref itself —
+   * a ref write is not a React dependency, so this can only ever be driven by a real state
+   * change alongside it. */
+  useLayoutEffect(() => {
+    const id = pendingRefocusIdRef.current;
+    if (id == null) return;
+    pendingRefocusIdRef.current = null;
+    rowButtonRefs.current.get(id)?.focus();
+  }, [editingId]);
   /* ---- WHAT ELSE IS FILED HERE (NEW-3) ---------------------------------------------------
    *
    * ⛔ DELETING A PROJECT USED TO ORPHAN ITS NOTES IN SILENCE. The note-delete confirmation
@@ -886,13 +928,14 @@ export default function ProjectBreadcrumb({
                       value={editVal}
                       onChange={setEditVal}
                       onCommit={() => commitRename(p.id)}
-                      onCancel={() => setEditingId(null)}
+                      onCancel={() => { pendingRefocusIdRef.current = p.id; setEditingId(null); }}
                       label={`Rename ${p.name}`}
                       style={{ flex: 1, margin: "2px 4px", border: "1px solid var(--accent-site-text, #2563eb)" }}
                     />
                   ) : (
                     <>
                       <button
+                        ref={(el) => { if (el) rowButtonRefs.current.set(p.id, el); else rowButtonRefs.current.delete(p.id); }}
                         onClick={() => pickProject(p.id, p.name)}
                         title={p.name}
                         style={row({ flex: 1, minWidth: 0, background: "transparent" })}

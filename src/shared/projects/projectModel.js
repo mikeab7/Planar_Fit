@@ -354,6 +354,26 @@ export function filterProjects(projects = [], query = "") {
   return projects.filter((p) => (p.name || "").toLowerCase().includes(q));
 }
 
+/* NEW-2 — freeze the switcher's row order across an in-progress rename. `groupProjects`
+ * sorts most-recently-edited first, and a rename bumps `updatedAt`, so the row being renamed
+ * jumps to the top the instant it commits and every row above it slides down one — while a
+ * keyboard user's focus (and a mouse user's pointer) is still resolved against the PRE-sort
+ * layout. `applyFrozenOrder` re-orders `list` to match `orderIds` (a snapshot of ids taken
+ * before the edit started) for every id the snapshot knows about, and appends anything the
+ * snapshot doesn't (a project created since the snapshot was taken) at the end in its own
+ * relative order — so nothing can go missing, it just can't jump the queue mid-edit. Pass
+ * `null`/empty `orderIds` to fall through to `list` unchanged (no snapshot taken yet, or the
+ * dropdown just opened). */
+export function applyFrozenOrder(list = [], orderIds = null) {
+  if (!orderIds || !orderIds.length) return list;
+  const rank = new Map(orderIds.map((id, i) => [id, i]));
+  const known = [];
+  const rest = [];
+  for (const p of list) (p && rank.has(p.id) ? known : rest).push(p);
+  known.sort((a, b) => rank.get(a.id) - rank.get(b.id));
+  return [...known, ...rest];
+}
+
 // Compact relative timestamp for the switcher rows ("just now", "5m ago", "3h ago",
 // "2d ago", "3w ago", then a short calendar date for anything older than ~a month).
 // `now` is injectable so the behavior is deterministic under test.
