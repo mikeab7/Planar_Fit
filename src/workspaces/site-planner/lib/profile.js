@@ -8,14 +8,16 @@
  * no service-role key in the browser. Mirrors cloudSync.js in shape.
  */
 import { supabase } from "./supabase.js";
+import { getProfileRow, invalidateProfileRow } from "../../../shared/profile/profileRowCache.js";
 
 // Load the signed-in user's profile row, or null (no row yet / not signed in).
 // THROWS on a real fetch error so a caller can tell "no row" apart from "offline".
+// NEW-1 — routed through the shared, session-cached `profileRowCache` so this and every other
+// reader of the same row (userPrefs.js, compsRatePeriodPrefs.js, the dashboard's prefs stores)
+// share one fetch instead of each firing their own `profiles` read on mount.
 export async function loadProfile(uid) {
   if (!supabase || !uid) return null;
-  const { data, error } = await supabase.from("profiles").select("*").eq("id", uid).maybeSingle();
-  if (error) throw new Error(error.message || "profile load failed");
-  return data || null;
+  return getProfileRow(uid);
 }
 
 // Upsert the profile (first/last/org). The row normally already exists (the signup
@@ -36,6 +38,7 @@ export async function saveProfile(uid, fields = {}) {
   };
   const { error } = await supabase.from("profiles").upsert(row, { onConflict: "id" });
   if (error) return { ok: false, error: error.message };
+  invalidateProfileRow(uid); // NEW-1 — the next load must see this write, not a cached pre-write row
   // Keep the auth record's user_metadata in sync with the table so the two name
   // stores never disagree (and the offline display fallback stays fresh). The table
   // is the source of truth — a metadata hiccup is best-effort, it doesn't fail the save.

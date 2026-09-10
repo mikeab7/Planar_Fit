@@ -14,6 +14,7 @@
  * is never swallowed into a silent "saved".
  */
 import { supabase } from "./supabase.js";
+import { getProfileRow, invalidateProfileRow } from "../../../shared/profile/profileRowCache.js";
 import { setAccountStyleDefaults } from "./planStyle.js";
 import { setAccountMeasureDefaults } from "./measureStyle.js";
 import { DEFAULT_SHARE_PREF, normalizeSharePref } from "./newProjectSharing.js";
@@ -106,9 +107,12 @@ export async function loadUserPrefs(uid) {
   const mirror = readMirror();
   if (!supabase || !uid) return { prefs: applyPrefs(mirror), source: "local" };
   try {
-    const { data, error } = await supabase.from("profiles").select("prefs").eq("id", uid).maybeSingle();
-    if (error) return { prefs: applyPrefs(mirror), source: "local", error: error.message };
-    const prefs = applyPrefs(data?.prefs);
+    // NEW-1 — routed through the shared, session-cached `profileRowCache` (SitePlanner.jsx,
+    // MapFinder.jsx and SitePlansSection.jsx each call this on mount; all three are mounted at
+    // once on a project open, so this used to fire the SAME `profiles?select=prefs` read once
+    // per component). A failed read still falls back to the mirror exactly as before.
+    const row = await getProfileRow(uid);
+    const prefs = applyPrefs(row?.prefs);
     writeMirror(prefs);
     return { prefs, source: "cloud" };
   } catch (e) {
@@ -128,6 +132,7 @@ export async function saveUserPrefs(uid, prefs) {
   if (!supabase || !uid) return { ok: false, prefs: next, error: "not signed in" };
   const { error } = await supabase.from("profiles").upsert({ id: uid, prefs: next, updated_at: new Date().toISOString() }, { onConflict: "id" });
   if (error) return { ok: false, prefs: next, error: error.message };
+  invalidateProfileRow(uid); // NEW-1 — the next load must see this write, not a cached pre-write row
   return { ok: true, prefs: next };
 }
 
