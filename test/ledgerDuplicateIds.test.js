@@ -88,7 +88,7 @@ Renumber the newer item (git fetch origin main && npm run next-id -- --against-m
     }
   });
 
-  it("the inheritance is exactly 24 B ids and 9 V ids, all below B6864 — the blocks did work", () => {
+  it("the inheritance is exactly 24 B ids and 10 V ids, all below B6864 — the blocks did work", () => {
     // Pinned as a FACT, not as a target. If this number moves, either something was cleaned (good,
     // shrink the baseline) or a new one landed below the radar of the two checks above.
     //
@@ -102,8 +102,14 @@ Renumber the newer item (git fetch origin main && npm run next-id -- --against-m
     // renumbered; both V39 headings and both V100 headings now carry a `⚠ SHARED ID` marker
     // (`node scripts/mark-shared-ids.mjs`) naming the other. V45's own row grew 2 → 3 for the same
     // reason (a third V45 landed in the archive from the same triage pass).
+    //
+    // UPDATED 2026-09-10 (B1450816, the same species again): V40 joined (9 → 10) when the
+    // verification-queue ceiling guard's own triage closed the long-pending "Scheduling grid
+    // keyboard nav" V40 (dated 2026-06-18, also pre-block-scheme) and archived it alongside an
+    // unrelated, already-archived "Delete removes the selected element" V40 (B154). Both V40
+    // headings now carry the marker; nothing renumbered.
     expect(Object.keys(SAME_FILE_LEGACY_DUPES.B)).toHaveLength(24);
-    expect(Object.keys(SAME_FILE_LEGACY_DUPES.V)).toHaveLength(9);
+    expect(Object.keys(SAME_FILE_LEGACY_DUPES.V)).toHaveLength(10);
     const ids = Object.keys(SAME_FILE_LEGACY_DUPES.B).map((k) => Number(k.split("::B")[1]));
     expect(Math.max(...ids)).toBeLessThan(6864);
   });
@@ -239,8 +245,9 @@ describe("the 31 shared ids are marked in place, and no reference resolution mov
         checked += 1;
       });
     }
-    // Was 63; +5 from V39/V100/V45's 2026-09-09 growth (see the "24 B ids and 9 V ids" test above).
-    expect(checked, "no markers were examined — the proof would be vacuous").toBe(68);
+    // Was 63; +5 from V39/V100/V45's 2026-09-09 growth, +2 from V40's 2026-09-10 growth (see the
+    // "24 B ids and 10 V ids" test above).
+    expect(checked, "no markers were examined — the proof would be vacuous").toBe(70);
   });
 
   it("the marker is additive-only by construction — it never rewrites a heading", () => {
