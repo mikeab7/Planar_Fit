@@ -330,25 +330,48 @@ describe("newProjectAction — '+ New schedule' ASKS. It never names a schedule 
  * merits once it is genuinely showing in the embed. */
 describe("isPickShowing — a deliberate switcher pick overrides the route-derived project", () => {
   it("false with no pick recorded (initial mount — must never match by coincidence)", () => {
-    expect(isPickShowing(null, null, "projects")).toBe(false);
-    expect(isPickShowing(undefined, null, "projects")).toBe(false);
+    expect(isPickShowing(null, null, "projects", "gc")).toBe(false);
+    expect(isPickShowing(undefined, null, "projects", "gc")).toBe(false);
   });
 
   it("false while the embed hasn't caught up to the pick yet (activeId still the old project)", () => {
-    expect(isPickShowing(7, 1, "projects")).toBe(false);
+    expect(isPickShowing({ id: 7, projectId: "gc" }, 1, "projects", "gc")).toBe(false);
   });
 
-  it("true once the embed reports the picked id as active, on the projects section", () => {
-    expect(isPickShowing(7, 7, "projects")).toBe(true);
+  it("true once the embed reports the picked id as active, on the projects section, while still routed on the pick's own project", () => {
+    expect(isPickShowing({ id: 7, projectId: "gc" }, 7, "projects", "gc")).toBe(true);
   });
 
   it("false on the embed's own Dashboard (reports) even if the id happens to match", () => {
-    expect(isPickShowing(7, 7, "reports")).toBe(false);
-    expect(isPickShowing(7, 7, undefined)).toBe(false);
+    expect(isPickShowing({ id: 7, projectId: "gc" }, 7, "reports", "gc")).toBe(false);
+    expect(isPickShowing({ id: 7, projectId: "gc" }, 7, undefined, "gc")).toBe(false);
   });
 
   it("false once a later pick or the carry-in moves activeId on — self-clearing, no reset needed", () => {
-    expect(isPickShowing(7, 2, "projects")).toBe(false);
+    expect(isPickShowing({ id: 7, projectId: "gc" }, 2, "projects", "gc")).toBe(false);
+  });
+
+  /* ⛔ B1341184 — THE DEADLOCK. Before this fix, `isPickShowing` never looked at the routed
+   * project at all, so a pick made under project A kept reading "showing" forever once activeId
+   * caught up to it — even after the user switched the PROJECT breadcrumb to an unrelated project
+   * B. Since `pickShowing` also gates the self-healing carry-in effect (Scheduler.jsx), nothing
+   * could ever move `activeId` off the pick again: the schedule crumb was stuck naming project A's
+   * schedule regardless of which project was routed. Reproduced live on planyr.io: pick "TAS Land
+   * Sale" under Goose Creek, switch to Mesa/Grand Port/Richfield — the crumb never moved. */
+  it("⛔ false once the ROUTED PROJECT changes away from the pick's own project, even though activeId hasn't moved yet — this is what re-enables the carry-in", () => {
+    // TAS Land Sale (id 22) was picked under Goose Creek ("gc"); the embed still reports it
+    // active, but the breadcrumb has since been switched to Grand Port ("grand").
+    expect(isPickShowing({ id: 22, projectId: "gc" }, 22, "projects", "grand")).toBe(false);
+  });
+
+  it("true for a cross-cutting (unlinked) pick as long as the routed project hasn't changed", () => {
+    // Pursuits (org-owned, no linkedSiteId) picked while routed on Goose Creek — the pick's
+    // recorded project is the routed one at pick time, not a link the schedule doesn't have.
+    expect(isPickShowing({ id: 5, projectId: "gc" }, 5, "projects", "gc")).toBe(true);
+  });
+
+  it("false for that same cross-cutting pick once the routed project changes", () => {
+    expect(isPickShowing({ id: 5, projectId: "gc" }, 5, "projects", "grand")).toBe(false);
   });
 });
 
@@ -494,7 +517,10 @@ describe("the SCHEDULE crumb (not currentProject) tracks the ACTIVE schedule on 
     expect(i).toBeGreaterThan(-1);
     const block = SRC.slice(i, SRC.indexOf("/>", i) + 2);
     expect(block).toMatch(/schedules=\{projects\}/);
-    expect(block).toMatch(/activeId=\{activeId\}/);
+    // B1341184 — never the bare `activeId`: while this project owns no schedule of its own, the
+    // embed's activeId still names whatever OTHER project's schedule was last open, and the crumb
+    // must not repeat that foreign name. See that fix's own note just above this prop in the source.
+    expect(block).toMatch(/activeId=\{showEmptyState \? null : activeId\}/);
   });
 });
 
